@@ -4,4 +4,3 @@ __pycache__/
 node_modules/
 
 api_data/static/jobs/
-frontend/assets/data/
