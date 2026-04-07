@@ -1,0 +1,1 @@
+{"status": "failed", "step": "error: HTTPSConnectionPool(host='nominatim.openstreetmap.org', port=443): Read timed out. (read timeout=10)"}

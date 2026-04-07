@@ -1,0 +1,1331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Växjö 3D — New Builds & Fairness Explorer</title>
+  <link rel="icon" href="./assets/img/lnu.ico" type="image/x-icon" />
+
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <!-- Symbol font for consistent glyph shapes -->
+  <!-- <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Symbols+2:wght@400;700&display=swap" rel="stylesheet"> -->
+
+  <!-- Fonts for consistent glyphs (symbols + Latin incl. å/ä/ö) -->
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&family=Noto+Sans+Symbols+2:wght@400;700&display=swap" rel="stylesheet">
+
+  <!-- MapLibre GL CSS -->
+  <link href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css" rel="stylesheet"/>
+
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #mapContainer { width: 100%; height: calc(100% - 56px); position: relative; overflow: hidden; background:#0e1525; }
+    #mapLassoOverlay { position:absolute; inset:0; pointer-events:none; }
+    #whatIfLassoOverlay { position:absolute; inset:0; pointer-events:none; }
+    /* .map-lasso-controls {
+      position: absolute;
+      top: 70px;
+      left: 12px;
+      z-index: 4;
+      display: flex;
+      gap: 6px;
+      background: rgba(0,0,0,0.45);
+      padding: 4px;
+      border-radius: 8px;
+      box-shadow: 0 10px 20px rgba(0,0,0,0.35);
+      backdrop-filter: blur(6px);
+    }
+    .map-lasso-controls .btn { box-shadow: none; } */
+
+    .my-navbar { background: linear-gradient(90deg, #bbbbbb 0%, #0b2434 100%) !important; }
+    .logo-img { height: 40px; width: auto; }
+    .nav-link { color: #fff !important; font-weight: 600; }
+    .nav-link.active, .nav-link:hover { color: #FFE000 !important; }
+    .navbar-brand { font-size: 1.5rem; font-weight: bold; color: #fff; }
+
+    /* Gray navbar toggler icon (always visible) */
+    .navbar-toggler.custom-toggler { border-color: rgba(108,117,125,0.6); }
+    .navbar-toggler.custom-toggler .navbar-toggler-icon{
+      background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(108,117,125,1)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+    }
+
+    #menu_distance { padding: var(--bs-nav-link-padding-y) var(--bs-nav-link-padding-x); font-weight: 600; color: #ffffff; }
+
+    .control-label { color: #fff; font-weight: 600; margin-left: .5rem; margin-right: .25rem; }
+    .control-select, .control-range { min-width: 150px; }
+    .control-range { width: 130px; }
+
+    .d-none-important { display: none !important; }
+    .navbar .navbar-nav { flex-wrap: wrap; gap: .25rem .75rem; }
+
+    /* popup above canvases */
+    canvas.maplibregl-canvas { z-index: 1 !important; }
+    canvas.deckgl-canvas { z-index: 2 !important; }
+    .maplibregl-popup { z-index: 9999 !important; }
+
+       .maplibregl-popup-content {
+      font-size: 12px;
+      line-height: 1.35;
+      color: #0b1020;
+      background: rgba(255,255,255,0.98);
+      box-shadow: 0 10px 28px rgba(0,0,0,0.28);
+      border-radius: 10px;
+      border: 1px solid rgba(0,0,0,0.08);
+      max-width: 520px;
+      width: max-content;
+    }
+    .district-popup .maplibregl-popup-content {
+      max-width: min(520px, 92vw);
+      max-height: 70vh;
+      width: min(520px, 92vw);
+      overflow: auto;
+      box-sizing: border-box;
+    }
+    .maplibregl-popup-tip { opacity: 0.98; }
+    .popup-title { font-weight: 800; margin-bottom: 6px; font-size: 14px; word-break: break-word; }
+    .popup-table { border-collapse: collapse; width: 100%; }
+    .popup-table th { padding: 2px 6px; text-align: left; color: #667; width: 42%; vertical-align: top; word-break: break-word; }
+    .popup-table td { padding: 2px 6px; text-align: left; color: #111; word-break: break-word; }
+    #districtPopulationPanel {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 320px;
+      max-width: 38vw;
+      background: rgba(255,255,255,0.96);
+      border-radius: 10px;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.28);
+      padding: 10px 12px;
+      font-size: 12px;
+      color: #111;
+      z-index: 3;
+    }
+    #districtPopulationPanel.d-none { display: none; }
+    #districtPopulationPanel h6 { margin: 0 0 6px 0; font-weight: 800; font-size: 13px; }
+    #districtPopulationChart { height: 200px; }
+    #districtPopulationBarChart { height: 180px; }
+    #parallelCoordsPanel {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      height: 330px;
+      background: rgba(255,255,255,0.98);
+      border-radius: 12px;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.28);
+      padding: 10px 12px;
+      font-size: 12px;
+      color: #111;
+      z-index: 3;
+    }
+    #parallelCoordsPanel.d-none { display: none; }
+    #parallelCoordsPanel h6 { margin: 0 0 6px 0; font-weight: 800; font-size: 13px; }
+    #parallelCoordsChart {
+      height: 250px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-gutter: stable both-edges;
+    }
+    #parallelCoordsChart svg { height: 100%; display: block; }
+    /* Right-side info panel */
+    #sidePanel {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 260px;
+      max-width: 34vw;
+      background: rgba(255,255,255,0.96);
+      border-radius: 10px;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.28);
+      padding: 10px 12px;
+      font-size: 12px;
+      color: #111;
+      z-index: 3;
+    }
+    #sidePanel.d-none { display: none; }
+    #sidePanel h6 { margin: 0 0 6px 0; font-weight: 800; font-size: 13px; }
+    #sidePanel .legendBar {
+      height: 10px;
+      border-radius: 4px;
+      background: linear-gradient(90deg, #d7191c 0%, #fdae61 50%, #1a9641 100%);
+      margin: 6px 0;
+    }
+    #sidePanel .muted { color: #667; }
+    #sidePanel .kv { display: flex; justify-content: space-between; margin: 3px 0; }
+    #sidePanel .badge { font-weight: 600; }
+
+    #sidePanel .sidepanel-close{
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      opacity: .7;
+    }
+    #sidePanel .sidepanel-close:hover{ opacity: 1; }
+    #districtPopulationPanel .sidepanel-close,
+    #parallelCoordsPanel .sidepanel-close{
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      opacity: .7;
+    }
+    #districtPopulationPanel .sidepanel-close:hover,
+    #parallelCoordsPanel .sidepanel-close:hover{ opacity: 1; }
+
+
+    /* DR plot area */
+    #drCanvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; display: block; border-radius: 8px; }
+    #drOverlay { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; pointer-events: all; }
+    #drLegend { font-size: 12px; line-height: 1.3; border: 1px solid #eee; padding: 8px; border-radius: 8px; }
+
+    /* Wider offcanvas to fit controls nicely, but still responsive */
+    .offcanvas-start { width: min(560px, 95vw); }
+
+    /* DR controls */
+    .dr-controls .form-label { font-size: .85rem; margin-bottom: .25rem; }
+    .dr-controls .form-select, .dr-controls .form-control { width: 100%; }
+    .dr-controls .btn { white-space: nowrap; }
+    .dr-controls .row { --bs-gutter-x: .5rem; --bs-gutter-y: .5rem; }
+    .dr-controls .col { display: flex; flex-direction: column; }
+    .dr-controls .action-row { align-items: center; gap: .5rem; }
+    .dr-controls #drStatus { min-height: 1.4rem; display: block; }
+
+    /* POI dropdown */
+    .poi-menu { width: 350px; max-height: 60vh; overflow: auto; }
+    .fair-search-menu { width: 360px; max-height: 70vh; overflow: auto; }
+    .poi-row { display: grid; grid-template-columns: 1fr 64px; align-items: center; gap: .5rem; }
+    .poi-row label { user-select: none; }
+
+    /* Make range sliders compact inside the dropdown */
+    .poi-menu .form-range {
+      width: 120px;
+      height: 0.3rem;
+    }
+    .poi-menu .poi-row .form-check-label { white-space: nowrap; }
+    .poi-menu .badge.bg-dark-subtle {
+      background: #e9ecef;
+    }
+
+    /* --- POI symbol toggle --- */
+    .poi-switch {
+      position: relative;
+      display: inline-block;
+      width: 48px;
+      height: 24px;
+      vertical-align: middle;
+    }
+    .poi-switch input {
+      opacity: 0; width: 0; height: 0;
+    }
+    .poi-switch .poi-slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background: #cfd4da; transition: .25s; border-radius: 24px;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
+    }
+    .poi-switch .poi-slider:before {
+      content: ""; position: absolute; left: 3px; bottom: 3px;
+      width: 18px; height: 18px; background: #fff; border-radius: 50%;
+      transition: .25s; box-shadow: 0 1px 3px rgba(0,0,0,.25);
+    }
+    .poi-switch input:checked + .poi-slider { background: #ffc107; } /* Bootstrap warning */
+    .poi-switch input:checked + .poi-slider:before { transform: translateX(24px); }
+
+    /* Floating chatbot widget */
+    .chatbot-widget {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 6;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+    }
+    .chatbot-toggle {
+      width: 52px;
+      height: 52px;
+      border-radius: 999px;
+      box-shadow: 0 12px 24px rgba(0,0,0,0.25);
+    }
+    .chatbot-panel {
+      width: min(360px, 90vw);
+      max-width: 90vw;
+      background: #ffffff;
+      border: 1px solid rgba(0,0,0,0.08);
+      border-radius: 12px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.25);
+      padding: 12px;
+    }
+    .chatbot-panel .chatbot-output {
+      min-height: 64px;
+      max-height: 180px;
+      overflow-y: auto;
+      background: #f8f9fa;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 8px;
+      white-space: pre-wrap;
+    }
+
+    .basemap-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .basemap-switch .form-check-label {
+      color: #ffffff;
+      font-weight: 600;
+      margin-left: 4px;
+    }
+
+    .whatif-menu {
+      min-width: 400px;
+      max-height: 80vh;
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
+    }
+    .whatif-menu .form-check-label {
+      font-size: 0.85rem;
+    }
+    .whatif-note {
+      font-size: 0.75rem;
+      color: #667;
+    }
+    .whatif-ai-output {
+      font-size: 0.75rem;
+      color: #667;
+    }
+
+    /* Change history log */
+    .change-log-menu {
+      min-width: 380px;
+      max-width: 500px;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
+      position: fixed !important;
+      top: 58px !important;
+      left: 0 !important;
+      z-index: 9999 !important;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.28);
+      border-radius: 0 0 10px 10px;
+    }
+    .change-entry {
+      border-left: 3px solid #adb5bd;
+      padding: 5px 8px;
+      border-radius: 0 4px 4px 0;
+      margin-bottom: 4px;
+      background: #f8f9fa;
+      font-size: 0.78rem;
+    }
+    .change-entry.positive { border-left-color: #20c997; }
+    .change-entry.negative { border-left-color: #dc3545; }
+    .change-entry.neutral  { border-left-color: #6c757d; }
+    .change-delta-badge {
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 2px 5px;
+      border-radius: 3px;
+      white-space: nowrap;
+    }
+    .change-group-header {
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 6px 4px 2px;
+      border-bottom: 1px solid #dee2e6;
+      margin-bottom: 4px;
+    }
+
+    /* Optional: make SVG inside drEnginePlot block-level */
+    #drEnginePlot svg { display: block; }
+
+    /* Global spinner overlay */
+    .global-spinner-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 99999;
+      background: rgba(0, 0, 0, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: all;
+      backdrop-filter: blur(2px);
+      transition: opacity 0.15s ease;
+    }
+    .global-spinner-overlay.d-none { display: none !important; }
+    .global-spinner-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 1.5rem 2.5rem;
+      border-radius: 12px;
+      background: rgba(30, 30, 40, 0.85);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+  </style>
+</head>
+<body>
+  <!-- Global spinner overlay -->
+  <div id="globalSpinnerOverlay" class="global-spinner-overlay d-none">
+    <div class="global-spinner-box">
+      <div class="spinner-border text-info" role="status" style="width:2.5rem;height:2.5rem;">
+        <span class="visually-hidden">Loading...</span>
+      </div>
+      <div id="globalSpinnerMsg" class="mt-2 small fw-semibold text-light">Computing…</div>
+    </div>
+  </div>
+
+  <!-- Navbar -->
+  <nav class="navbar navbar-expand-lg my-navbar">
+     <div class="container-fluid">
+      <a class="navbar-brand d-flex align-items-center" href="#">
+        <img src="./assets/img/lnu.png" alt="Logo" class="logo-img" />
+        <div class="form-check form-switch basemap-switch ms-2">
+          <input class="form-check-input" type="checkbox" role="switch" id="basemapStyleToggle" checked>
+          <!-- <label class="form-check-label" style="font-size: 16px;" for="basemapStyleToggle">Dark</label> -->
+        </div>
+      </a>
+
+      <!-- gray hamburger toggler -->
+      <button class="navbar-toggler custom-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+              aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav w-100 align-items-center">
+
+          <!-- Source switch -->
+          <li class="nav-item d-flex align-items-center">
+            <span class="control-label pe-0 me-0" style="width: 50%;">Source</span>
+            <select id="sourceSelect" class="form-select form-select-sm control-select ms-0" style="min-width:80px;">
+              <option value="osm" selected>OSM API</option>
+              <option value="osm_s1">OSM + GeoJSON</option>
+              <option value="s1">Sentinel-1</option>
+            </select>
+          </li>
+
+          <!-- City controls (shared by OSM API and OSM+GeoJSON) -->
+          <li id="osmControls" class="nav-item d-flex align-items-center">
+            <span class="control-label" style="margin-right: 5px; width: 50%;">City</span>
+            <select id="citySelect" class="form-select form-select-sm control-select" style="min-width:80px;">
+              <option value="vaxjo" selected>Växjö</option>
+              <option value="goteborg">Göteborg</option>
+              <option value="malmo">Malmö</option>
+              <option value="stockholm">Stockholm</option>
+              <option value="kalmar">Kalmar</option>
+              <option value="norrkoping">Norrköping</option>
+              <option value="uppsala">Uppsala</option>
+            </select>
+            <span id="jobStatus" class="control-label ms-2" style="min-width:90px; max-width:160px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Ready</span>
+          </li>
+
+          <!-- View mode (Local only) -->
+          <!-- <li id="modeAllLi" class="nav-item">
+            <a id="modeAll" class="nav-link active" href="#">All buildings</a>
+          </li>
+          <li id="modeNewLi" class="nav-item">
+            <a id="modeNew" class="nav-link" href="#">Newly built buildings</a>
+          </li> -->
+
+          <!-- Year filter -->
+          <!-- <li id="yearControls" class="nav-item d-flex align-items-center d-none-important">
+            <span class="control-label">Built year</span>
+            <select id="yearFilter" class="form-select form-select-sm control-select">
+              <option value="">Choose a year…</option>
+              <option value="0">≤ 2020</option>
+              <option value="2021">2021</option>
+              <option value="2022">2022</option>
+              <option value="2023">2023</option>
+              <option value="2024">2024</option>
+              <option value="null">Unknown (NULL)</option>
+            </select>
+          </li> -->
+
+          <!-- Height scale (Local only) -->
+          <!-- <li id="heightControls" class="nav-item d-flex align-items-center">
+            <span class="control-label">Height ×</span>
+            <input id="heightScale" class="form-range control-range" type="range" min="0.8" max="6" step="0.1" value="3.2">
+            <span id="heightScaleLabel" class="control-label">3.2</span>
+          </li> -->
+
+          <!-- Toggle: buildings vs. district view -->
+          <li class="nav-item d-flex align-items-center">
+            <button
+              id="districtToggleBtn"
+              class="btn btn-outline-light btn-sm"
+              type="button"
+              aria-pressed="false"
+              title="Toggle district borders">
+              Macro
+            </button>
+            <div class="btn-group ms-2" role="group" aria-label="Mezo controls">
+              <button
+                id="mezoToggleBtn"
+                class="btn btn-outline-light btn-sm"
+                type="button"
+                aria-pressed="false"
+                title="Toggle mezo hex layer">
+                Meso
+              </button>
+              <button
+                id="mezoDropdownBtn"
+                class="btn btn-outline-light btn-sm dropdown-toggle dropdown-toggle-split"
+                type="button"
+                data-bs-toggle="dropdown"
+                data-bs-auto-close="true"
+                aria-expanded="false"
+                title="Select mezo edge size">
+                <span class="visually-hidden">Toggle meso size menu</span>
+              </button>
+              <ul class="dropdown-menu">
+                <li><button class="dropdown-item mezo-edge-option" type="button" data-value="0.25">0.25 km</button></li>
+                <li><button class="dropdown-item mezo-edge-option" type="button" data-value="0.5">0.5 km</button></li>
+                <li><button class="dropdown-item mezo-edge-option" type="button" data-value="0.75">0.75 km</button></li>
+                <li><button class="dropdown-item mezo-edge-option" type="button" data-value="1">1 km</button></li>
+              </ul>
+            </div>
+            <button
+              id="microToggleBtn"
+              class="btn btn-warning btn-sm ms-2"
+              type="button"
+              aria-pressed="true"
+              title="Show building (micro) view">
+              Micro
+            </button>
+            <button
+              id="districtPopulationBtn"
+              class="btn btn-outline-info btn-sm ms-2"
+              type="button"
+              title="District population chart">
+              <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 19h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                <path d="M6 16l4-5 4 3 4-6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="6" cy="16" r="1.4" fill="currentColor"/>
+                <circle cx="10" cy="11" r="1.4" fill="currentColor"/>
+                <circle cx="14" cy="14" r="1.4" fill="currentColor"/>
+                <circle cx="18" cy="8" r="1.4" fill="currentColor"/>
+              </svg>
+            </button>
+            <button
+              id="parallelCoordsBtn"
+              class="btn btn-outline-light btn-sm ms-2"
+              type="button"
+              title="Parallel coordinates">
+              PC
+            </button>
+            <!-- <span class="control-label ms-2 d-none d-xl-inline">Districts</span> -->
+          </li>
+
+          <!-- Right side group: POI + DR trigger -->
+          <li id="poiControls" class="nav-item ms-lg-auto d-flex align-items-center">
+            <div class="dropdown">
+              <button id="poiDropdownBtn" class="btn btn-outline-warning btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                POIs & Weights
+              </button>
+              <div class="dropdown-menu poi-menu p-3">
+                <div class="text-muted small mb-2">Select one or more POIs and set weights (1–10). Colors update automatically.</div>
+
+                <div class="poi-row mb-2 d-flex align-items-center justify-content-between gap-2">
+                  <div class="form-check m-0">
+                    <input class="form-check-input poi-check" type="checkbox" id="poi_grocery" data-cat="grocery">
+                    <label class="form-check-label" for="poi_grocery"><img src="assets/icons/legend-grocery.svg" alt="" width="14" height="14" style="vertical-align:middle"> Grocery</label>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input class="form-range poi-weight" data-cat="grocery" type="range" min="1" max="10" step="1" value="5">
+                    <span class="badge bg-dark-subtle text-dark poi-weight-val" data-cat="grocery">5</span>
+                  </div>
+                </div>
+                <div class="poi-row mb-2 d-flex align-items-center justify-content-between gap-2">
+                  <div class="form-check m-0">
+                    <input class="form-check-input poi-check" type="checkbox" id="poi_hospital" data-cat="hospital">
+                    <label class="form-check-label" for="poi_hospital"><img src="assets/icons/legend-hospital.svg" alt="" width="14" height="14" style="vertical-align:middle"> Hospital</label>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input class="form-range poi-weight" data-cat="hospital" type="range" min="1" max="10" step="1" value="5">
+                    <span class="badge bg-dark-subtle text-dark poi-weight-val" data-cat="hospital">5</span>
+                  </div>
+                </div>
+
+                <div class="poi-row mb-2 d-flex align-items-center justify-content-between gap-2">
+                  <div class="form-check m-0">
+                    <input class="form-check-input poi-check" type="checkbox" id="poi_pharmacy" data-cat="pharmacy">
+                    <label class="form-check-label" for="poi_pharmacy"><img src="assets/icons/legend-pharmacy.svg" alt="" width="14" height="14" style="vertical-align:middle"> Pharmacy</label>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input class="form-range poi-weight" data-cat="pharmacy" type="range" min="1" max="10" step="1" value="5">
+                    <span class="badge bg-dark-subtle text-dark poi-weight-val" data-cat="pharmacy">5</span>
+                  </div>
+                </div>
+
+                <div class="poi-row mb-2 d-flex align-items-center justify-content-between gap-2">
+                  <div class="form-check m-0">
+                    <input class="form-check-input poi-check" type="checkbox" id="poi_dentistry" data-cat="dentistry">
+                    <label class="form-check-label" for="poi_dentistry"><img src="assets/icons/legend-dentistry.svg" alt="" width="14" height="14" style="vertical-align:middle"> Dentistry</label>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input class="form-range poi-weight" data-cat="dentistry" type="range" min="1" max="10" step="1" value="5">
+                    <span class="badge bg-dark-subtle text-dark poi-weight-val" data-cat="dentistry">5</span>
+                  </div>
+                </div>
+
+                <div class="poi-row mb-2 d-flex align-items-center justify-content-between gap-2">
+                  <div class="form-check m-0">
+                    <input class="form-check-input poi-check" type="checkbox" id="poi_healthcare_center" data-cat="healthcare_center">
+                    <label class="form-check-label" for="poi_healthcare_center"><img src="assets/icons/legend-healthcare_center.svg" alt="" width="14" height="14" style="vertical-align:middle"> HC Center</label>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input class="form-range poi-weight" data-cat="healthcare_center" type="range" min="1" max="10" step="1" value="5">
+                    <span class="badge bg-dark-subtle text-dark poi-weight-val" data-cat="healthcare_center">5</span>
+                  </div>
+                </div>
+
+                <div class="poi-row mb-2 d-flex align-items-center justify-content-between gap-2">
+                  <div class="form-check m-0">
+                    <input class="form-check-input poi-check" type="checkbox" id="poi_veterinary" data-cat="veterinary">
+                    <label class="form-check-label" for="poi_veterinary"><img src="assets/icons/legend-veterinary.svg" alt="" width="14" height="14" style="vertical-align:middle"> Veterinary</label>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input class="form-range poi-weight" data-cat="veterinary" type="range" min="1" max="10" step="1" value="5">
+                    <span class="badge bg-dark-subtle text-dark poi-weight-val" data-cat="veterinary">5</span>
+                  </div>
+                </div>
+
+                <div class="poi-row mb-2 d-flex align-items-center justify-content-between gap-2">
+                  <div class="form-check m-0">
+                    <input class="form-check-input poi-check" type="checkbox" id="poi_university" data-cat="university">
+                    <label class="form-check-label" for="poi_university"><img src="assets/icons/legend-university.svg" alt="" width="14" height="14" style="vertical-align:middle"> University</label>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input class="form-range poi-weight" data-cat="university" type="range" min="1" max="10" step="1" value="5">
+                    <span class="badge bg-dark-subtle text-dark poi-weight-val" data-cat="university">5</span>
+                  </div>
+                </div>
+
+                <div class="poi-row mb-2 d-flex align-items-center justify-content-between gap-2">
+                  <div class="form-check m-0">
+                    <input class="form-check-input poi-check" type="checkbox" id="poi_kindergarten" data-cat="kindergarten">
+                    <label class="form-check-label" for="poi_kindergarten"><img src="assets/icons/legend-kindergarten.svg" alt="" width="14" height="14" style="vertical-align:middle"> Kindergarten</label>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input class="form-range poi-weight" data-cat="kindergarten" type="range" min="1" max="10" step="1" value="5">
+                    <span class="badge bg-dark-subtle text-dark poi-weight-val" data-cat="kindergarten">5</span>
+                  </div>
+                </div>
+
+                <div class="poi-row mb-2 d-flex align-items-center justify-content-between gap-2">
+                  <div class="form-check m-0">
+                    <input class="form-check-input poi-check" type="checkbox" id="poi_school_primary" data-cat="school_primary">
+                    <label class="form-check-label" for="poi_school_primary"><img src="assets/icons/legend-school_primary.svg" alt="" width="14" height="14" style="vertical-align:middle"> Primary.S</label>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input class="form-range poi-weight" data-cat="school_primary" type="range" min="1" max="10" step="1" value="5">
+                    <span class="badge bg-dark-subtle text-dark poi-weight-val" data-cat="school_primary">5</span>
+                  </div>
+                </div>
+
+                <div class="poi-row mb-3 d-flex align-items-center justify-content-between gap-2">
+                  <div class="form-check m-0">
+                    <input class="form-check-input poi-check" type="checkbox" id="poi_school_high" data-cat="school_high">
+                    <label class="form-check-label" for="poi_school_high"><img src="assets/icons/legend-school_high.svg" alt="" width="14" height="14" style="vertical-align:middle"> High.S</label>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input class="form-range poi-weight" data-cat="school_high" type="range" min="1" max="10" step="1" value="5">
+                    <span class="badge bg-dark-subtle text-dark poi-weight-val" data-cat="school_high">5</span>
+                  </div>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center">
+                  <!-- LEFT: Select All (injected by JS) + Clear -->
+                  <div class="d-flex align-items-center gap-2">
+                    <!-- Your JS will insert "Select All" here, to the LEFT of Clear -->
+                    <button id="poiClearBtn" class="btn btn-sm btn-outline-secondary" type="button">Clear</button>
+                  </div>
+
+                  <!-- RIGHT: Symbols toggle + status -->
+                  <div class="d-flex align-items-center gap-2">
+                    <span class="text-muted small">Symbols</span>
+                    <label class="poi-switch mb-0" title="Toggle POI symbols">
+                      <input type="checkbox" id="poiSymbolsToggle" checked />
+                      <span class="poi-slider"></span>
+                    </label>
+                    <span id="fairStatus" class="ms-1 text-warning"></span>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- DR button beside POI, pinned right -->
+            <a id="openDRBtn"
+              class="btn btn-outline-secondary btn-sm ms-2"
+              href="#"
+              data-bs-toggle="offcanvas"
+              data-bs-target="#drOffcanvas"
+              aria-controls="drOffcanvas">DR Explorer</a>
+
+             <div class="dropdown ms-2">
+              <button
+                id="buildingTypeDropdownBtn"
+                class="btn btn-outline-info btn-sm dropdown-toggle"
+                type="button"
+                data-bs-toggle="dropdown"
+                aria-expanded="false">
+                Building types
+              </button>
+              <ul id="buildingTypeDropdownMenu" class="dropdown-menu dropdown-menu-end" style="max-height:60vh; overflow:auto;"></ul>
+            </div>
+
+            <div class="dropdown ms-2">
+              <button
+                id="whatIfDropdownBtn"
+                class="btn btn-outline-warning btn-sm dropdown-toggle"
+                type="button"
+                data-bs-toggle="dropdown"
+                data-bs-auto-close="outside"
+                aria-expanded="false">
+                What-if
+              </button>
+              <div class="dropdown-menu dropdown-menu-end p-3 whatif-menu">
+                <div class="fw-semibold mb-2">Scenario mode</div>
+                <div class="form-check mb-1">
+                  <input class="form-check-input" type="radio" name="whatIfMode" id="whatIfOff" value="off" checked>
+                  <label class="form-check-label" for="whatIfOff">Off</label>
+                </div>
+                <div class="form-check mb-1">
+                  <input class="form-check-input" type="radio" name="whatIfMode" id="whatIfEdit" value="edit">
+                  <label class="form-check-label" for="whatIfEdit">Click a building to change its type</label>
+                </div>
+                <div class="form-check mb-2">
+                  <input class="form-check-input" type="radio" name="whatIfMode" id="whatIfAdd" value="add">
+                  <label class="form-check-label" for="whatIfAdd">Click the map to add a building</label>
+                </div>
+
+                <label for="whatIfTypeSelect" class="form-label small text-muted mb-1">New POI type</label>
+                <select id="whatIfTypeSelect" class="form-select form-select-sm"></select>
+
+                <div class="border-top pt-2 mt-2">
+                  <div class="fw-semibold small mb-2">Mock buildings (map lasso · max 5000)</div>
+                  <div class="small text-muted mb-1">Building shape & size</div>
+                  <div class="d-flex align-items-center gap-2 mb-1">
+                    <label class="small text-muted" style="min-width:80px;">Area (m²)</label>
+                    <input type="range" id="whatIfFootprintMin" min="30" max="800" value="60" step="10" class="form-range" style="width:70px;" title="Min building area (m²)">
+                    <span class="small text-muted">–</span>
+                    <input type="range" id="whatIfFootprintMax" min="50" max="2000" value="150" step="10" class="form-range" style="width:70px;" title="Max building area (m²)">
+                    <span id="whatIfFootprintLabel" class="small text-muted" style="min-width:80px;">60–150 m²</span>
+                  </div>
+                  <div class="d-flex align-items-center gap-2 mb-1">
+                    <label class="small text-muted" style="min-width:80px;" for="whatIfFloorCount">Floors</label>
+                    <input type="range" id="whatIfFloorCount" min="1" max="30" value="3" step="1" class="form-range" style="flex:1;" title="Number of floors">
+                    <span id="whatIfFloorCountLabel" class="small text-muted" style="min-width:40px;">3</span>
+                  </div>
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <label class="small text-muted" style="min-width:80px;" for="whatIfFloorHeight">Floor height</label>
+                    <input type="range" id="whatIfFloorHeight" min="2.5" max="6" value="3" step="0.1" class="form-range" style="flex:1;" title="Height per floor (m)">
+                    <span id="whatIfFloorHeightLabel" class="small text-muted" style="min-width:48px;">3.0 m</span>
+                  </div>
+                  <div class="d-flex align-items-center gap-2 mb-1">
+                    <label class="small text-muted" style="min-width:80px;" for="whatIfShapeVariation">Shape variation</label>
+                    <input type="range" id="whatIfShapeVariation" min="0" max="100" value="50" step="1" class="form-range" style="flex:1;" title="0% = all identical rectangles, 100% = maximum shape variety">
+                    <span id="whatIfShapeVariationLabel" class="small text-muted" style="min-width:36px;">50%</span>
+                  </div>
+                  <hr class="my-1">
+                  <div class="small text-muted mb-1">Building mix (set counts per type)</div>
+                  <div id="whatIfMockTypeList" class="mb-2" style="max-height:180px; overflow:auto;"></div>
+                  <div class="btn-group btn-group-sm w-100 mb-2" role="group" aria-label="What-if lasso tools">
+                    <button id="whatIfLassoBtn" class="btn btn-outline-warning" type="button">
+                      Draw lasso
+                    </button>
+                    <button id="whatIfLassoClearBtn" class="btn btn-outline-secondary" type="button" disabled>
+                      Clear
+                    </button>
+                  </div>
+                  <div id="whatIfLassoStatus" class="small text-muted">Draw a region on the map to place mock buildings.</div>
+                </div>
+
+                <div class="whatif-note mt-2">Fairness scores are recalculated after each change.</div>
+                <div class="border-top pt-2 mt-2">
+                  <div class="fw-semibold small mb-2">LLM-assisted suggestions</div>
+                  <label for="whatIfSuggestCategories" class="form-label small text-muted mb-1">POI types to suggest</label>
+                  <select id="whatIfSuggestCategories" class="form-select form-select-sm mb-2" multiple size="5"></select>
+                  <label for="whatIfSuggestMode" class="form-label small text-muted mb-1">Suggestion mode</label>
+                  <select id="whatIfSuggestMode" class="form-select form-select-sm mb-2">
+                    <option value="add" selected>Add new POIs</option>
+                    <option value="change">Change existing buildings</option>
+                  </select>
+                  <label for="whatIfFairnessTarget" class="form-label small text-muted mb-1">Optimize fairness for</label>
+                  <select id="whatIfFairnessTarget" class="form-select form-select-sm mb-2">
+                    <option value="category" selected>Selected POI fairness</option>
+                    <option value="overall">Overall fairness (selected POIs)</option>
+                  </select>
+                  <label for="whatIfAreaFocus" class="form-label small text-muted mb-1">Area focus</label>
+                  <select id="whatIfAreaFocus" class="form-select form-select-sm mb-2">
+                    <option value="any" selected>City-wide</option>
+                    <option value="center">City center</option>
+                    <option value="outskirts">Outskirts / rural</option>
+                  </select>
+                  <label for="whatIfSuggestCount" class="form-label small text-muted mb-1">How many suggestions?</label>
+                  <input id="whatIfSuggestCount" class="form-control form-control-sm mb-2" type="number" min="1" max="10" value="1" />
+                  <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" role="switch" id="whatIfUseBoundsToggle" checked>
+                    <label class="form-check-label small" for="whatIfUseBoundsToggle">Limit to current map view</label>
+                  </div>
+                  <label for="whatIfLLMInput" class="form-label small text-muted mb-1">LLM prompt (optional)</label>
+                  <textarea id="whatIfLLMInput" class="form-control form-control-sm mb-2" rows="2" placeholder="E.g. focus on hospitals + schools in city center, suggest 3 spots."></textarea>
+                  <button id="whatIfSuggestBtn" class="btn btn-sm btn-outline-warning w-100" type="button">
+                    Generate suggestions
+                  </button>
+                  <div class="d-flex gap-2 mt-2">
+                    <button id="whatIfApplySuggestionBtn" class="btn btn-sm btn-warning" type="button" disabled>
+                      Apply suggestions
+                    </button>
+                    <button id="whatIfClearSuggestionBtn" class="btn btn-sm btn-outline-secondary" type="button" disabled>
+                      Clear
+                    </button>
+                    <button id="whatIfVerifySuggestionBtn" class="btn btn-sm btn-outline-info" type="button" disabled>
+                      Verify optimality
+                    </button>
+                  </div>
+                  <div id="whatIfSuggestionOut" class="whatif-ai-output mt-2">LLM suggestions will appear here.</div>
+                </div>
+              </div>
+            </div>
+          </li>
+
+          <!-- Change history log -->
+          <li class="nav-item d-flex align-items-center ms-2">
+            <div class="dropdown">
+              <button
+                id="changeLogBtn"
+                class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                type="button"
+                data-bs-toggle="dropdown"
+                data-bs-auto-close="outside"
+                aria-expanded="false">
+                Changes <span id="changeLogCount" class="badge bg-secondary ms-1 d-none">0</span>
+              </button>
+              <div id="changeLogDropdown" class="dropdown-menu dropdown-menu-end p-2 change-log-menu">
+                <div id="changeLogEmpty" class="text-muted small p-1">No what-if changes recorded yet.</div>
+                <div id="changeLogList"></div>
+                <div class="border-top pt-2 mt-1 d-none" id="changeLogFooter">
+                  <div class="d-flex gap-2 mb-2">
+                    <button id="changeLogCompareBtn" class="btn btn-sm btn-outline-info flex-fill" type="button"
+                      title="Hold to temporarily see map without any what-if changes applied">
+                      👁 Compare baseline
+                    </button>
+                  </div>
+                  <button id="changeLogClearBtn" class="btn btn-sm btn-outline-danger w-100" type="button">Clear all changes</button>
+                </div>
+              </div>
+            </div>
+          </li>
+
+          <!-- Distance + per-cat inequality + Overall inequality -->
+          <li class="nav-item d-flex align-items-center">
+            <span class="control-label">Inequality</span>
+            <span id="giniOut" class="badge text-bg-light ms-1">—</span>
+            <span class="control-label ms-3">Overall</span>
+            <span id="overallGiniOut" class="badge text-bg-info ms-1">—</span>
+          </li>
+          <li class="nav-item d-flex align-items-center ms-2">
+            <button class="btn btn-sm btn-outline-info"
+              onclick="document.getElementById('equityAnalysisPanel').classList.toggle('d-none')">
+              Equity Analysis
+            </button>
+          </li>
+
+          <li class="nav-item d-flex align-items-center ms-3">
+            <label class="control-label mb-0" for="fairnessTravelMode">Mode</label>
+            <select id="fairnessTravelMode" class="form-select form-select-sm ms-2">
+              <option value="walking" selected>Walking distance</option>
+              <option value="driving">Car distance</option>
+              <option value="cycling">Cycling distance</option>
+            </select>
+          </li>
+           <li class="nav-item d-flex align-items-center ms-3">
+            <label class="control-label mb-0" for="fairnessModelMode">Model</label>
+            <select id="fairnessModelMode" class="form-select form-select-sm ms-2">
+              <option value="default">Distance</option>
+              <option value="ifcity" selected>Gravity</option>
+            </select>
+          </li>
+          <li class="nav-item d-flex align-items-center ms-3">
+            <label class="control-label mb-0" for="fairnessColorScheme">Color</label>
+            <select id="fairnessColorScheme" class="form-select form-select-sm ms-2">
+              <option value="green-red">Rainbow</option>
+              <option value="viridis">Viridis</option>
+              <option value="cool" selected>Cool</option>
+            </select>
+          </li>
+          <li class="nav-item d-flex align-items-center ms-3">
+            <div class="dropdown">
+              <div class="dropdown-menu dropdown-menu-end p-3 fair-search-menu">
+                <label for="fairnessSearchLevel" class="form-label small text-muted mb-1">Area level</label>
+                <select id="fairnessSearchLevel" class="form-select form-select-sm mb-2">
+                  <option value="building">Micro (buildings)</option>
+                  <option value="mezo">Meso (hex areas)</option>
+                  <option value="macro">Macro (districts)</option>
+                </select>
+
+                <div class="row g-2 mb-2">
+                  <div class="col">
+                    <label for="fairnessSearchIncludeThreshold" class="form-label small text-muted mb-1">Fair if score ≥</label>
+                    <input id="fairnessSearchIncludeThreshold" class="form-control form-control-sm" type="number" min="0" max="1" step="0.05" value="0.65" />
+                  </div>
+                  <div class="col">
+                    <label for="fairnessSearchExcludeThreshold" class="form-label small text-muted mb-1">Not fair if score ≤</label>
+                    <input id="fairnessSearchExcludeThreshold" class="form-control form-control-sm" type="number" min="0" max="1" step="0.05" value="0.35" />
+                  </div>
+                </div>
+
+                <label for="fairnessSearchIncludeCats" class="form-label small text-muted mb-1">Fair with (one or more)</label>
+                <select id="fairnessSearchIncludeCats" class="form-select form-select-sm mb-2" multiple size="5"></select>
+
+                <label for="fairnessSearchExcludeCats" class="form-label small text-muted mb-1">Not fair with (one or more)</label>
+                <select id="fairnessSearchExcludeCats" class="form-select form-select-sm mb-2" multiple size="5"></select>
+
+                <div class="d-flex gap-2">
+                  <button id="fairnessSearchBtn" class="btn btn-sm btn-warning flex-grow-1" type="button">Find areas</button>
+                  <button id="fairnessSearchClearBtn" class="btn btn-sm btn-outline-secondary" type="button">Clear</button>
+                </div>
+                <div id="fairnessSearchStatus" class="small text-muted mt-2">Pick categories, then click “Find areas”.</div>
+              </div>
+            </div>
+          </li>
+
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <div id="mapContainer">
+    <!-- Right-side info panel -->
+    <div id="sidePanel" class="d-none">
+      <button id="sidePanelClose" class="btn-close sidepanel-close" aria-label="Close"></button>
+      <h6 id="spTitle" class="pe-4">Fairness</h6>
+      <div class="kv"><span>Category</span><span id="spCat" class="badge text-bg-secondary">—</span></div>
+      <div class="kv"><span>City inequality (lower=better)</span><span id="spGini" class="badge text-bg-info">—</span></div>
+      <div class="kv"><span>POIs found</span><span id="spPois" class="badge text-bg-light">—</span></div>
+      <div id="fairnessLegendBar" class="legendBar"></div>
+      <div class="d-flex justify-content-between muted" style="margin-top:-4px;">
+        <span id="spLegendLeft">Most fair</span><span id="spLegendMid">Medium</span><span id="spLegendRight">Least fair</span>
+      </div>
+      <div class="mt-2">
+        <div class="muted" id="spNote">Building color = accessibility score (near = greener).</div>
+      </div>
+    </div>
+    <div id="transitionHUD" class="d-none">
+      <div class="transition-hud-inner">
+        <span class="transition-hud-label transition-hud-before">Before</span>
+        <div class="transition-hud-track">
+          <div id="transitionHUDProgress" class="transition-hud-fill"></div>
+        </div>
+        <span class="transition-hud-label transition-hud-after">After</span>
+      </div>
+      <div id="transitionHUDContext" class="transition-hud-context"></div>
+    </div>
+    <div id="districtPopulationPanel" class="d-none">
+      <button id="districtPopulationClose" class="btn-close sidepanel-close" aria-label="Close"></button>
+      <h6 class="pe-4">District population</h6>
+      <div class="small text-muted mb-2">Age distribution from gender-age-population.json.</div>
+      <div class="small"><strong>District:</strong> <span id="districtPopulationName">—</span></div>
+      <div class="small mb-2"><strong>Regso:</strong> <span id="districtPopulationRegso">—</span></div>
+      <div class="d-flex gap-2 mb-2">
+        <div class="flex-fill">
+          <label for="districtPopulationYearSelect" class="form-label small text-muted mb-1">Year</label>
+          <select id="districtPopulationYearSelect" class="form-select form-select-sm"></select>
+        </div>
+        <div class="flex-fill">
+          <label for="districtPopulationAgeSelect" class="form-label small text-muted mb-1">Age group</label>
+          <select id="districtPopulationAgeSelect" class="form-select form-select-sm"></select>
+        </div>
+      </div>
+      <div id="districtPopulationChart"></div>
+      <div id="districtPopulationBarChart" class="mt-2"></div>
+      <div id="districtPopulationNote" class="small text-muted mt-2"></div>
+    </div>
+    <!-- Equity Analysis Panel -->
+    <div id="equityAnalysisPanel" class="d-none" style="
+      position:absolute; top:12px; left:12px; width:620px; max-width:60vw;
+      max-height:85vh; overflow:auto; background:rgba(255,255,255,0.97);
+      border-radius:10px; box-shadow:0 10px 28px rgba(0,0,0,0.28);
+      padding:12px; font-size:12px; color:#111; z-index:5;">
+      <button class="btn-close" style="position:absolute;top:6px;right:8px;"
+        onclick="document.getElementById('equityAnalysisPanel').classList.add('d-none')"></button>
+      <h6 style="font-weight:800;">Income × Fairness Equity Analysis</h6>
+      <div class="small text-muted mb-2">Compares accessibility across income quintiles, runs 3 placement scenarios, and checks robustness.</div>
+
+      <div id="equityAnalysisCats" class="mb-2">
+        <label class="small fw-bold">Categories:</label><br>
+        <!-- populated dynamically by equity-analysis.js -->
+      </div>
+
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <label class="small fw-bold mb-0">Budget (POIs per scenario):</label>
+        <input id="equityAnalysisBudget" type="number" class="form-control form-control-sm" style="width:60px;" min="1" max="10" value="3">
+        <button id="equityAnalysisRunBtn" class="btn btn-sm btn-warning">Run analysis</button>
+      </div>
+
+      <div id="equityAnalysisStatus" class="small text-muted mb-2"></div>
+      <div id="equityAnalysisOutput"></div>
+    </div>
+    <div id="parallelCoordsPanel" class="d-none">
+      <button id="parallelCoordsClose" class="btn-close sidepanel-close" aria-label="Close"></button>
+      <div class="d-flex align-items-center gap-2 pe-4">
+        <h6 class="mb-0">Parallel coordinates</h6>
+        <span id="parallelCoordsMaxBadge" class="badge text-bg-secondary">Max —</span>
+        <div class="d-flex align-items-center gap-2 ms-auto">
+          <label for="parallelCoordsMaxPts" class="small text-muted mb-0">Max points</label>
+          <input id="parallelCoordsMaxPts" type="number" class="form-control form-control-sm" value="0" min="0" step="100" style="width: 90px;" title="0 = show all">
+        </div>
+        <select
+          id="parallelCoordsDistrictSelect"
+          class="form-select form-select-sm w-auto d-none"
+          aria-label="District filter"
+        ></select>
+      </div>
+      <div id="parallelCoordsMode" class="small text-muted mb-1"></div>
+      <div id="parallelCoordsChart"></div>
+      <div id="parallelCoordsNote" class="small text-muted mt-2"></div>
+    </div>
+  </div>
+
+  <div class="chatbot-widget">
+    <div class="collapse chatbot-panel" id="chatbotPanel">
+      <div class="fw-semibold mb-2">Ask the map</div>
+      <div class="text-muted small mb-2">
+        Try: "Fairness for hospitals for cycling distance", "Fairness for veterinary with weight 1 and university with weight 10", "Show fairness for all", "Show districts mode and the statistic for Araby".
+      </div>
+      <input
+        id="aiInput"
+        class="form-control form-control-sm mb-2"
+        type="text"
+        placeholder="Ask a question…"
+        aria-label="Chatbot question"
+      />
+      <button id="aiSend" class="btn btn-sm btn-primary w-100" type="button">
+        Send
+      </button>
+      <div id="aiAnswer" class="chatbot-output small text-muted mt-2">
+        The assistant can load a city, change modes, adjust years, or compute fairness.
+      </div>
+    </div>
+    <button
+      class="btn btn-warning chatbot-toggle"
+      type="button"
+      data-bs-toggle="collapse"
+      data-bs-target="#chatbotPanel"
+      aria-expanded="false"
+      aria-controls="chatbotPanel"
+      title="Chatbot">
+      💬
+    </button>
+  </div>
+
+  <!-- DR Explorer LEFT SIDEBAR (Offcanvas) -->
+  <div class="offcanvas offcanvas-start" tabindex="-1" id="drOffcanvas" aria-labelledby="drOffcanvasLabel" data-bs-backdrop="false" data-bs-scroll="true">
+    <div class="offcanvas-header">
+      <h5 class="offcanvas-title" id="drOffcanvasLabel">Dimensionality Reduction Explorer</h5>
+      <button class="btn btn-outline-secondary offcanvas-toggle" data-bs-dismiss="offcanvas" aria-label="Close" title="Close panel">
+        <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="#6c757d" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="offcanvas-body">
+      <div class="dr-controls">
+        <div class="row row-cols-2 row-cols-md-3 row-cols-lg-3 g-2">
+          <div class="col">
+            <label class="form-label">Algorithm</label>
+            <select id="drAlgo" class="form-select form-select-sm">
+              <option value="umap">UMAP</option>
+              <option value="pca">PCA</option>
+            </select>
+          </div>
+
+          <div class="col">
+            <label class="form-label">Color by</label>
+            <select id="drColorBy" class="form-select form-select-sm">
+              <option value="overall">Overall accessibility (0–1)</option>
+              <option value="poi">Selected fairness (active POI)</option>
+              <option value="year">Built year</option>
+              <option value="height">Height</option>
+            </select>
+          </div>
+
+          <div class="col">
+            <label class="form-label">Max points</label>
+            <input id="drMaxPts" type="number" class="form-control form-control-sm" value="0" min="0" step="100" title="0 = show all">
+          </div>
+
+          <div class="col">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="" id="drNormalize" checked>
+              <label class="form-check-label" for="drNormalize">Normalize</label>
+            </div>
+          </div>
+
+          <!-- <div class="col">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="" id="drSyncMap" checked>
+              <label class="form-check-label" for="drSyncMap">Map → UMAP sync</label>
+            </div>
+          </div> -->
+
+          <div class="col action-row">
+            <label class="form-label d-none d-md-block">&nbsp;</label>
+            <div class="d-flex gap-2">
+              <button id="drRunBtn" class="btn btn-primary btn-sm">Run</button>
+              <button id="drLassoBtn" class="btn btn-outline-secondary btn-sm" title="Draw polygon to select">Lasso</button>
+              <button id="drClearSelBtn" class="btn btn-outline-secondary btn-sm" disabled>Clear</button>
+              <button id="drClearProjBtn" type="button" class="btn btn-outline-danger btn-sm" title="Remove the current projection" data-action="clear-umap">Remove</button>
+              <div>
+                <select id="drFeatureMode" class="form-select form-select-sm" style="width: 110px;">
+                  <option value="policy" selected>Policy</option>
+                  <option value="legacy">Legacy</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-12">
+            <span id="drStatus" class="text-muted small"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-3">
+        <label class="form-label d-flex justify-content-between align-items-center">
+          <span>Map selection</span>
+          <!-- <small class="text-muted">Shift+drag for box, Esc/Exit to stop</small> -->
+        </label>
+        <div class="d-flex align-items-center justify-content-between gap-2">
+          <div id="mapLassoControls" class="btn-group btn-group-sm" role="group" aria-label="Map selection tools">
+            <button id="mapLassoBtn" type="button" class="btn btn-outline-secondary" title="Draw a polygon on the map to select buildings">
+              Map lasso
+            </button>
+            <button id="mapLassoClearBtn" type="button" class="btn btn-outline-secondary" title="Clear map selection" disabled>
+              Clear
+            </button>
+          </div>
+          <span id="drMaxBadge" class="badge text-bg-secondary ms-auto">Max —</span>
+        </div>
+      </div>
+
+      <div class="mt-2">
+        <div id="drCanvasWrap" class="border rounded-2 position-relative"
+             style="background:#f8f9fa; min-height:320px; height:40vh; width:100%;">
+          <canvas id="drCanvas"></canvas>
+        </div>
+      </div>
+
+      <div class="mt-3">
+        <div id="drLegend" class="bg-white">
+          <div class="fw-bold mb-1" id="drLegendTitle">Legend</div>
+          <div id="drLegendGradient" class="dr-gradient mb-2" style="height:10px;border-radius:4px;background:linear-gradient(90deg,#1a9641 0%,#fdae61 50%,#d7191c 100%);"></div>
+          <div class="small mb-2" id="drLegendText">—</div>
+          <hr/>
+          <div class="small" id="drInfo">—</div>
+          <div class="small mt-2" id="drSelectInfo">—</div>
+        </div>
+      </div>
+
+      <div class="mt-3" id="drExplainPanel">
+        <div class="d-flex mb-2">
+          <button id="drEngineCalcBtn" type="button" class="btn btn-sm btn-outline-primary">
+            Calculate selected engine
+          </button>
+        </div>
+
+      <!-- Explanation engine selector (supervised vs unsupervised) -->
+      <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="small fw-semibold">Explanation engine</div>
+          <div class="btn-group btn-group-sm" role="group" aria-label="Explanation engine">
+            <button id="drEngineEBMBtn" type="button" class="btn btn-outline-secondary active">
+              EBM (supervised)
+            </button>
+            <button id="drEngineContrastBtn" type="button" class="btn btn-outline-secondary">
+              Contrastive dist. (unsupervised)
+            </button>
+          </div>
+        </div>
+
+        <!-- Shared feature-importance plot for both engines -->
+        <div id="drEnginePlot" class="mb-2" style="height:360px; overflow:hidden;">
+          Select some buildings (lasso) to see ranked features here.
+        </div>
+
+        <!-- Per-engine note (filled by JS, not inside the SVG) -->
+        <div id="drEngineNote" class="small text-muted mb-2"></div>
+
+        <!-- Stats / Model tabs -->
+        <div class="d-flex justify-content-between align-items-center mb-1">
+          <div class="fw-bold small">Cluster explanation</div>
+          <div class="btn-group btn-group-sm" role="group" aria-label="Explanation mode">
+            <button id="drExplainModeStats" type="button" class="btn btn-outline-secondary active">
+              Stats
+            </button>
+            <button id="drExplainModeModel" type="button" class="btn btn-outline-secondary">
+              Model
+            </button>
+          </div>
+        </div>
+
+        <div class="small text-muted mb-1 mt-3">
+          Larger score = stronger relationship with being in the selection.
+        </div>
+        <div class="small text-muted mb-1">
+          Shows how the selected cluster of buildings differs from the rest of the city.
+        </div>
+
+        <div id="drExplainStats" class="small mt-2">
+          <!-- Stats content goes here -->
+        </div>
+        <div id="drExplainModel" class="small d-none mt-2">
+          <!-- Model content goes here -->
+        </div>
+
+        <!-- ------------------------------------------------------------------ -->
+        <!-- City-wide fairness views, all coordinated with the DR selection    -->
+        <!-- ------------------------------------------------------------------ -->
+
+        <hr class="my-3">
+
+        <!-- (1) Overall fairness histogram -->
+        <div class="mb-3">
+          <div class="fw-bold small mb-1">Overall fairness histogram</div>
+          <div class="small text-muted mb-1">
+            Gray = all sampled buildings, green = current lasso selection.
+          </div>
+          <div id="drHistWrap" style="height: 140px;">
+            <!-- D3 histogram goes here -->
+          </div>
+        </div>
+
+        <!-- (2) Fairness by district / hex -->
+        <div class="mb-3">
+          <div class="fw-bold small mb-1">Fairness by building type</div>
+          <div class="small text-muted mb-1">
+            Bars show mean overall fairness per usage (worst at the top).
+          </div>
+          <div id="drDistrictBarWrap" style="height: 170px;">
+            <!-- D3 bar chart -->
+          </div>
+        </div>
+
+        <!-- (3) Height vs fairness scatter -->
+        <div class="mb-3">
+          <div class="fw-bold small mb-1">Category vs overall fairness</div>
+          <div class="small text-muted mb-1">
+            Each dot = a sampled building type (usage vs. accessibility). Green = selected cluster.
+          </div>
+          <div id="drScatterHeightWrap" style="height: 190px;">
+            <!-- D3 scatterplot -->
+          </div>
+        </div>
+
+        <!-- (4) Lorenz curve -->
+        <div class="mb-3">
+          <div class="fw-bold small mb-1">Lorenz curve of lack-of-access</div>
+          <div class="small text-muted mb-1">
+            Shows inequality of <em>lack-of-access</em> (1 − fairness) across buildings.
+          </div>
+          <div id="drLorenzWrap" style="height: 170px;">
+            <!-- D3 Lorenz curve -->
+          </div>
+        </div>
+
+        <!-- (5) Below-threshold share per district -->
+        <div class="mb-3">
+          <div class="fw-bold small mb-1">Share of buildings below fairness threshold</div>
+          <div class="d-flex align-items-center mb-1">
+            <span class="small me-2">Threshold:</span>
+            <input id="drThresholdSlider" type="range" min="0.1" max="0.9" step="0.05" value="0.5" style="width: 120px;">
+            <span id="drThresholdLabel" class="small ms-2">0.50</span>
+          </div>
+          <div class="small text-muted mb-1">
+            Bars show fraction of building types with overall fairness &lt; threshold.
+          </div>
+          <div id="drThresholdBarWrap" style="height: 170px;">
+            <!-- D3 threshold bar chart -->
+          </div>
+        </div>
+
+        <!-- (6) Small multiples for per-category fairness -->
+        <div class="mb-2">
+          <div class="fw-bold small mb-1">Per-category fairness histograms</div>
+          <div class="small text-muted mb-1">
+            Per-category fairness distributions for all available POI fairness dimensions, with selection overlay.
+          </div>
+          <div id="drCategoryHistsWrap" style="height: 200px;">
+            <!-- D3 small multiples -->
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-3 panel-block" id="llm-panel">
+        <h3>AI explanation</h3>
+
+        <label for="llm-view-select" class="small text-muted">Pick a plot to explain</label>
+        <select id="llm-view-select" class="form-select form-select-sm" style="margin-bottom: 6px;">
+          <option value="umap">UMAP scatterplot</option>
+          <option value="engine_ebm">Feature importance (EBM)</option>
+          <option value="engine_contrast">Feature importance (contrastive dist.)</option>
+          <option value="stats">Selection stats</option>
+          <option value="model">Selection model</option>
+          <option value="overall_hist">Overall fairness histogram</option>
+          <option value="building_type">Fairness by building type</option>
+          <option value="scatter">Category vs fairness scatter</option>
+          <option value="lorenz">Lorenz curve of lack-of-access</option>
+          <option value="threshold_bar" selected>Below-threshold share</option>
+          <option value="category_hists">Per-category fairness histograms</option>
+        </select>
+
+        <textarea
+          id="llm-question"
+          rows="2"
+          placeholder="Ask about this view (optional)…"
+          style="width: 100%; resize: vertical;"
+        ></textarea>
+
+        <button id="explain-view-btn" type="button" style="margin-top: 6px;">
+          Explain selected view
+        </button>
+
+        <div
+          id="llm-output"
+          class="small text-muted"
+          style="margin-top: 6px; min-height: 40px;"
+        >
+          Click the button to get an explanation.
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+ <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/deck.gl@8.8.19/dist.min.js"></script>
+  <script src="https://unpkg.com/@deck.gl/mapbox@8.8.19/dist.min.js"></script>
+  <script src="https://unpkg.com/h3-js@3.7.2"></script>
+  <script src="https://unpkg.com/@deck.gl/geo-layers@8.8.19/dist.min.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/proj4@2.12.1/dist/proj4.min.js"></script>
+
+  <!-- d3 for lasso + engine bar chart -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+
+  <script src="assets/js/main.js"></script>
+  <script src="assets/js/dr-feature-mode-patch.js"></script>
+  <script src="assets/js/history.js"></script>
+  <script src="assets/js/llm.js"></script>
+  <script src="assets/js/equity-analysis.js"></script>
+</body>
+</html>
