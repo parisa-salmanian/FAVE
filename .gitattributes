@@ -1,3 +1,6 @@
 frontend/assets/data/*.geojson filter=lfs diff=lfs merge=lfs -text
 frontend/assets/data/*.gpkg filter=lfs diff=lfs merge=lfs -text
 frontend/assets/data/*.xlsx filter=lfs diff=lfs merge=lfs -text
+api_data/static/jobs/**/*.geojson filter=lfs diff=lfs merge=lfs -text
+api_data/static/cache/** filter=lfs diff=lfs merge=lfs -text
+api_data/static/districts/*.geojson filter=lfs diff=lfs merge=lfs -text
