@@ -21,9 +21,9 @@
 **FAVE** is an interactive visual analytics system built on OpenStreetMap data that enables researchers and urban planners to explore, compare, and assess **accessibility fairness** across cities. It supports multiple travel modes, spatial scales, and what-if planning scenarios — powered by a local LLM through Ollama.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Växjö-5DCAA5?style=flat-square&labelColor=091422" alt="Växjö"/>
-  <img src="https://img.shields.io/badge/Malmö-EF9F27?style=flat-square&labelColor=091422" alt="Malmö"/>
-  <img src="https://img.shields.io/badge/Stockholm-85B7EB?style=flat-square&labelColor=091422" alt="Stockholm"/>
+  <a href="#-about"><img src="https://img.shields.io/badge/Växjö-5DCAA5?style=flat-square&labelColor=091422" alt="Växjö"/></a>
+  <a href="#-about"><img src="https://img.shields.io/badge/Malmö-EF9F27?style=flat-square&labelColor=091422" alt="Malmö"/></a>
+  <a href="#-about"><img src="https://img.shields.io/badge/Stockholm-85B7EB?style=flat-square&labelColor=091422" alt="Stockholm"/></a>
 </p>
 
 ---
