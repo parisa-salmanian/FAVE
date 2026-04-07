@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="fave_cover_final__1_.svg" alt="FAVE Banner" width="100%"/>
+  <img src="fave_cover_final.png" alt="FAVE Banner" width="100%"/>
 </p>
 
 <p align="center">
