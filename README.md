@@ -134,6 +134,28 @@ FAVE_DATA_BASE_URL=https://my-host.example/fave python tools/fetch_city_data.py 
 
 The manifest at `tools/data_manifest.json` lists every file and its expected size — edit it if you need different paths.
 
+### Lantmäteriet building geometry (full Sweden, optional)
+
+The geojsons in LFS are slimmed for the demo. If you want the **authoritative building footprints from Lantmäteriet** (Sweden's land survey agency) — for example to extend FAVE to a kommun that isn't in the demo, or to refresh the geometry — there's a second fetcher:
+
+```bash
+# List every kommun in the Byggnader collection (~290 entries)
+python tools/fetch_lantmateriet_buildings.py --list
+
+# Pull a known FAVE city by alias
+python tools/fetch_lantmateriet_buildings.py --city vaxjo
+
+# Pull by raw 4-digit kommun code (e.g., 0180 = Stockholm, 1480 = Göteborg)
+python tools/fetch_lantmateriet_buildings.py --kommun 0180 --kommun 1480
+
+# Pull every kommun in Sweden (≈ 3-4 GB unzipped)
+python tools/fetch_lantmateriet_buildings.py --all
+```
+
+The data is published by Lantmäteriet under **CC-BY-4.0** — no API key or OAuth flow is required, just a registered Lantmäteriet account agreeing to the license. Files land in `lantmateriet/byggnader/byggnad_kn<code>.gpkg` (EPSG:3006 / SWEREF 99 TM), and the cached ZIPs in `lantmateriet/zip/`. The whole `lantmateriet/` folder is gitignored.
+
+To use these files in FAVE you'll need to reproject to EPSG:4326 (the frontend works in lon/lat) and slim them down to FAVE's expected attribute set; `tools/slim_city_files.py` is the existing recipe to adapt.
+
 ---
 
 ## 👥 Authors
