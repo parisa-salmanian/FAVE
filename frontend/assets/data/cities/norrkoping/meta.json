@@ -1,0 +1,26 @@
+{
+  "key": "norrkoping",
+  "display_name": "Norrköping",
+  "query": "Norrköping, Sweden",
+  "lat": 58.5909124,
+  "lon": 16.1903511,
+  "bbox": [
+    58.4309124,
+    16.0303511,
+    58.7509124,
+    16.3503511
+  ],
+  "baked_at": "2026-05-06T09:49:43.668821+00:00",
+  "counts": {
+    "grocery": 68,
+    "hospital": 1,
+    "pharmacy": 15,
+    "dentistry": 5,
+    "healthcare_center": 15,
+    "veterinary": 2,
+    "university": 8,
+    "kindergarten": 89,
+    "school_primary": 1,
+    "school_high": 85
+  }
+}

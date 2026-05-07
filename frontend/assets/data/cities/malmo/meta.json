@@ -1,0 +1,26 @@
+{
+  "key": "malmo",
+  "display_name": "Malmö",
+  "query": "Malmö, Sweden",
+  "lat": 55.6052931,
+  "lon": 13.0001566,
+  "bbox": [
+    55.5479606,
+    12.9097653,
+    55.6503655,
+    13.1295052
+  ],
+  "baked_at": "2026-05-06T09:32:33.528873+00:00",
+  "counts": {
+    "grocery": 212,
+    "hospital": 5,
+    "pharmacy": 36,
+    "dentistry": 32,
+    "healthcare_center": 64,
+    "veterinary": 5,
+    "university": 4,
+    "kindergarten": 162,
+    "school_primary": 2,
+    "school_high": 5
+  }
+}

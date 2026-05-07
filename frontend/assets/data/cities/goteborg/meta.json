@@ -1,0 +1,26 @@
+{
+  "key": "goteborg",
+  "display_name": "Göteborg",
+  "query": "Göteborg, Sweden",
+  "lat": 57.7072326,
+  "lon": 11.9670171,
+  "bbox": [
+    57.5472326,
+    11.8070171,
+    57.8672326,
+    12.1270171
+  ],
+  "baked_at": "2026-05-06T09:37:03.274670+00:00",
+  "counts": {
+    "grocery": 347,
+    "hospital": 11,
+    "pharmacy": 68,
+    "dentistry": 67,
+    "healthcare_center": 178,
+    "veterinary": 14,
+    "university": 6,
+    "kindergarten": 372,
+    "school_primary": 1,
+    "school_high": 5
+  }
+}

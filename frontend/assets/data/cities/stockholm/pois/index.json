@@ -1,0 +1,26 @@
+{
+  "categories": [
+    "dentistry",
+    "grocery",
+    "healthcare_center",
+    "hospital",
+    "kindergarten",
+    "pharmacy",
+    "school_high",
+    "school_primary",
+    "university",
+    "veterinary"
+  ],
+  "counts": {
+    "grocery": 700,
+    "hospital": 45,
+    "pharmacy": 160,
+    "dentistry": 155,
+    "healthcare_center": 197,
+    "veterinary": 26,
+    "university": 37,
+    "kindergarten": 787,
+    "school_primary": 5,
+    "school_high": 4
+  }
+}

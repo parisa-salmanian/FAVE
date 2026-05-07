@@ -1,0 +1,26 @@
+{
+  "key": "vaxjo",
+  "display_name": "Växjö",
+  "query": "Växjö, Sweden",
+  "lat": 56.8787183,
+  "lon": 14.8094385,
+  "bbox": [
+    56.7187183,
+    14.6494385,
+    57.0387183,
+    14.9694385
+  ],
+  "baked_at": "2026-05-06T09:28:44.807690+00:00",
+  "counts": {
+    "hospital": 1,
+    "pharmacy": 15,
+    "dentistry": 6,
+    "healthcare_center": 7,
+    "veterinary": 1,
+    "university": 1,
+    "kindergarten": 44,
+    "school_primary": 43,
+    "school_high": 46,
+    "grocery": 47
+  }
+}

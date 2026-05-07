@@ -1,0 +1,33 @@
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- Editor / OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# --- Node ---
+node_modules/
+
+# --- Runtime / cache / job output (per-run; never commit) ---
+api_data/
+frontend/assets/data/cache/
+
+# --- Large data fetched via tools/fetch_city_data.py ---
+# (Listed individually so the small companion files in this folder
+# stay tracked — see tools/data_manifest.json for the full list.)
+frontend/assets/data/byggnad_*.geojson
+frontend/assets/data/bldg_web.geojson
+frontend/assets/data/lantmateriat-byggnadsverk-buildings-wgs84-11-12-2024.geojson
+frontend/assets/data/sweden_regso.geojson
+frontend/assets/data/all_sweden_regso.geojson
+frontend/assets/data/DeSO_2025.gpkg
+
+# --- Backups (local-only, never commit) ---
+*.bak
+*.geojson.bak

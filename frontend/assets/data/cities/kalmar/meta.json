@@ -1,0 +1,26 @@
+{
+  "key": "kalmar",
+  "display_name": "Kalmar",
+  "query": "Kalmar, Sweden",
+  "lat": 56.6628826,
+  "lon": 16.3662382,
+  "bbox": [
+    56.5028826,
+    16.2062382,
+    56.8228826,
+    16.5262382
+  ],
+  "baked_at": "2026-05-06T09:43:45.282692+00:00",
+  "counts": {
+    "grocery": 43,
+    "hospital": 5,
+    "pharmacy": 13,
+    "dentistry": 11,
+    "healthcare_center": 14,
+    "veterinary": 4,
+    "university": 1,
+    "kindergarten": 52,
+    "school_primary": 48,
+    "school_high": 50
+  }
+}

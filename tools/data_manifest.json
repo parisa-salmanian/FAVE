@@ -1,0 +1,60 @@
+{
+  "$comment": "Files needed at runtime that are too large to ship in git. fetch_city_data.py reads this and downloads missing files. Override base_url with the FAVE_DATA_BASE_URL env var if you self-host. Default points to a GitHub Release tagged 'data-v1' on claudiodgl/FAVE.",
+  "base_url": "https://github.com/claudiodgl/FAVE/releases/download/data-v1",
+  "shared": [
+    {
+      "local": "frontend/assets/data/lantmateriat-byggnadsverk-buildings-wgs84-11-12-2024.geojson",
+      "remote": "lantmateriat-byggnadsverk-buildings-wgs84-11-12-2024.geojson",
+      "size_mb": 25,
+      "note": "Source for Växjö buildings; also enrichment source for other cities."
+    },
+    {
+      "local": "frontend/assets/data/bldg_web.geojson",
+      "remote": "bldg_web.geojson",
+      "size_mb": 20,
+      "note": "Statistics buildings, used by loadSentinelData."
+    }
+  ],
+  "cities": {
+    "vaxjo": {
+      "label": "Växjö",
+      "files": []
+    },
+    "malmo": {
+      "label": "Malmö",
+      "files": [
+        {"local": "frontend/assets/data/byggnad_malmo.geojson", "remote": "byggnad_malmo.geojson", "size_mb": 42}
+      ]
+    },
+    "goteborg": {
+      "label": "Göteborg",
+      "files": [
+        {"local": "frontend/assets/data/byggnad_goteborg.geojson", "remote": "byggnad_goteborg.geojson", "size_mb": 132}
+      ]
+    },
+    "stockholm": {
+      "label": "Stockholm",
+      "files": [
+        {"local": "frontend/assets/data/byggnad_stockholm.geojson", "remote": "byggnad_stockholm.geojson", "size_mb": 116}
+      ]
+    },
+    "norrkoping": {
+      "label": "Norrköping",
+      "files": [
+        {"local": "frontend/assets/data/byggnad_norrkoping.geojson", "remote": "byggnad_norrkoping.geojson", "size_mb": 88}
+      ]
+    },
+    "uppsala": {
+      "label": "Uppsala",
+      "files": [
+        {"local": "frontend/assets/data/byggnad_uppsala.geojson", "remote": "byggnad_uppsala.geojson", "size_mb": 53}
+      ]
+    },
+    "kalmar": {
+      "label": "Kalmar",
+      "files": [
+        {"local": "frontend/assets/data/byggnad_kalmar.geojson", "remote": "byggnad_kalmar.geojson", "size_mb": 52}
+      ]
+    }
+  }
+}

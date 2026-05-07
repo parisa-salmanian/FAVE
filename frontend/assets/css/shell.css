@@ -1,0 +1,2063 @@
+/*
+ * FAVE shell — full design layout. Only the deck.gl map (#mapContainer)
+ * survives from the original Bootstrap-based UI. The navbar and every
+ * legacy panel/popover are hidden via CSS; the new shell rebuilds the
+ * UI in shell.js and wires user actions back to the legacy form
+ * controls (which stay in the DOM but are hidden) so existing JS
+ * handlers keep firing.
+ */
+
+:root {
+  --font-sans: "Inter", "Helvetica Neue", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+
+  --bg: #fbfaf7;
+  --bg-1: #f4f2ec;
+  --bg-2: #ecebe4;
+  --surface: #ffffff;
+  --surface-1: #faf9f5;
+  --surface-2: #f1efe8;
+  --line: rgba(28, 25, 22, 0.08);
+  --line-strong: rgba(28, 25, 22, 0.16);
+  --ink: #1c1916;
+  --ink-1: #2f2a25;
+  --ink-2: #5b544c;
+  --ink-3: #8a8278;
+
+  --accent: oklch(62% 0.13 40);
+  --accent-soft: oklch(94% 0.04 40);
+  --accent-ink: oklch(38% 0.10 40);
+  --info: oklch(58% 0.13 245);
+  --info-soft: oklch(94% 0.04 245);
+  --good: oklch(62% 0.10 155);
+  --good-soft: oklch(94% 0.03 155);
+
+  --fair-0: oklch(35% 0.13 285);
+  --fair-1: oklch(45% 0.13 250);
+  --fair-2: oklch(58% 0.12 200);
+  --fair-3: oklch(72% 0.13 155);
+  --fair-4: oklch(85% 0.16 110);
+
+  --shadow-1: 0 1px 0 rgba(28, 25, 22, 0.04), 0 1px 2px rgba(28, 25, 22, 0.06);
+  --shadow-2: 0 2px 4px rgba(28, 25, 22, 0.06), 0 8px 24px rgba(28, 25, 22, 0.08);
+  --shadow-3: 0 4px 12px rgba(28, 25, 22, 0.10), 0 16px 48px rgba(28, 25, 22, 0.10);
+
+  --topbar-h: 52px;
+  --rail-w: 56px;
+  --inspector-w: 320px;
+  --drawer-h: 380px;
+}
+
+[data-theme="dark"] {
+  --bg: #0f100f;
+  --surface: #181a1d;
+  --surface-1: #1f2226;
+  --surface-2: #262a2f;
+  --line: rgba(255, 252, 245, 0.08);
+  --ink: #f5f2ec;
+  --ink-1: #e3dfd6;
+  --ink-2: #a8a299;
+  --ink-3: #6f6a62;
+  --accent-soft: oklch(28% 0.05 40);
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* === Hide everything from the legacy layout that isn't the map === */
+nav.navbar.my-navbar,
+button.chatbot-toggle,
+.chatbot-panel,
+.chatbot-widget,
+#sidePanel,
+#districtPopulationPanel,
+#historyPanel,           /* legacy black panel built by history.js */
+#changeLogDropdown {     /* legacy Bootstrap change-log dropdown */
+  display: none !important;
+}
+
+/* Legacy popovers we still toggle programmatically — keep their DOM and
+   show only when the new shell flips them on. We restyle them below. */
+#equityAnalysisPanel,
+#parallelCoordsPanel {
+  /* Legacy d-none class controls open/closed; overrides below override
+     positioning to fit the new layout. */
+}
+
+/* The DR offcanvas is left to Bootstrap; we restyle the surface only. */
+.offcanvas { z-index: 1055 !important; background: var(--surface); color: var(--ink); }
+
+/* === New topbar === */
+.fave-topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  z-index: 1050;
+  font-family: var(--font-sans);
+}
+.fave-topbar .topbar-section { display: flex; align-items: center; gap: 8px; }
+.fave-topbar .topbar-divider { width: 1px; height: 24px; background: var(--line); }
+.fave-topbar .topbar-spacer { flex: 1; }
+.fave-topbar .brand { font-weight: 600; letter-spacing: 0.04em; font-size: 13px; color: var(--ink); }
+.fave-topbar .brand-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  /* FAVE Reach Compass · iOS-tinted aesthetic from the icon kit */
+  background: linear-gradient(135deg, #3A6EA5 0%, #2A5078 100%);
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(58, 110, 165, 0.35);
+}
+[data-theme="dark"] .fave-topbar .brand-mark {
+  /* Brighter-blue tint matches the kit's dark-accent compass (#5B9BD9). */
+  background: linear-gradient(135deg, #5B9BD9 0%, #3A6EA5 100%);
+  box-shadow: 0 2px 6px rgba(91, 155, 217, 0.45);
+}
+.fave-topbar .brand-name strong { font-weight: 700; }
+.fave-topbar .field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.fave-topbar .field-label {
+  color: var(--ink-3);
+  font-weight: 500;
+}
+.fave-topbar .control,
+.fave-topbar .icon-btn {
+  font-family: var(--font-sans);
+  cursor: pointer;
+}
+.fave-topbar .control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-1);
+  font-weight: 500;
+}
+.fave-topbar .control:hover {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}
+.fave-topbar .segmented {
+  display: inline-flex;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.fave-topbar .segmented button {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.fave-topbar .segmented button[data-active="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+.fave-topbar .icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid transparent;
+}
+.fave-topbar .icon-btn:hover {
+  background: var(--surface-1);
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+/* === Left rail === */
+.fave-rail {
+  position: fixed;
+  top: var(--topbar-h);
+  left: 0;
+  bottom: 0;
+  width: var(--rail-w);
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 2px;
+  z-index: 1040;
+  overflow-y: auto;
+  overflow-x: visible;
+  font-family: var(--font-sans);
+}
+.fave-rail .rail-section-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+  margin: 8px 0 4px;
+  width: 100%;
+  text-align: center;
+}
+.fave-rail .rail-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s, color 0.15s;
+}
+.fave-rail .rail-btn:hover {
+  background: var(--surface-1);
+  color: var(--ink);
+}
+.fave-rail .rail-btn[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.fave-rail .rail-btn[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+.fave-rail .rail-divider {
+  width: 24px;
+  height: 1px;
+  background: var(--line);
+  margin: 6px 0;
+}
+.fave-rail .rail-tip {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--ink);
+  color: var(--bg);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1100;
+}
+/* Instant on hover — no transition, no native title delay */
+.fave-rail .rail-btn:hover .rail-tip,
+.fave-rail .rail-btn:focus-visible .rail-tip {
+  opacity: 1;
+}
+
+/* Custom JS-managed tooltip — positioned with `position: fixed` so it can
+   escape any ancestor's `overflow: hidden`/`auto` (the rail clips its content
+   on the X axis because `overflow-y: auto` forces `overflow-x: auto` too). */
+.fave-tip {
+  position: fixed;
+  background: var(--ink);
+  color: var(--bg);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10000;
+  opacity: 0;
+  transition: opacity 0.06s;
+}
+.fave-tip[data-shown="true"] { opacity: 1; }
+
+/* === Map: between rail and inspector, below topbar === */
+#mapContainer {
+  position: fixed !important;
+  top: var(--topbar-h) !important;
+  left: var(--rail-w) !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  background: var(--bg-1) !important;
+}
+/* Inspector overlays the map without resizing it — the user explicitly
+   asked us to stop the layout shift on toggle. */
+/* (no #mapContainer width adjustment for inspector) */
+
+/* === Inspector lines up with the new topbar === */
+#inspector { top: var(--topbar-h) !important; }
+#inspectorToggleBtn { display: none; }
+
+/* Floating "Clear selection" pill — sits at the top of the map area,
+   right of the metric strip, visible only when a selection exists. */
+.clear-selection-pill {
+  position: fixed;
+  top: calc(var(--topbar-h) + 12px);
+  right: 16px;
+  z-index: 1058;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 100px;
+  background: var(--accent);
+  color: white;
+  border: 0;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: var(--shadow-2);
+  transition: filter 0.15s, transform 0.15s;
+}
+.clear-selection-pill:hover { filter: brightness(0.95); }
+.clear-selection-pill:active { transform: translateY(1px); }
+.clear-selection-pill[hidden] { display: none; }
+body[data-inspector-open="true"] .clear-selection-pill {
+  right: calc(var(--inspector-w, 320px) + 16px);
+}
+
+/* Metric strip */
+#metricStrip {
+  top: calc(var(--topbar-h) + 12px) !important;
+  left: calc(50% + (var(--rail-w) / 2)) !important;
+}
+/* Intentionally NOT shifting the metric strip when the inspector opens —
+   the user wants overall/gini/POIs to stay put, even if the inspector
+   overlaps it. Same applies to .shell-travel below. */
+
+/* === Map overlays === */
+.shell-legend {
+  position: fixed;
+  bottom: 16px;
+  left: calc(var(--rail-w) + 16px);
+  width: 220px;
+  padding: 12px;
+  z-index: 1035;
+  background: color-mix(in oklch, var(--surface) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-2);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--ink);
+}
+.shell-legend .legend-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.shell-legend .ramp {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(to right, var(--fair-0), var(--fair-1), var(--fair-2), var(--fair-3), var(--fair-4));
+  margin-bottom: 4px;
+}
+.shell-legend .ramp-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.shell-legend .legend-sub {
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-top: 8px;
+  line-height: 1.4;
+}
+
+.shell-zoom {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 1035;
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  overflow: hidden;
+  background: color-mix(in oklch, var(--surface) 92%, transparent);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+}
+body[data-inspector-open="true"] .shell-zoom { right: calc(var(--inspector-w) + 16px); }
+.shell-zoom button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-1);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
+}
+.shell-zoom button:last-child { border-bottom: none; }
+.shell-zoom button:hover { background: var(--surface-1); }
+
+.shell-travel {
+  position: fixed;
+  bottom: 16px;
+  left: calc(50% + (var(--rail-w) / 2));
+  transform: translateX(-50%);
+  z-index: 1035;
+  display: inline-flex;
+  background: color-mix(in oklch, var(--surface) 92%, transparent);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+  box-shadow: var(--shadow-2);
+  font-family: var(--font-sans);
+}
+/* Travel mode (walking/cycling/car) stays at its default centered
+   position regardless of inspector state — the user wants it pinned. */
+.shell-travel button {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.shell-travel button[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  box-shadow: 0 0 0 2px var(--accent), var(--shadow-1);
+  font-weight: 600;
+}
+.shell-travel button[data-active="true"] svg { color: var(--accent); }
+
+/* === Floating panels (city dropdown, POI popover, what-if, etc.) === */
+.shell-popover {
+  position: fixed;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-3);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--ink);
+  z-index: 1060;
+  display: none;
+}
+.shell-popover[data-open="true"] { display: block; }
+.shell-popover .popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+  font-size: 13px;
+}
+.shell-popover .popover-header .title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.shell-popover .popover-header .close-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.shell-popover .popover-header .close-btn:hover {
+  background: var(--surface-1);
+  color: var(--ink);
+}
+.shell-popover .popover-body { padding: 12px 14px; }
+
+/* Generic .icon-btn used by panes (DR Explorer, Parallel Coords header).
+   The fave-topbar / shell-drawer-bar scoped versions still take precedence
+   inside their containers via cascade specificity. */
+.pane-header .icon-btn,
+.pane-tools .icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s, color 0.15s;
+}
+.pane-header .icon-btn:hover,
+.pane-tools .icon-btn:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.shell-popover .popover-footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Meso · hex size popover */
+#shellMeso .meso-size-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+#shellMeso .meso-size-row {
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+  font-size: 12px;
+  font-weight: 500;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+#shellMeso .meso-size-row:hover { background: var(--surface-1); }
+#shellMeso .meso-size-row[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  font-weight: 600;
+}
+#shellMeso .meso-hide-row {
+  width: 100%;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+#shellMeso .meso-hide-row:hover { background: var(--surface-1); color: var(--ink); }
+
+/* Help modal — full-screen overlay with a centred card. */
+.shell-help-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: none;
+  font-family: var(--font-sans, "Inter", system-ui, sans-serif);
+}
+.shell-help-modal[data-open="true"] { display: block; }
+.shell-help-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 16, 15, 0.45);
+  backdrop-filter: blur(2px);
+}
+.shell-help-card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.shell-help-head {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.shell-help-brand { display: flex; align-items: center; gap: 12px; }
+.shell-help-title { font-size: 14px; font-weight: 700; color: var(--ink); line-height: 1.3; }
+.shell-help-sub   { font-size: 11px; color: var(--ink-3); margin-top: 2px; }
+.shell-help-head .close-btn {
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.shell-help-head .close-btn:hover { background: var(--surface-1); color: var(--ink); }
+.shell-help-body {
+  padding: 18px 22px 22px;
+  overflow-y: auto;
+  flex: 1;
+}
+.shell-help-body section + section { margin-top: 16px; }
+.shell-help-body h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
+}
+.shell-help-body p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--ink); }
+.shell-help-body ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.55; color: var(--ink); }
+.shell-help-body ul li + li { margin-top: 3px; }
+.shell-help-body strong { font-weight: 600; }
+.shell-help-foot {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--ink-3);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Visual help components — callouts, cards, mode chips, examples */
+.shell-help-body .help-callout {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 13px;
+  line-height: 1.55;
+  margin-bottom: 4px;
+}
+.shell-help-body .help-callout-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #3A6EA5 0%, #2A5078 100%);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(58, 110, 165, 0.3);
+}
+.shell-help-body .help-callout-icon svg { display: block; }
+.shell-help-body .help-callout strong { font-weight: 700; color: var(--accent-ink); }
+
+.shell-help-body h4 .help-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  margin-right: 8px;
+  vertical-align: -5px;
+}
+.shell-help-body h4 .help-icon svg { display: block; }
+
+.shell-help-body .help-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 6px;
+}
+.shell-help-body .help-grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+.shell-help-body .help-card {
+  padding: 12px 14px;
+  border-radius: 9px;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.shell-help-body .help-card-head {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.shell-help-body .help-card p { font-size: 12px; line-height: 1.5; color: var(--ink); margin: 0; }
+.shell-help-body .help-card .dir-up   { color: #1f9d55; font-weight: 700; }
+.shell-help-body .help-card .dir-down { color: #1f9d55; font-weight: 700; }
+.shell-help-body .help-card-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-direction: row;
+}
+.shell-help-body .help-card-row > div { flex: 1; }
+.shell-help-body .help-card-row strong { font-size: 13px; color: var(--ink); display: block; margin-bottom: 2px; }
+.shell-help-body .help-icon-tile {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.shell-help-body .help-icon-tile svg { display: block; }
+
+.shell-help-body .help-mode-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.shell-help-body .help-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.shell-help-body .help-mode-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 0 0 1px var(--accent);
+  font-weight: 600;
+}
+.shell-help-body .help-mode-active svg { color: var(--accent); }
+
+.shell-help-body .help-examples {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+.shell-help-body .help-examples li {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+}
+.shell-help-body .help-examples li + li { margin-top: 6px; }
+.shell-help-body .help-examples code {
+  font-family: var(--font-mono, "JetBrains Mono", ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--ink);
+  background: transparent;
+  padding: 0;
+}
+
+@media (max-width: 600px) {
+  .shell-help-body .help-grid,
+  .shell-help-body .help-grid-3 { grid-template-columns: 1fr; }
+}
+
+/* === Equity analysis panel ===============================================
+   Re-skinned to match the FAVE shell. Sits below the metric strip and to
+   the right of the rail, so it never overlaps either. Uses the same
+   surface/ink/accent tokens as the rest of the design. */
+.equity-panel {
+  position: fixed;
+  top: calc(var(--topbar-h, 52px) + 64px);
+  left: calc(var(--rail-w, 56px) + 16px);
+  width: 440px;
+  max-width: calc(100vw - var(--rail-w, 56px) - 32px);
+  max-height: calc(100vh - var(--topbar-h, 52px) - 96px);
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(15, 16, 15, 0.14);
+  z-index: 1045;
+  font-family: var(--font-sans, "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.equity-panel.d-none { display: none !important; }
+.equity-panel-head {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.equity-panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+.equity-panel-close {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.equity-panel-close:hover { background: var(--surface-1); color: var(--ink); }
+.equity-panel-body { padding: 14px 16px 16px; overflow-y: auto; flex: 1; font-size: 12px; }
+.equity-panel-desc { margin: 0 0 14px; color: var(--ink-2); line-height: 1.55; }
+.equity-field { margin-bottom: 12px; }
+.equity-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.equity-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+.equity-field-row .equity-label { margin-bottom: 0; }
+.equity-row-controls { display: flex; align-items: center; gap: 8px; }
+.equity-input {
+  height: 28px;
+  width: 64px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  text-align: center;
+}
+.equity-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in oklch, var(--accent) 25%, transparent); }
+.equity-btn {
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface-1);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+.equity-btn:hover { background: var(--surface-2); }
+.equity-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.equity-btn-primary:hover { filter: brightness(1.04); }
+.equity-status {
+  font-size: 11px;
+  color: var(--ink-3);
+  margin: 8px 0;
+  min-height: 14px;
+}
+.equity-status.text-danger { color: #d04a3b; }
+.equity-output { font-size: 12px; color: var(--ink); }
+
+/* Categories list inserted dynamically by equity-analysis.js — wrap nicely. */
+.equity-panel #equityAnalysisCats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.equity-panel #equityAnalysisCats label,
+.equity-panel #equityAnalysisCats .form-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ink);
+  margin: 0;
+  padding: 0;
+}
+.equity-panel #equityAnalysisCats input[type="checkbox"] {
+  margin: 0 4px 0 0;
+}
+
+/* Dark mode */
+body[data-theme="dark"] .equity-panel {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+body[data-theme="dark"] .equity-status.text-danger { color: #ff8580; }
+
+.shell-btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--line);
+  background: var(--surface-1);
+  color: var(--ink-1);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.shell-btn:hover { background: var(--surface-2); }
+.shell-btn-primary {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.shell-btn-primary:hover { opacity: 0.9; }
+
+/* City dropdown menu in topbar */
+.shell-city-menu {
+  width: 200px;
+}
+.shell-city-menu .popover-body { padding: 6px; }
+.shell-city-menu .city-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+.shell-city-menu .city-row:hover { background: var(--surface-1); }
+.shell-city-menu .city-row[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* POI popover */
+.shell-poi-menu {
+  width: 360px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+.shell-poi-menu .poi-row {
+  display: grid;
+  grid-template-columns: auto 1fr 90px 28px;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 4px;
+  border-radius: 6px;
+}
+.shell-poi-menu .poi-row[data-checked="true"] { background: var(--surface-1); }
+.shell-poi-menu .poi-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ink);
+}
+.shell-poi-menu .poi-row .pl-icon {
+  /* Show the legend SVG as-is (it already includes the coloured circle +
+     white glyph baked in). No coloured box, no white-silhouette filter. */
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  background: transparent !important;
+  border-radius: 0;
+}
+.shell-poi-menu .poi-row .pl-icon .poi-legend-img {
+  width: 22px;
+  height: 22px;
+  filter: none;
+  pointer-events: none;
+}
+.shell-poi-menu .poi-row input[type="range"] { width: 100%; }
+.shell-poi-menu .poi-row .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  color: var(--ink-2);
+  font-size: 11px;
+}
+.shell-poi-menu .poi-foot-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.shell-poi-menu .poi-foot-row .spacer { flex: 1; }
+.shell-poi-menu .poi-foot-row label.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* Changes panel — interactive diff tracker (separate from the passive
+   History stack popover). Each row has a Show/Hide toggle that pins the
+   change's per-building diff colors on the map via highlightChangeOnMap. */
+.shell-changes {
+  width: 380px;
+  max-height: 70vh;
+}
+/* Flex layout only applies when the popover is open; otherwise the base
+   .shell-popover { display: none } would be overridden and the panel would
+   show at boot. The combined selector below has higher specificity than
+   .shell-popover[data-open="true"] alone, so it wins for both cases. */
+.shell-popover[data-open="true"].shell-changes {
+  display: flex;
+  flex-direction: column;
+}
+.shell-changes .popover-header .changes-meta {
+  font-size: 11px;
+  color: var(--ink-3);
+  font-weight: 500;
+  margin-left: 4px;
+}
+.shell-changes .popover-body { padding: 0; overflow-y: auto; }
+.shell-changes .changes-empty {
+  padding: 18px 14px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.shell-changes .change-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.shell-changes .change-row:last-child { border-bottom: none; }
+.shell-changes .change-row[data-active="true"] { background: var(--accent-soft); }
+.shell-changes .change-main { min-width: 0; }
+.shell-changes .change-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shell-changes .change-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.shell-changes .change-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.shell-changes .change-time {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.shell-changes .btn-toggle-vis {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.shell-changes .btn-toggle-vis:hover {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.shell-changes .btn-toggle-vis[data-on="true"] {
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
+}
+.shell-changes .delta-pill {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: var(--surface-1);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+}
+.shell-changes .delta-pill[data-dir="up"]   { color: oklch(45% 0.18 25);  background: color-mix(in oklch, oklch(58% 0.16 25) 12%, transparent); }
+.shell-changes .delta-pill[data-dir="down"] { color: oklch(42% 0.16 245); background: color-mix(in oklch, oklch(58% 0.13 245) 12%, transparent); }
+.shell-changes .shell-btn-danger {
+  background: color-mix(in oklch, oklch(58% 0.16 25) 8%, var(--surface));
+  color: oklch(45% 0.18 25);
+  border-color: color-mix(in oklch, oklch(58% 0.16 25) 25%, var(--line));
+}
+.shell-changes .shell-btn-danger:hover {
+  background: color-mix(in oklch, oklch(58% 0.16 25) 14%, var(--surface));
+}
+
+/* History stack popover */
+.shell-history {
+  width: 320px;
+  max-height: 60vh;
+}
+/* Same fix as .shell-changes — only apply flex when open so the base
+   .shell-popover { display: none } can hide the panel at boot. */
+.shell-popover[data-open="true"].shell-history {
+  display: flex;
+  flex-direction: column;
+}
+.shell-history .popover-body { padding: 8px; overflow-y: auto; }
+.shell-history .history-empty {
+  padding: 18px 12px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.shell-history .history-item {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.shell-history .history-item:hover { background: var(--surface-1); }
+.shell-history .history-item[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.shell-history .history-item .num {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+.shell-history .history-item .label {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shell-history .history-item .time {
+  font-size: 11px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.shell-history .delta-pill {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  margin-left: 6px;
+}
+.shell-history .delta-pill[data-dir="up"]   { color: var(--bad, oklch(58% 0.16 25));   background: color-mix(in oklch, oklch(58% 0.16 25) 12%, transparent); }
+.shell-history .delta-pill[data-dir="down"] { color: var(--good); background: var(--good-soft); }
+.shell-history .delta-pill[data-dir="zero"] { color: var(--ink-3); background: var(--surface-2); }
+
+/* AI sidebar (right slide-in like the design) */
+.shell-ai {
+  position: fixed;
+  top: var(--topbar-h);
+  right: 0;
+  bottom: 0;
+  width: 360px;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  z-index: 1055;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-sans);
+  transform: translateX(100%);
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.06);
+}
+.shell-ai[data-open="true"] { transform: translateX(0); }
+.shell-ai .ai-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+  font-size: 13px;
+}
+.shell-ai .ai-header .title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.shell-ai .ai-header .glow {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--accent) 25%, transparent);
+}
+.shell-ai .ai-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--ink-1);
+  line-height: 1.5;
+}
+.shell-ai .ai-msg {
+  padding: 10px 12px;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+}
+.shell-ai .ai-msg.user {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.shell-ai .ai-input-wrap {
+  border-top: 1px solid var(--line);
+  padding: 10px 14px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.shell-ai textarea.ai-input {
+  flex: 1;
+  resize: none;
+  height: 60px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-1);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+}
+.shell-ai textarea.ai-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+/* AI sidebar overlays the map; same no-resize policy as the inspector. */
+
+/* Global spinner (already in legacy) — restyle backdrop. */
+#globalSpinnerOverlay { z-index: 1080 !important; }
+
+/* ============================================================
+   Reskin the legacy DR offcanvas + parallel coords panel as the
+   design's bottom drawer panes. The interior controls keep their
+   Bootstrap markup but inherit the warm-paper surface, Inter font,
+   and clean separators.
+   ============================================================ */
+
+/* DR offcanvas — reposition as a bottom drawer. When the parallel-coords
+   panel is also visible, DR takes the right half so they sit side-by-side
+   like the design's AnalyticsDrawer. */
+#drOffcanvas {
+  top: auto !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: var(--rail-w, 56px) !important;
+  width: auto !important;
+  height: var(--drawer-h, 380px) !important;
+  max-height: calc(100vh - var(--topbar-h, 52px) - 80px) !important;
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  border-top: 1px solid var(--line) !important;
+  border-right: 0 !important;
+  border-left: 0 !important;
+  border-bottom: 0 !important;
+  border-radius: 12px 12px 0 0 !important;
+  box-shadow: 0 -4px 16px rgba(28, 25, 22, 0.06) !important;
+  font-family: var(--font-sans) !important;
+  /* Slide animation (Bootstrap drives it via transform on .show). */
+  transform: translateY(100%) !important;
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+  z-index: 1055 !important;
+}
+#drOffcanvas.show {
+  transform: translateY(0) !important;
+}
+body[data-inspector-open="true"] #drOffcanvas {
+  right: var(--inspector-w, 320px) !important;
+}
+/* Side-by-side split: when parallel coords is also open, PC takes the
+   left ~60% (its long horizontal axes need room) and DR the right ~40%
+   (DR has its own internal grid that splits scatter ↔ explanation). */
+body[data-pc-open="true"] #drOffcanvas {
+  left: calc(var(--rail-w, 56px) + (100vw - var(--rail-w, 56px)) * 0.6) !important;
+}
+body[data-pc-open="true"][data-inspector-open="true"] #drOffcanvas {
+  left: calc(var(--rail-w, 56px) + (100vw - var(--rail-w, 56px) - var(--inspector-w, 320px)) * 0.6) !important;
+}
+
+/* DR offcanvas pane chrome — collapsed to the design's compact pane-header
+   (icon + title + sub + close icon). Locked to the same fixed height as
+   the Parallel Coords pane header so when both panes sit side-by-side
+   their bottom borders meet as one continuous bar (matches the design's
+   AnalyticsDrawer toolbar). */
+#drOffcanvas .offcanvas-header.pane-header,
+#parallelCoordsPanel[data-fave-design="pc"] .pane-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 14px !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  border-bottom: 1px solid var(--line) !important;
+  background: var(--surface-1) !important;
+  flex-shrink: 0;
+}
+#drOffcanvas .pane-header .pane-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+#drOffcanvas .pane-header .pane-title .tiny.muted {
+  font-weight: 500;
+  color: var(--ink-3);
+  margin-left: 4px;
+}
+#drOffcanvas .pane-header .pane-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+#drOffcanvas .offcanvas-body {
+  padding: 12px 16px !important;
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 12px !important;
+  overflow-y: auto;
+}
+
+/* ============================================================
+   DR Explorer — handoff design layout.
+   The .offcanvas-body now hosts a .dr-explorer.dr-explorer-stacked
+   matching the design's panel structure:
+     [.dr-plot-col] toolbar → scatter → feature bar → engine bar
+     [.dr-explain-col.dr-explain-stacked] scrollable explanation column
+   ============================================================ */
+#drOffcanvas .offcanvas-body[data-fave-design="dr"] {
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+/* Two-column layout: scatter on the left (min 300px, ~40% of pane),
+   explanation column on the right (min 450px, ~60%) so the
+   Stats/Model + Top-features sections actually have room. The
+   explanation column is always wider than the scatter. */
+.dr-explorer {
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) minmax(450px, 1.5fr);
+  grid-template-rows: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.dr-explorer .dr-plot-col,
+.dr-explorer .dr-explain-col {
+  min-height: 0;
+  height: 100%;
+}
+.dr-explorer.dr-explorer-stacked {
+  display: flex;
+  flex-direction: column;
+  grid-template-columns: none;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.dr-explorer-stacked .dr-plot-col {
+  border-right: none;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.dr-explorer-stacked .dr-scatter {
+  height: 280px;
+  flex: none;
+}
+.dr-explorer-stacked .dr-explain-col {
+  overflow: visible;
+  flex-shrink: 0;
+}
+
+/* When DR is alone in the drawer (no Parallel Coords pane open) the
+   stacked layout would force the scatter to be very wide and short,
+   which the user reports as "skewed horizontally". Switch back to the
+   design's default grid layout: scatter takes 1fr on the left, the
+   scrollable explanation column is 380px on the right — same as
+   panels.jsx default `.dr-explorer { grid-template-columns: 1fr 380px; }`. */
+body[data-pc-open="false"] #drOffcanvas .dr-explorer.dr-explorer-stacked {
+  display: grid !important;
+  grid-template-columns: 1fr 380px !important;
+  overflow: hidden !important;
+}
+body[data-pc-open="false"] #drOffcanvas .dr-explorer.dr-explorer-stacked .dr-plot-col {
+  border-right: 1px solid var(--line);
+  border-bottom: 0;
+  flex-shrink: 1;
+  min-height: 0;
+  height: 100%;
+}
+body[data-pc-open="false"] #drOffcanvas .dr-explorer.dr-explorer-stacked .dr-scatter {
+  height: auto;
+  flex: 1;
+  min-height: 200px;
+}
+body[data-pc-open="false"] #drOffcanvas .dr-explorer.dr-explorer-stacked .dr-explain-col {
+  overflow-y: auto;
+  height: 100%;
+  flex-shrink: 0;
+}
+.dr-plot-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--line);
+  overflow-y: auto;       /* fall back to scroll if toolbar+scatter+bars overflow */
+}
+.dr-plot-col .dr-scatter {
+  min-height: 200px;
+}
+.dr-plot-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-1);
+  flex-wrap: wrap;
+}
+.dr-plot-toolbar .dr-toolbar-spacer { flex: 1; min-width: 8px; }
+.dr-plot-toolbar .control {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--ink-1);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.dr-plot-toolbar .control:hover { background: var(--surface-2); border-color: var(--line-strong); }
+.dr-plot-toolbar .control[disabled] { opacity: 0.5; cursor: not-allowed; }
+.dr-plot-toolbar .control-accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  font-weight: 500;
+}
+.dr-plot-toolbar .control-accent:hover { filter: brightness(0.95); background: var(--accent); border-color: var(--accent); color: white; }
+/* Map lasso — distinct from the scatter-only Lasso button without using
+   pure black. Uses the accent ramp (terracotta) so it reads as an
+   "action" button while staying in the design's warm-paper palette. */
+.dr-plot-toolbar .control-strong {
+  background: var(--accent-soft);
+  border-color: color-mix(in oklch, var(--accent) 35%, var(--line));
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+.dr-plot-toolbar .control-strong:hover {
+  background: color-mix(in oklch, var(--accent) 18%, var(--surface));
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.dr-plot-toolbar .control-strong[data-active="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.dr-plot-toolbar .dr-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+  margin: 0 2px;
+}
+.dr-plot-toolbar select.control { padding-right: 22px; }
+.dr-plot-toolbar .dr-algo-segmented {
+  display: inline-flex;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+.dr-plot-toolbar .dr-algo-btn {
+  height: 22px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.dr-plot-toolbar .dr-algo-btn[data-active="true"] {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.dr-scatter {
+  flex: 1;
+  position: relative;
+  background: var(--surface);
+  min-height: 0;
+}
+#drOffcanvas #drCanvasWrap {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: unset !important;
+  max-height: unset !important;
+  background: var(--surface-1) !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+.dr-scatter canvas { display: block; }
+.dr-plot-label {
+  position: absolute;
+  top: 8px; left: 12px;
+  font-size: 10px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 5;
+}
+.dr-feature-bar {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-1);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dr-feature-bar .dr-feature-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.dr-feature-bar .dr-map-tools {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+}
+.dr-feature-bar .dr-map-tools .control {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 11px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-1);
+  cursor: pointer;
+}
+.dr-feature-bar .dr-map-tools .control:hover { background: var(--surface-2); }
+.dr-feature-bar .dr-max-badge {
+  font-family: var(--font-mono);
+  background: var(--surface);
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+.dr-engine-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+  flex-wrap: wrap;       /* multi-row when narrow */
+  overflow-x: auto;      /* horizontal scroll fallback for super-narrow widths */
+  white-space: nowrap;
+}
+.dr-engine-bar > .segmented {
+  flex-wrap: wrap;
+}
+.dr-engine-bar .dr-engine-btn {
+  flex: 1 1 auto;        /* let the buttons share remaining width without overflowing */
+  min-width: 0;
+}
+.dr-engine-bar .dr-row-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-1);
+  margin-left: 8px;
+}
+.dr-engine-bar .segmented {
+  display: inline-flex;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+.dr-engine-bar .dr-engine-btn {
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--ink-2) !important;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px !important;
+  padding: 6px 10px !important;
+  white-space: normal !important;
+  line-height: 1.2 !important;
+}
+.dr-engine-bar .dr-engine-btn:hover { color: var(--ink-1) !important; }
+.dr-engine-bar .dr-engine-btn.active,
+.dr-engine-bar .dr-engine-btn.btn-secondary {
+  background: var(--ink) !important;
+  color: var(--bg) !important;
+}
+.btn-outline-accent {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent-ink);
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.btn-outline-accent:hover { background: var(--accent-soft); }
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.btn-outline:hover { background: var(--surface-1); }
+
+.dr-explain-col {
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.dr-section { display: flex; flex-direction: column; }
+.dr-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.dr-section .segmented.sm {
+  display: inline-flex;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+.dr-section .segmented.sm button {
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.dr-section .segmented.sm button.active,
+.dr-section .segmented.sm button.btn-secondary {
+  background: var(--ink) !important;
+  color: var(--bg) !important;
+}
+.histogram-overall { padding: 8px 0 4px; height: 140px; }
+.per-cat-hist { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; min-height: 200px; }
+/* Give the legacy plot containers explicit heights inside the new design
+   so D3 uses real container dimensions (it falls back to 140/200 when
+   clientHeight is 0, which works but produces a noticeable jump on
+   first render). */
+#drOffcanvas #drDistrictBarWrap   { height: 170px; }
+#drOffcanvas #drScatterHeightWrap { height: 190px; }
+#drOffcanvas #drLorenzWrap        { height: 170px; }
+#drOffcanvas #drThresholdBarWrap  { height: 170px; }
+.ai-section {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+/* Make sure the engine plot uses available width with a sensible
+   minimum height even when empty. */
+#drOffcanvas #drEnginePlot {
+  height: auto;
+  min-height: 60px;
+  width: 100%;
+  overflow: visible;
+}
+#drOffcanvas #drEnginePlot svg { display: block; max-width: 100%; }
+
+/* ============================================================
+   Parallel coordinates pane — match the design's panel chrome.
+   ============================================================ */
+/* Shared pane-header rule above already handles PC layout/height/padding;
+   leaving this block empty intentionally so the unified selector wins. */
+#parallelCoordsPanel[data-fave-design="pc"] .pane-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+#parallelCoordsPanel[data-fave-design="pc"] .pane-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+#parallelCoordsPanel[data-fave-design="pc"] .pane-tools .control {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--ink-1);
+}
+#parallelCoordsPanel[data-fave-design="pc"] .pane-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Chart fills the pane-body's middle row. No padding here so the SVG
+   height reads via clientHeight matches the visible drawing area —
+   previously the 8px top/bottom padding caused the SVG to overshoot
+   into the note row, hiding the bottom of each polyline behind the
+   "Showing X of Y mezos" caption. */
+#parallelCoordsPanel[data-fave-design="pc"] #parallelCoordsChart {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: auto;
+  padding: 0 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: stable both-edges;
+}
+#parallelCoordsPanel[data-fave-design="pc"] #parallelCoordsChart svg {
+  height: 100%;
+  display: block;
+}
+/* Note has its own padding so it doesn't sit flush against the chart. */
+#parallelCoordsPanel[data-fave-design="pc"] #parallelCoordsNote {
+  padding: 6px 14px 10px;
+}
+.chart-host { width: 100%; height: 100%; }
+
+/* Color buttons / form-controls inside DR */
+#drOffcanvas .btn,
+#drOffcanvas .form-select,
+#drOffcanvas .form-control,
+#drOffcanvas select,
+#drOffcanvas input[type="number"],
+#drOffcanvas input[type="text"],
+#drOffcanvas input[type="range"],
+#drOffcanvas textarea {
+  font-family: var(--font-sans) !important;
+  font-size: 12px !important;
+}
+#drOffcanvas .btn-outline-light,
+#drOffcanvas .btn-outline-secondary {
+  border-color: var(--line-strong) !important;
+  color: var(--ink-1) !important;
+  background: var(--surface-1) !important;
+}
+#drOffcanvas .btn-outline-light:hover,
+#drOffcanvas .btn-outline-secondary:hover {
+  background: var(--surface-2) !important;
+  color: var(--ink) !important;
+}
+#drOffcanvas .btn-warning,
+#drOffcanvas .btn-info {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: white !important;
+}
+#drOffcanvas .badge {
+  font-family: var(--font-mono) !important;
+  background: var(--surface-2) !important;
+  color: var(--ink-2) !important;
+}
+#drOffcanvas hr {
+  border-color: var(--line) !important;
+  opacity: 1 !important;
+}
+#drOffcanvas .text-muted,
+#drOffcanvas .small.text-muted {
+  color: var(--ink-3) !important;
+}
+
+/* Parallel coords panel — also reskin as a bottom drawer that slides up. */
+#parallelCoordsPanel {
+  position: fixed !important;
+  top: auto !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: var(--rail-w, 56px) !important;
+  width: auto !important;
+  height: var(--drawer-h, 380px) !important;
+  max-height: calc(100vh - var(--topbar-h, 52px) - 80px) !important;
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  border-top: 1px solid var(--line) !important;
+  border-radius: 12px 12px 0 0 !important;
+  box-shadow: 0 -4px 16px rgba(28, 25, 22, 0.06) !important;
+  font-family: var(--font-sans) !important;
+  z-index: 1054 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 0 !important;
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+#parallelCoordsPanel:not(.d-none) {
+  transform: translateY(0);
+}
+body[data-inspector-open="true"] #parallelCoordsPanel {
+  right: var(--inspector-w, 320px) !important;
+}
+/* Side-by-side: when DR is also open, PC takes the left ~60%. */
+body[data-dr-open="true"] #parallelCoordsPanel {
+  right: calc((100vw - var(--rail-w, 56px)) * 0.4) !important;
+}
+body[data-dr-open="true"][data-inspector-open="true"] #parallelCoordsPanel {
+  right: calc(var(--inspector-w, 320px) + (100vw - var(--rail-w, 56px) - var(--inspector-w, 320px)) * 0.4) !important;
+}
+#parallelCoordsPanel * {
+  font-family: var(--font-sans) !important;
+}
+
+/* Equity analysis panel — full styling now lives in the .equity-panel
+   block above (FAVE shell tokens, font, layout). Leaving only the legacy
+   font-cascade rule to ensure dynamically-injected children inherit Inter. */
+#equityAnalysisPanel * {
+  font-family: var(--font-sans) !important;
+}
+
+/* When ANY bottom drawer is open, push the bottom-center travel-mode and
+   bottom-left legend / right zoom controls up so they don't disappear
+   under the drawer. Use body[data-*-open] attribute selectors (set by
+   syncDrawerBodyAttrs in shell.js) instead of :has() — :has() works on
+   most evergreen browsers but the explicit body class is bulletproof
+   and lets these buttons (which are critical app controls) always
+   stay reachable. */
+body[data-dr-open="true"] .shell-travel,
+body[data-pc-open="true"] .shell-travel {
+  bottom: calc(var(--drawer-h, 380px) + 12px) !important;
+}
+body[data-dr-open="true"] .shell-legend,
+body[data-pc-open="true"] .shell-legend {
+  bottom: calc(var(--drawer-h, 380px) + 12px) !important;
+}
+body[data-dr-open="true"] .shell-zoom,
+body[data-pc-open="true"] .shell-zoom {
+  bottom: calc(var(--drawer-h, 380px) + 12px) !important;
+}
+/* Travel-mode strip must always sit above the drawer chrome. */
+.shell-travel { z-index: 1057 !important; }
+
+/* Drawer top-edge resize handle. Each bottom drawer gets one, so dragging
+   it changes the global --drawer-h variable and both drawers (if both
+   open) follow. The grip dot makes the affordance visible. */
+.shell-drawer-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: ns-resize;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  user-select: none;
+}
+.shell-drawer-handle .grip {
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  transition: background 0.15s, height 0.15s;
+}
+.shell-drawer-handle:hover .grip,
+.shell-drawer-handle[data-dragging="true"] .grip {
+  background: var(--accent);
+  height: 4px;
+}
+
+/* Drawer toolbar that floats just above the active bottom drawer with
+   a single collapse/expand toggle and a "X panes" indicator. Only shows
+   while at least one drawer is open. */
+.shell-drawer-bar {
+  position: fixed;
+  left: var(--rail-w, 56px);
+  right: 0;
+  bottom: var(--drawer-h, 380px);
+  height: 28px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  z-index: 1056;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--ink-3);
+  box-shadow: 0 -2px 6px rgba(28, 25, 22, 0.04);
+}
+body[data-inspector-open="true"] .shell-drawer-bar {
+  right: var(--inspector-w, 320px);
+}
+.shell-drawer-bar[data-shown="true"] { display: flex; }
+.shell-drawer-bar .icon-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s;
+}
+.shell-drawer-bar .icon-btn:hover { background: var(--surface-1); color: var(--ink); }
+.shell-drawer-bar .bar-label { flex: 1; }
+.shell-drawer-bar .bar-count {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  color: var(--ink-2);
+  background: var(--surface-1);
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+}
+body[data-drawer-collapsed="true"] .shell-drawer-bar #shellDrawerCollapse svg {
+  transform: rotate(180deg);
+}
+
+/* Collapsed state: drawers slide partly off-screen leaving only the
+   drawer bar visible at the bottom edge. */
+body[data-drawer-collapsed="true"] #drOffcanvas.show,
+body[data-drawer-collapsed="true"] #parallelCoordsPanel:not(.d-none) {
+  transform: translateY(calc(100% - 8px)) !important;
+}
+body[data-drawer-collapsed="true"] .shell-drawer-bar {
+  bottom: 0;
+}
+body[data-drawer-collapsed="true"][data-dr-open="true"] .shell-travel,
+body[data-drawer-collapsed="true"][data-pc-open="true"] .shell-travel,
+body[data-drawer-collapsed="true"][data-dr-open="true"] .shell-legend,
+body[data-drawer-collapsed="true"][data-pc-open="true"] .shell-legend,
+body[data-drawer-collapsed="true"][data-dr-open="true"] .shell-zoom,
+body[data-drawer-collapsed="true"][data-pc-open="true"] .shell-zoom {
+  bottom: 40px !important;
+}

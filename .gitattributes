@@ -1,0 +1,12 @@
+# Normalize line endings so checkouts on Windows don't get CRLF noise.
+* text=auto eol=lf
+
+# Binary file types — never try to diff or normalize.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.gpkg binary
+*.xlsx binary
+*.pdf binary

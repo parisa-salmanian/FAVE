@@ -1,0 +1,160 @@
+// Load buildings + districts + demographics for a city from local GeoJSON.
+// Extracted from main.js; loaded before main.js.
+
+/* ======================= Load city from local GeoJSON (OSM+GeoJSON mode) ======================= */
+async function loadCityLocal(cityKey) {
+  const url = BUILDING_URL_BY_CITY_KEY[cityKey];
+  if (!url) {
+    alert(`No local building file for "${cityKey}".`);
+    return;
+  }
+
+  try {
+    const displayName = LOCAL_CITY_NAMES[cityKey] || cityKey;
+    lastCityName = displayName;
+    applyDistrictDatasetForCity(displayName);
+    jobStatusEl && (jobStatusEl.textContent = 'Loading local…');
+
+    const fc = await fetch(url).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    });
+
+    await alignBuildingCoverageToDistricts(fc, 'local buildings');
+    baseCityFC  = fc;
+    districtLandClipSignature = '';
+    newbuildsFC = fc;
+    poiCache = {};   // clear so local POI extraction runs fresh
+
+    refreshBuildingTypeDropdown();
+    setSelectedBuildingType('', true);
+    jobStatusEl && (jobStatusEl.textContent = '');
+    fitToData(baseCityFC);
+    if (districtView) await refreshDistrictScores();
+    if (mezoView) await refreshMezoScores();
+    updateLayers();
+    updateDRAndPCBadges();
+  } catch (err) {
+    console.error('loadCityLocal failed:', err);
+    jobStatusEl && (jobStatusEl.textContent = 'Failed');
+    alert(`Failed to load local data for ${cityKey}: ${err?.message || err}`);
+  }
+}
+
+function cityGeoJSONURL(city) {
+  const key = normalizeCityKey(city);
+  return OSM_GEOJSON_CITY_URLS[key] || null;
+}
+
+function normalizeHybridFeatureProps(props = {}) {
+  const out = { ...props };
+  const name = out.name || out.namn || out.objektnamn || out.byggnadsnamn || out.byggnadsnamn1 || out.byggnadsnamn2 || out.byggnadsnamn3;
+  if (name && !out.name) out.name = name;
+
+  const building = out.building || out.objekttyp || out.byggnadstyp || out.typ;
+  if (building && !out.building) out.building = building;
+
+  if (!out.category && building) {
+    out.category = String(building);
+  }
+
+  const purposes = [out.andamal1, out.andamal2, out.andamal3, out.andamal4, out.andamal5]
+    .filter((v) => v != null && String(v).trim())
+    .join(' ; ');
+  if (purposes && !out.__purpose_text) out.__purpose_text = purposes;
+  return out;
+}
+
+function normalizeHybridGeoJSON(fc) {
+  if (!fc || !Array.isArray(fc.features)) return fc;
+  return {
+    ...fc,
+    features: fc.features.map((feature) => ({
+      ...feature,
+      properties: normalizeHybridFeatureProps(feature?.properties || {})
+    }))
+  };
+}
+
+async function loadCityHybrid(city) {
+  try {
+    applyDistrictDatasetForCity(city);
+    loadCityBtn && (loadCityBtn.disabled = true);
+    jobStatusEl && (jobStatusEl.textContent = 'Loading GeoJSON…');
+
+    const cityURL = cityGeoJSONURL(city);
+    if (!cityURL) {
+      throw new Error(`No GeoJSON dataset configured for "${city}". Add it to OSM_GEOJSON_CITY_URLS in main.js.`);
+    }
+
+    const rawFC = await fetch(cityURL).then((r) => {
+      if (!r.ok) throw new Error(`GeoJSON fetch failed (${r.status})`);
+      return r.json();
+    });
+    const fc = normalizeHybridGeoJSON(rawFC);
+    await alignBuildingCoverageToDistricts(fc, 'OSM+GeoJSON buildings');
+    baseCityFC = fc;
+    newbuildsFC = fc;
+    refreshBuildingTypeDropdown();
+    setSelectedBuildingType('', true);
+    jobStatusEl && (jobStatusEl.textContent = 'Ready');
+    fitToData(baseCityFC);
+    if (districtView) await refreshDistrictScores();
+    if (mezoView) await refreshMezoScores();
+    updateLayers();
+    updateDRAndPCBadges();
+  } catch (err) {
+    console.error(err);
+    jobStatusEl && (jobStatusEl.textContent = 'Failed');
+    alert(`Failed to load GeoJSON for ${city}: ${err?.message || err}`);
+  } finally {
+    loadCityBtn && (loadCityBtn.disabled = false);
+  }
+}
+
+function fitToData(fc) {
+  try {
+    const [minX, minY, maxX, maxY] = turf.bbox(fc);
+    map.fitBounds([[minX, minY], [maxX, maxY]], { padding: 40, duration: 800 });
+  } catch {}
+}
+
+function setMode(mode) {
+  viewMode = mode;
+  modeAllBtn?.classList.toggle('active', mode === 'all');
+  modeNewBtn?.classList.toggle('active', mode === 'new');
+  yearControlsWrap?.classList.toggle('d-none-important', mode !== 'new');
+  clearSelections();
+  closePopup();
+  updateLayers();
+}
+
+function clearSelections() {
+  firstFeat = null; secondFeat = null; routeGeoJSON = null;
+  if (distanceOut) distanceOut.textContent = '—';
+}
+
+function resetUIState() {
+  if (fairStatus) { fairStatus.textContent = ''; fairStatus.classList.remove('text-danger'); }
+  if (giniOut) giniOut.textContent = '—';
+  if (overallGiniOut) overallGiniOut.textContent = '—';
+  document.querySelectorAll('.poi-check').forEach(el => { el.checked = false; });
+  document.querySelectorAll('.poi-weight').forEach(el => {
+    const cat = el.getAttribute('data-cat');
+    const badge = document.querySelector(`.poi-weight-val[data-cat="${cat}"]`);
+    if (badge) badge.textContent = el.value;
+  });
+  // City switch wipes the POI selection — drop the rail-poi orange.
+  if (typeof window.syncPOIRailActive === 'function') window.syncPOIRailActive();
+
+  clearFairness(true);
+  closePopup();
+  hideSidePanel();
+  clearDRProjection(false);
+  setSelectedBuildingType('', true);
+  setDistrictView(false);
+  setMezoView(false);
+  clearWhatIfSuggestions();
+  refreshWhatIfSuggestCategories([whatIfType]);
+}
+

@@ -1,0 +1,26 @@
+{
+  "key": "stockholm",
+  "display_name": "Stockholm",
+  "query": "Stockholm, Sweden",
+  "lat": 59.3251172,
+  "lon": 18.0710935,
+  "bbox": [
+    59.1651172,
+    17.9110935,
+    59.4851172,
+    18.2310935
+  ],
+  "baked_at": "2026-05-06T09:39:04.410819+00:00",
+  "counts": {
+    "grocery": 700,
+    "hospital": 45,
+    "pharmacy": 160,
+    "dentistry": 155,
+    "healthcare_center": 197,
+    "veterinary": 26,
+    "university": 37,
+    "kindergarten": 787,
+    "school_primary": 5,
+    "school_high": 4
+  }
+}

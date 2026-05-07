@@ -1,0 +1,26 @@
+{
+  "key": "uppsala",
+  "display_name": "Uppsala",
+  "query": "Uppsala, Sweden",
+  "lat": 59.8586126,
+  "lon": 17.6387436,
+  "bbox": [
+    59.6986126,
+    17.4787436,
+    60.0186126,
+    17.7987436
+  ],
+  "baked_at": "2026-05-06T10:00:01.970492+00:00",
+  "counts": {
+    "grocery": 93,
+    "hospital": 18,
+    "pharmacy": 34,
+    "dentistry": 20,
+    "healthcare_center": 31,
+    "veterinary": 8,
+    "university": 18,
+    "kindergarten": 109,
+    "school_primary": 2,
+    "school_high": 130
+  }
+}
