@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 """
-Download building data (Byggnader) from Lantmäteriet's open STAC vector
+Download building data (Byggnader) from Lantmäteriet's STAC vector
 catalog, one GeoPackage per kommun.
 
-The collection is published under CC-BY-4.0 and currently requires no
-authentication — the public Lantmäteriet account agreement is enough.
-Each STAC item is one Swedish kommun and ships a single ZIP with a
-GeoPackage inside (EPSG:3006 / SWEREF 99 TM).
+Catalog browsing (listing kommuner, reading metadata) is open. The actual
+ZIP downloads from dl1.lantmateriet.se require **HTTP Basic Auth** with
+the username/password issued to your Lantmäteriet account. Pass them via
+env vars:
+
+    export LM_USERNAME=...   # set once per shell, or put in .env
+    export LM_PASSWORD=...
+
+The script also reads `.lantmateriet_credentials` and a top-level `.env`
+file (KEY=VALUE per line) if present, so you don't have to keep
+re-exporting. Credentials are NEVER printed to stdout/stderr or written
+to log files.
 
 Examples
 --------
@@ -36,6 +44,7 @@ testing).
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -69,16 +78,53 @@ CITY_TO_KOMMUN: dict[str, str] = {
 }
 
 
+def _load_credentials_file(path: Path) -> None:
+    """Parse a KEY=VALUE file and merge into os.environ if not already set."""
+    if not path.is_file():
+        return
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            os.environ.setdefault(k, v)
+    except OSError:
+        pass
+
+
+# Try the obvious local stash spots so the user doesn't have to keep
+# re-exporting LM_USERNAME / LM_PASSWORD. We never print or log values.
+_load_credentials_file(REPO_ROOT / ".env")
+_load_credentials_file(REPO_ROOT / ".lantmateriet_credentials")
+_load_credentials_file(Path.home() / ".lantmateriet_credentials")
+
+
+def _basic_auth_header() -> dict[str, str]:
+    user = os.environ.get("LM_USERNAME")
+    pw = os.environ.get("LM_PASSWORD")
+    if not user or not pw:
+        return {}
+    token = base64.b64encode(f"{user}:{pw}".encode("utf-8")).decode("ascii")
+    return {"Authorization": f"Basic {token}"}
+
+
 def http_json(url: str) -> dict:
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-    with urllib.request.urlopen(req) as resp:  # noqa: S310 — public STAC catalog, https only
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    headers.update(_basic_auth_header())  # harmless on the open catalog
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req) as resp:  # noqa: S310 — https STAC catalog
         return json.loads(resp.read().decode("utf-8"))
 
 
 def http_download(url: str, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_suffix(dst.suffix + ".part")
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    headers = {"User-Agent": USER_AGENT}
+    headers.update(_basic_auth_header())
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req) as resp:  # noqa: S310
         total = int(resp.headers.get("Content-Length") or 0)
         done = 0
@@ -217,6 +263,14 @@ def select_codes(args) -> list[str]:
 
 
 def cmd_fetch(args) -> int:
+    if not _basic_auth_header():
+        print(
+            "ERROR: download endpoints require Basic Auth. Set LM_USERNAME and "
+            "LM_PASSWORD env vars (or write them to .env / .lantmateriet_credentials).",
+            file=sys.stderr,
+        )
+        return 2
+
     if args.all:
         wanted: set[str] | None = None  # download everything
     else:

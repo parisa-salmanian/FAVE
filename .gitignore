@@ -32,3 +32,7 @@ frontend/assets/data/DeSO_2025.gpkg
 # --- Lantmäteriet downloads (local-only; ~3-4 GB for all of Sweden) ---
 # Run tools/fetch_lantmateriet_buildings.py to populate this folder.
 lantmateriet/
+
+# --- Secrets (NEVER commit) ---
+.env
+.lantmateriet_credentials
