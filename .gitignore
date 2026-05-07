@@ -18,12 +18,9 @@ node_modules/
 api_data/
 frontend/assets/data/cache/
 
-# --- Large data fetched via tools/fetch_city_data.py ---
-# (Listed individually so the small companion files in this folder
-# stay tracked — see tools/data_manifest.json for the full list.)
-frontend/assets/data/byggnad_*.geojson
-frontend/assets/data/bldg_web.geojson
-frontend/assets/data/lantmateriat-byggnadsverk-buildings-wgs84-11-12-2024.geojson
+# --- Large data files: tracked via Git LFS, not ignored. ---
+# (see .gitattributes for the LFS pattern list.)
+# These two are tooling-only and not needed at runtime, so still ignored:
 frontend/assets/data/sweden_regso.geojson
 frontend/assets/data/all_sweden_regso.geojson
 frontend/assets/data/DeSO_2025.gpkg

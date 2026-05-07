@@ -10,3 +10,10 @@
 *.gpkg binary
 *.xlsx binary
 *.pdf binary
+
+# Large building / boundary geojsons (40-130 MB each) live in Git LFS so
+# the regular git history stays small. The runtime fetcher in tools/ is
+# still around as a fallback for partial downloads or self-hosting.
+frontend/assets/data/byggnad_*.geojson filter=lfs diff=lfs merge=lfs -text
+frontend/assets/data/lantmateriat-byggnadsverk-buildings-wgs84-11-12-2024.geojson filter=lfs diff=lfs merge=lfs -text
+frontend/assets/data/bldg_web.geojson filter=lfs diff=lfs merge=lfs -text

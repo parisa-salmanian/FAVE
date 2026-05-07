@@ -46,17 +46,19 @@
 
 | Tool | Purpose |
 |------|---------|
-| **Python 3.10+** | Backend API and data fetcher |
+| **Python 3.10+** | Backend API |
+| **[Git LFS](https://git-lfs.com)** | Large building geojsons live in LFS |
 | **[Ollama](https://ollama.com)** | Local LLM inference |
 
 ### 1️⃣ Clone the repository
 
 ```bash
+git lfs install     # one-time per machine
 git clone https://github.com/claudiodgl/FAVE.git
 cd FAVE
 ```
 
-The repo only ships small static files (~12 MB). The large building geojsons (40 MB – 130 MB per city) are pulled on demand by the data fetcher in step 3.
+The clone pulls ~530 MB of building data via LFS. If you want to **skip cities you don't need** (or self-host the data), see the optional fetcher in [Partial / self-hosted data](#partial--self-hosted-data).
 
 ### 2️⃣ Install dependencies
 
@@ -66,32 +68,14 @@ source .venv/bin/activate    # on Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3️⃣ Fetch the data files for the cities you want
-
-```bash
-# Just one city (recommended for first run)
-python tools/fetch_city_data.py --city vaxjo
-
-# Multiple cities
-python tools/fetch_city_data.py --city malmo --city stockholm
-
-# Everything (≈ 530 MB total)
-python tools/fetch_city_data.py --all
-
-# Inspect what's available without downloading
-python tools/fetch_city_data.py --list
-```
-
-Files land in `frontend/assets/data/`. The fetcher is **idempotent** — re-run any time and it'll skip files that are already in place. To self-host the data, set `FAVE_DATA_BASE_URL` to your own URL prefix.
-
-### 4️⃣ Pull the LLM model (one-time)
+### 3️⃣ Pull the LLM model (one-time)
 
 ```bash
 ollama serve          # start the Ollama daemon
 ollama pull llama3.2  # download the model
 ```
 
-### 5️⃣ Launch
+### 4️⃣ Launch
 
 Open **three terminals** and run:
 
@@ -130,7 +114,25 @@ FAVE/
 └── README.md
 ```
 
-> **Why the data fetcher?** Building geojsons range from 40 MB (Malmö) to 130 MB (Göteborg). Bundling them in git would push the repo well past GitHub's recommended limits, so they live in a Release on this repo and are pulled per-city on demand. Override `FAVE_DATA_BASE_URL` to host them yourself.
+### Partial / self-hosted data
+
+Building geojsons range from 40 MB (Malmö) to 130 MB (Göteborg) — about 530 MB across all 7 cities. They're tracked via Git LFS by default, so a normal `git clone` pulls everything.
+
+If you want to **skip cities** you don't need (saves bandwidth) or **mirror the data on your own server**, the repo also ships a per-city fetcher:
+
+```bash
+# Inspect the manifest
+python tools/fetch_city_data.py --list
+
+# Pull just the cities you want (post-clone if you used --filter=blob:none, or
+# anywhere you replace the LFS files with your own mirror):
+python tools/fetch_city_data.py --city vaxjo --city malmo
+
+# Self-host: set the env var, files are downloaded from <base>/<filename>
+FAVE_DATA_BASE_URL=https://my-host.example/fave python tools/fetch_city_data.py --all
+```
+
+The manifest at `tools/data_manifest.json` lists every file and its expected size — edit it if you need different paths.
 
 ---
 
