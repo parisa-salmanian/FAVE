@@ -142,11 +142,17 @@ The geojsons in LFS are slimmed for the demo. If you want the **authoritative bu
 # List every kommun in the Byggnader collection (~290 entries)
 python tools/fetch_lantmateriet_buildings.py --list
 
+# Filter the listing by name fragment
+python tools/fetch_lantmateriet_buildings.py --list --kommun-name lund
+
 # Pull a known FAVE city by alias
 python tools/fetch_lantmateriet_buildings.py --city vaxjo
 
 # Pull by raw 4-digit kommun code (e.g., 0180 = Stockholm, 1480 = Göteborg)
 python tools/fetch_lantmateriet_buildings.py --kommun 0180 --kommun 1480
+
+# Pull by readable name (substring, case-insensitive)
+python tools/fetch_lantmateriet_buildings.py --kommun-name "Lund" --kommun-name "Helsingborg"
 
 # Pull every kommun in Sweden (≈ 3-4 GB unzipped)
 python tools/fetch_lantmateriet_buildings.py --all
@@ -154,7 +160,23 @@ python tools/fetch_lantmateriet_buildings.py --all
 
 The data is published by Lantmäteriet under **CC-BY-4.0** — no API key or OAuth flow is required, just a registered Lantmäteriet account agreeing to the license. Files land in `lantmateriet/byggnader/byggnad_kn<code>.gpkg` (EPSG:3006 / SWEREF 99 TM), and the cached ZIPs in `lantmateriet/zip/`. The whole `lantmateriet/` folder is gitignored.
 
-To use these files in FAVE you'll need to reproject to EPSG:4326 (the frontend works in lon/lat) and slim them down to FAVE's expected attribute set; `tools/slim_city_files.py` is the existing recipe to adapt.
+#### Convert the kommun GeoPackages into FAVE building geojsons
+
+Once the .gpkg files are in place, `tools/process_lantmateriet_buildings.py` reprojects them to EPSG:4326 (lon/lat — what the frontend uses), drops attribute columns FAVE doesn't read, and writes a compact GeoJSON straight into `frontend/assets/data/`. Output filenames pick up the FAVE city alias when the kommun matches one (e.g., `byggnad_vaxjo.geojson`); otherwise it's `byggnad_kn<code>.geojson`.
+
+```bash
+# Process every .gpkg currently in lantmateriet/byggnader/
+python tools/process_lantmateriet_buildings.py
+
+# Or pick specific kommuner
+python tools/process_lantmateriet_buildings.py --city vaxjo --city malmo
+python tools/process_lantmateriet_buildings.py --kommun 0180
+
+# Don't overwrite existing geojsons
+python tools/process_lantmateriet_buildings.py --skip-existing
+```
+
+This step uses **geopandas** (declared in `requirements.txt`). After processing, the resulting geojsons are drop-in replacements for the LFS-tracked demo data.
 
 ---
 

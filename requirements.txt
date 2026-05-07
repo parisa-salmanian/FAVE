@@ -10,3 +10,6 @@ shapely==2.0.4
 numpy==2.0.2
 pydantic>=2.0.0,<3.0.0
 interpret==0.7.8
+# Used by tools/process_lantmateriet_buildings.py to reproject + slim
+# the kommun GeoPackages into FAVE-shape geojsons. Not needed at runtime.
+geopandas>=0.14,<2.0

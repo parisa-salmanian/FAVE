@@ -120,6 +120,21 @@ def kommun_code_of(item: dict) -> str:
     return digits.zfill(4)
 
 
+# Each STAC item's title is "Byggnader för <Kommun> kommun" — pull the
+# readable name out of there so we don't need a separate mapping file.
+_TITLE_RE = re.compile(r"Byggnader\s+f[öo]r\s+(.+?)\s+kommun", re.IGNORECASE)
+
+
+def kommun_name_of(item: dict) -> str:
+    title = (item.get("properties") or {}).get("title") or item.get("title") or ""
+    m = _TITLE_RE.search(str(title))
+    if m:
+        return m.group(1).strip()
+    desc = (item.get("properties") or {}).get("description") or item.get("description") or ""
+    m = _TITLE_RE.search(str(desc))
+    return m.group(1).strip() if m else ""
+
+
 def first_zip_asset(item: dict) -> tuple[str, str] | None:
     """Return (asset_key, href) for the first ZIP asset on an item."""
     for key, asset in (item.get("assets") or {}).items():
@@ -148,30 +163,24 @@ def extract_gpkg(zip_path: Path, dst: Path) -> bool:
     return True
 
 
-def cmd_list() -> int:
+def cmd_list(name_filter: str | None = None) -> int:
     """Print one row per kommun: code, FAVE city alias (if any), zipped size, name."""
     code_to_city = {v: k for k, v in CITY_TO_KOMMUN.items()}
     rows = []
     for item in iter_items():
         code = kommun_code_of(item)
+        name = kommun_name_of(item) or item.get("id", "")
+        if name_filter and name_filter.lower() not in name.lower():
+            continue
         zip_asset = first_zip_asset(item) or (None, None)
         href = zip_asset[1]
         size_mb = None
-        # STAC sometimes carries file:size in the asset dict.
         for asset in (item.get("assets") or {}).values():
             if asset.get("href") == href:
                 fsize = asset.get("file:size") or asset.get("file:size_bytes")
                 if isinstance(fsize, (int, float)):
                     size_mb = round(fsize / 1024 / 1024, 1)
                 break
-        # Item title or kommun name from properties
-        props = item.get("properties") or {}
-        name = (
-            props.get("kommunnamn")
-            or props.get("name")
-            or item.get("title")
-            or item.get("id")
-        )
         rows.append((code, code_to_city.get(code, ""), size_mb, str(name)))
     rows.sort(key=lambda r: r[0])
     print(f"{'kn':<6} {'fave':<11} {'mb':>6}  name")
@@ -197,6 +206,13 @@ def select_codes(args) -> list[str]:
             print(f"ERROR: invalid kommun code '{raw}'", file=sys.stderr)
             sys.exit(2)
         codes.add(digits.zfill(4))
+    if args.kommun_name:
+        # Resolve names to codes by walking the catalog and matching titles.
+        name_filter = [n.lower() for n in args.kommun_name]
+        for item in iter_items():
+            kname = kommun_name_of(item).lower()
+            if kname and any(needle in kname for needle in name_filter):
+                codes.add(kommun_code_of(item))
     return sorted(codes)
 
 
@@ -260,12 +276,14 @@ def main() -> int:
     ap.add_argument("--all", action="store_true", help="Download every kommun in Sweden (~290 files).")
     ap.add_argument("--city", action="append", help=f"FAVE city key. Known: {', '.join(CITY_TO_KOMMUN)}")
     ap.add_argument("--kommun", action="append", help="Raw 4-digit kommun code (leading zeros optional). Repeatable.")
+    ap.add_argument("--kommun-name", action="append", help="Case-insensitive substring match on the kommun name (e.g. 'Lund'). Repeatable.")
     ap.add_argument("--force", action="store_true", help="Re-download ZIPs even if they exist.")
     ap.add_argument("--no-extract", action="store_true", help="Skip GeoPackage extraction (just keep the ZIP).")
     args = ap.parse_args()
 
     if args.list:
-        return cmd_list()
+        # When --list is combined with a name filter, narrow the catalog readout.
+        return cmd_list(name_filter=args.kommun_name[0] if args.kommun_name else None)
     return cmd_fetch(args)
 
 
