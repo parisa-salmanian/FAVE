@@ -1298,11 +1298,9 @@
         b.setAttribute('data-active', 'true');
         const mode = b.dataset.model === 'distance' ? 'default' : 'ifcity';
         if (typeof setFairnessModel === 'function') {
-          // setFairnessModel only recomputes when fairActive is true. If the
-          // user hasn't picked a POI mix yet we still need to refresh the
-          // overall colouring on the map, so always re-fire autoComputeOverall.
-          setFairnessModel(mode, { recompute: false });
-          if (typeof autoComputeOverall === 'function') autoComputeOverall();
+          // recompute:true → recomputeFairnessAfterWhatIf runs the category
+          // computation (when fairActive) and always calls autoComputeOverall.
+          setFairnessModel(mode, { recompute: true });
         }
       });
     });

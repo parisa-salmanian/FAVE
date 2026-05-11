@@ -63,7 +63,7 @@ function createCityLayer(grayBackdrop) {
     opacity:0.95,
     material: BUILDING_MATERIAL,
     getElevation: f =>
-      clampElev((f.properties?.height_m ?? f.properties?._mean)) * heightScale,
+      clampElev((f.properties?.height_m ?? f.properties?._mean ?? f.properties?.hojd ?? f.properties?.Hojd)) * heightScale,
 
     getFillColor: f => {
       // 1) DR selection highlight overrides everything
@@ -134,7 +134,7 @@ function createHighlightLayer(year) {
   return new deck.GeoJsonLayer({
     id:'newbuilds-highlight', data:feats, pickable:true, extruded:true, wireframe:false, stroked:true, opacity:1,
     material: BUILDING_MATERIAL,
-    getElevation: f => clampElev((f.properties?.height_m ?? f.properties?._mean)) * heightScale,
+    getElevation: f => clampElev((f.properties?.height_m ?? f.properties?._mean ?? f.properties?.hojd ?? f.properties?.Hojd)) * heightScale,
     getFillColor: color, getLineColor:[255,255,255], getLineWidth:2, lineWidthUnits:'pixels',
     onClick: handleClick, updateTriggers:{ getElevation:[heightScale], data:[year] }
   });

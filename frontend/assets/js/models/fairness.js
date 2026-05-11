@@ -264,6 +264,7 @@ function withMezoPrevScore(cell = {}) {
 }
 
 function clearDistrictFairnessView() {
+  fairnessComputeGen++;
   if (districtFC?.features) {
     for (const f of districtFC.features) {
       if (!f.properties) continue;
@@ -295,6 +296,7 @@ function clearDistrictFairnessView() {
 }
 
 function clearFairness(clearOverall = false) {
+  fairnessComputeGen++;
   if (baseCityFC?.features) {
     for (const f of baseCityFC.features) {
       if (f.properties) { delete f.properties.fair; delete f.properties.fair_multi; if (clearOverall) delete f.properties.fair_overall; }
@@ -1269,6 +1271,7 @@ async function initVaxjoDemandWeights() {
 async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = false } = {}) {
   if (!baseCityFC) throw new Error('No buildings loaded.');
   const updateUI = !setOverall;
+  const myGen = updateUI ? fairnessComputeGen : null;
 
   const fetched = await Promise.all(
     catList.map(cat =>
@@ -1381,6 +1384,7 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
     if (batchEnd < len) {
       // setTimeout(0) is enough for Firefox to mark the page responsive.
       await new Promise(r => setTimeout(r, 0));
+      if (myGen !== null && fairnessComputeGen !== myGen) return { inequality: null, poiCount: 0 };
     }
   }
 
@@ -1418,6 +1422,8 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
     }
   }
 
+  if (myGen !== null && fairnessComputeGen !== myGen) return { inequality: null, poiCount: 0 };
+
   const inequality = generalizedEntropy(benefits, IF_CITY_ALPHA);
   // Bump the recolor tick on every compute (overall *or* per-category) so
   // deck.gl's updateTriggers re-evaluate getFillColor.
@@ -1453,8 +1459,10 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
 
 /* ---------- Single category (kept, still usable internally) ---------- */
 async function computeFairnessFast(cat) {
+  const myGen = fairnessComputeGen;
   if (fairnessModel === 'ifcity') {
     const res = await computeIfCityFairness([cat], { [cat]: 1 });
+    if (fairnessComputeGen !== myGen) return { gini: null, poiCount: 0 };
     try {
       if (giniOut) giniOut.textContent = `${prettyPOIName(cat)} GE(α=2): ${formatFairnessBadgeValue(res.inequality)}`;
       if (fairStatus) { fairStatus.textContent = ''; fairStatus.classList.remove('text-danger'); }
@@ -1520,6 +1528,8 @@ async function computeFairnessFast(cat) {
     scoresLack.push(1 - score);
   }
 
+  if (fairnessComputeGen !== myGen) return { gini: null, poiCount: 0 };
+
   const G = gini(scoresLack);
 
   fairActive = true;
@@ -1550,12 +1560,14 @@ async function computeFairnessFast(cat) {
 
 /* ---------- Weighted mix across multiple categories ---------- */
 async function computeFairnessWeighted(mix) {
+  const myGen = fairnessComputeGen;
   if (fairnessModel === 'ifcity') {
     const weightsByCat = mix.reduce((acc, item) => {
       acc[item.cat] = Number.isFinite(item.weight) ? item.weight : 1;
       return acc;
     }, {});
     const res = await computeIfCityFairness(mix.map(m => m.cat), weightsByCat);
+    if (fairnessComputeGen !== myGen) return { gini: null, poiCount: 0 };
     try {
       if (giniOut) giniOut.textContent = `Mix GE(α=2): ${formatFairnessBadgeValue(res.inequality)}`;
       if (fairStatus) { fairStatus.textContent = ''; fairStatus.classList.remove('text-danger'); }
@@ -1646,6 +1658,8 @@ async function computeFairnessWeighted(mix) {
 
     props.fair_multi = fm;
   }
+
+  if (fairnessComputeGen !== myGen) return { gini: null, poiCount: 0 };
 
   const G = gini(scoresLack);
 

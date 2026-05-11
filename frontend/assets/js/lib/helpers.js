@@ -48,7 +48,7 @@ function mockBuildingFillColor(feature) {
   }
   return baseBuildingColorForFeature(feature);
 }
-const clampElev = (h) => (Number.isFinite(h) ? Math.max(12, Math.min(180, h)) : 14);
+const clampElev = (h) => (Number.isFinite(h) ? Math.max(3, Math.min(300, h)) : 6);
 
 function getBuiltYear(props) {
   if (!props) return null;

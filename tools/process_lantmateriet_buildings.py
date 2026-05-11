@@ -114,6 +114,13 @@ def process_gpkg(gpkg_path: Path, out_path: Path) -> dict:
     if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
         gdf = gdf.to_crs(epsg=4326)
 
+    # Normalize height column: Lantmäteriet GPKGs use 'hojd' (or 'Hojd'/'HOJD');
+    # rename to 'height_m' so the frontend can find it without guessing variants.
+    for src in ("hojd", "Hojd", "HOJD", "byggnad_hojd"):
+        if src in gdf.columns and "height_m" not in gdf.columns:
+            gdf = gdf.rename(columns={src: "height_m"})
+            break
+
     # Slim to KEEP_ATTRS + geometry.
     keep_cols = [c for c in gdf.columns if c == gdf.geometry.name or c in KEEP_ATTRS]
     dropped_cols = sorted(set(cols_in) - set(keep_cols))

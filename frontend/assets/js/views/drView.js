@@ -481,7 +481,7 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       kindergarten: Number(fm.kindergarten?.score),
       schoolHigh: Number(fm.school_high?.score),
       areaLike: logAreaOfFeature(f),
-      heightLike: clampElev((props.height_m ?? props._mean) || 10),
+      heightLike: clampElev(props.height_m ?? props._mean ?? props.hojd ?? props.Hojd),
       yearLike: Number.isFinite(built) ? built : null,
       yearRaw: Number.isFinite(built) ? built : null,
       categoryLike: (sourceMode === 's1')

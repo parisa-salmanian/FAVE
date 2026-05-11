@@ -20,6 +20,9 @@ const DISTRICT_URL_BY_CITY_KEY = {
 };
 
 const BUILDING_URL_BY_CITY_KEY = {
+  // After running the Lantmäteriet pipeline (fetch + process) for all cities,
+  // change the vaxjo entry to 'assets/data/byggnad_vaxjo.geojson' — the pipeline
+  // will have replaced the old manual export with the full-coverage height data.
   vaxjo: 'assets/data/lantmateriat-byggnadsverk-buildings-wgs84-11-12-2024.geojson',
   malmo: 'assets/data/byggnad_malmo.geojson',
   goteborg: 'assets/data/byggnad_goteborg.geojson',

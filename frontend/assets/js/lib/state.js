@@ -35,6 +35,7 @@ let fairActive = false;
 let districtScoresSuppressed = false;
 let fairCategory = '';           // single cat or 'mix'
 let fairRecolorTick = 0;
+let fairnessComputeGen = 0;  // incremented on clear; computations check this before writing results
 let poiCache = {};               // per-category POI cache for current bbox
 let currentPOIsFC = null;        // current marker POIs (single or union for mix)
 let overallGini = null;
@@ -1480,14 +1481,17 @@ function wireUI() {
     await waitForSpinnerPaint();
     fairStatus.textContent = 'Computing…';
     setParallelCoordsPending(true);
+    const genAtStart = fairnessComputeGen;
     try {
       if (mix.length === 1) {
         const singleCat = mix[0].cat;
         const res = await computeFairnessFast(singleCat);
+        if (fairnessComputeGen !== genAtStart) return;
         fairStatus.textContent = '';
         giniOut.textContent = `${prettyPOIName(singleCat)} Gini: ${formatFairnessBadgeValue(res.gini)}`;
       } else {
         const res = await computeFairnessWeighted(mix); // recomputes + recolors
+        if (fairnessComputeGen !== genAtStart) return;
         fairStatus.textContent = '';
         giniOut.textContent = `Mix Gini: ${formatFairnessBadgeValue(res.gini)}`;
         showSidePanel('mix', res.gini, res.poiCount, window.getFairnessSummary?.());
@@ -1554,6 +1558,11 @@ function wireUI() {
       const badge = document.querySelector(`.poi-weight-val[data-cat="${cat}"]`);
       if (badge) badge.textContent = defVal;
     });
+    // Clear fairness immediately so that resetWhatIfChanges → clearWhatIfMockBuildings
+    // → recomputeFairnessAfterWhatIf sees fairActive=false and skips recomputing.
+    clearFairness(false);
+    if (giniOut) giniOut.textContent = '—';
+    hideSidePanel?.();
     resetWhatIfChanges();
     onPOIUIChange();
   });
