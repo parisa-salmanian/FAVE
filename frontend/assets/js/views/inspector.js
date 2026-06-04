@@ -63,7 +63,10 @@
   }
 
   function renderCityOverview() {
-    const overall = (typeof overallGini === 'number' && Number.isFinite(overallGini)) ? overallGini : null;
+    const isFairActive = (typeof fairActive !== 'undefined' && fairActive);
+    const catGini2 = (typeof currentCategoryGini !== 'undefined' && Number.isFinite(currentCategoryGini))
+      ? currentCategoryGini : null;
+    const displayGini = (isFairActive && catGini2 != null) ? catGini2 : null;
     const poiCount = (typeof currentPOIsFC !== 'undefined' && currentPOIsFC?.features?.length) || 0;
     const activeCats = pickActiveCategories();
     const cityName = (typeof lastCityName === 'string' && lastCityName) ? lastCityName : '—';
@@ -73,8 +76,8 @@
       if (el) el.textContent = text;
     };
     setText('inspCityName', cityName);
-    setText('inspOverallFairness', overall != null ? fmt(overall) : '—');
-    setText('inspGini', overall != null ? fmt(overall) : '—');
+    setText('inspOverallFairness', displayGini != null ? fmt(displayGini) : '—');
+    setText('inspGini', displayGini != null ? fmt(displayGini) : '—');
     setText('inspPoiCount', String(poiCount));
     setText('inspActiveCats', String(activeCats.length));
   }
@@ -267,14 +270,19 @@
       const el = document.getElementById(id);
       if (el) el.textContent = text;
     };
-    const giniVal = (typeof overallGini === 'number' && Number.isFinite(overallGini)) ? overallGini : null;
+    const isFairActive = (typeof fairActive !== 'undefined' && fairActive);
+    const catGini = (typeof currentCategoryGini !== 'undefined' && Number.isFinite(currentCategoryGini))
+      ? currentCategoryGini : null;
+    // Show "—" when no POIs are selected; only show a value when fairActive.
+    const giniVal = (isFairActive && catGini != null) ? catGini : null;
     const cityFeats = (typeof baseCityFC !== 'undefined' && Array.isArray(baseCityFC?.features))
       ? baseCityFC.features : [];
-    const microScores = cityFeats
-      .map(f => Number.isFinite(f?.properties?.fair_overall?.score) ? f.properties.fair_overall.score
-              : Number.isFinite(f?.properties?.fair?.score) ? f.properties.fair.score
-              : null)
-      .filter(v => Number.isFinite(v));
+    // Use per-selection scores (fair.score) only when active; "—" otherwise.
+    const microScores = isFairActive
+      ? cityFeats
+          .map(f => Number.isFinite(f?.properties?.fair?.score) ? f.properties.fair.score : null)
+          .filter(v => Number.isFinite(v))
+      : [];
     const meanFair = microScores.length
       ? microScores.reduce((a, b) => a + b, 0) / microScores.length
       : null;

@@ -307,6 +307,7 @@ function clearFairness(clearOverall = false) {
   fairRecolorTick++;
   currentPOIsFC = null;
   selectedPOIMix = [];
+  currentCategoryGini = null;
   poiCache = clearOverall ? {} : poiCache;
   if (clearOverall) overallGini = null;
 
@@ -320,6 +321,7 @@ function clearFairness(clearOverall = false) {
   refreshMezoScores();
   updateLayers();
   setParallelCoordsPending(false);
+  window.faveInspector?.refresh?.();
 }
 
 function bboxForFC(fc, pad = 0.06) {
@@ -614,7 +616,8 @@ function extractLocalPOIs(category, fc) {
 
     // Get centroid as POI point
     let lon, lat;
-    const centroid = fastCentroid(f);
+    let centroid;
+    try { centroid = turf.centroid(f).geometry.coordinates; } catch (_) { continue; }
     if (!centroid) continue;
     [lon, lat] = centroid;
     if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
@@ -1091,7 +1094,7 @@ async function ensureLantmaterietIndex() {
       .filter(f => f?.geometry && f?.properties?.objekttyp)
       .map(f => {
         let centroid;
-        centroid = fastCentroid(f); if (!centroid) return null;
+        try { centroid = turf.centroid(f).geometry.coordinates; } catch { return null; }
         return { centroid, objekttyp: f.properties.objekttyp };
       })
       .filter(Boolean);
@@ -1199,7 +1202,8 @@ async function buildVaxjoBuildingPopulationMap(districtSpatialIndex) {
   baseCityFC.features.forEach((feat) => {
     const props = feat.properties || {};
     let centroid;
-    centroid = fastCentroid(feat); if (!centroid) return;
+    try { centroid = turf.centroid(feat).geometry.coordinates; } catch { return; }
+    if (!centroid) return;
     // Try OSM category first, fall back to Lantmäteriet lookup for 'unknown' buildings
     const rawCategory = props.category || props.building || props.objekttyp || '';
     const lmObjekttyp = (rawCategory === 'unknown' || !rawCategory)
@@ -1227,7 +1231,8 @@ async function buildVaxjoBuildingPopulationMap(districtSpatialIndex) {
   baseCityFC.features.forEach((feat, idx) => {
     const props = feat.properties || {};
     let centroid;
-    centroid = fastCentroid(feat); if (!centroid) return;
+    try { centroid = turf.centroid(feat).geometry.coordinates; } catch { return; }
+    if (!centroid) return;
     // Same resolution logic as Step B
     const rawCategory = props.category || props.building || props.objekttyp || '';
     const lmObjekttyp = (rawCategory === 'unknown' || !rawCategory)
@@ -1345,7 +1350,8 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
     for (let featIdx = batchStart; featIdx < batchEnd; featIdx++) {
       const f = features[featIdx];
       const props = f.properties || (f.properties = {});
-      const cB = fastCentroid(f);
+      let cB;
+      try { cB = turf.centroid(f).geometry.coordinates; } catch { benefits.push(0); continue; }
       if (!cB) { benefits.push(0); continue; }
 
       const fm = {};
@@ -1384,7 +1390,6 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
     if (batchEnd < len) {
       // setTimeout(0) is enough for Firefox to mark the page responsive.
       await new Promise(r => setTimeout(r, 0));
-      if (myGen !== null && fairnessComputeGen !== myGen) return { inequality: null, poiCount: 0 };
     }
   }
 
@@ -1422,9 +1427,10 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
     }
   }
 
-  if (myGen !== null && fairnessComputeGen !== myGen) return { inequality: null, poiCount: 0 };
-
   const inequality = generalizedEntropy(benefits, IF_CITY_ALPHA);
+  // GE(2) on raw benefits — the IF-City inequality metric. Used for both the
+  // metric strip display and the per-selection Gini badge.
+  const giniCoeff = inequality;
   // Bump the recolor tick on every compute (overall *or* per-category) so
   // deck.gl's updateTriggers re-evaluate getFillColor.
   fairRecolorTick++;
@@ -1451,10 +1457,13 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
   if (parallelCoordsOpen) {
     updateParallelCoordsPanel();
   }
-  // Push the new city/inequality numbers into the right inspector if it's open.
+  // Update per-selection Gini for the inspector strip, then refresh it.
+  if (updateUI) {
+    currentCategoryGini = Number.isFinite(giniCoeff) ? giniCoeff : null;
+  }
   window.faveInspector?.refresh?.();
 
-  return { inequality, poiCount: updateUI ? currentPOIsFC.features.length : poiCount };
+  return { inequality, giniCoeff, poiCount: updateUI ? currentPOIsFC.features.length : poiCount };
 }
 
 /* ---------- Single category (kept, still usable internally) ---------- */
@@ -1462,12 +1471,14 @@ async function computeFairnessFast(cat) {
   const myGen = fairnessComputeGen;
   if (fairnessModel === 'ifcity') {
     const res = await computeIfCityFairness([cat], { [cat]: 1 });
-    if (fairnessComputeGen !== myGen) return { gini: null, poiCount: 0 };
+    const displayGini = Number.isFinite(res.giniCoeff) ? res.giniCoeff : res.inequality;
+    currentCategoryGini = displayGini;
     try {
-      if (giniOut) giniOut.textContent = `${prettyPOIName(cat)} GE(α=2): ${formatFairnessBadgeValue(res.inequality)}`;
+      if (giniOut) giniOut.textContent = `${prettyPOIName(cat)} Gini: ${formatFairnessBadgeValue(res.inequality)}`;
       if (fairStatus) { fairStatus.textContent = ''; fairStatus.classList.remove('text-danger'); }
     } catch {}
-    return { gini: res.inequality, poiCount: res.poiCount };
+    window.faveInspector?.refresh?.();
+    return { gini: displayGini, poiCount: res.poiCount };
   }
   if (!baseCityFC) throw new Error('No buildings loaded.');
   const pois = await fetchPOIs(cat, baseCityFC);
@@ -1495,7 +1506,7 @@ async function computeFairnessFast(cat) {
   const allowRouting = allowRoutingForFairness(poiCoords.length);
   for (const f of baseCityFC.features) {
     const props = f.properties || (f.properties = {});
-    const cB = fastCentroid(f);  // bbox midpoint (cached); ~10x faster than turf.centroid in 50k-building loops
+    const cB = turf.centroid(f).geometry.coordinates;
 
     delete props.fair;
     props.fair_multi = {};
@@ -1527,8 +1538,6 @@ async function computeFairnessFast(cat) {
 
     scoresLack.push(1 - score);
   }
-
-  if (fairnessComputeGen !== myGen) return { gini: null, poiCount: 0 };
 
   const G = gini(scoresLack);
 
@@ -1567,12 +1576,13 @@ async function computeFairnessWeighted(mix) {
       return acc;
     }, {});
     const res = await computeIfCityFairness(mix.map(m => m.cat), weightsByCat);
-    if (fairnessComputeGen !== myGen) return { gini: null, poiCount: 0 };
+    const displayGini = Number.isFinite(res.giniCoeff) ? res.giniCoeff : res.inequality;
+    currentCategoryGini = displayGini;
     try {
-      if (giniOut) giniOut.textContent = `Mix GE(α=2): ${formatFairnessBadgeValue(res.inequality)}`;
+      if (giniOut) giniOut.textContent = `Mix Gini: ${formatFairnessBadgeValue(res.inequality)}`;
       if (fairStatus) { fairStatus.textContent = ''; fairStatus.classList.remove('text-danger'); }
     } catch {}
-    return { gini: res.inequality, poiCount: res.poiCount };
+    return { gini: displayGini, poiCount: res.poiCount };
   }
   if (!baseCityFC) throw new Error('No buildings loaded.');
 
@@ -1620,7 +1630,7 @@ async function computeFairnessWeighted(mix) {
   const allowRouting = allowRoutingForFairness(maxPois);
   for (const f of baseCityFC.features) {
     const props = f.properties || (f.properties = {});
-    const cB = fastCentroid(f);  // bbox midpoint (cached); ~10x faster than turf.centroid in 50k-building loops
+    const cB = turf.centroid(f).geometry.coordinates;
 
     const fm = {};
     delete props.fair;
@@ -1659,8 +1669,6 @@ async function computeFairnessWeighted(mix) {
     props.fair_multi = fm;
   }
 
-  if (fairnessComputeGen !== myGen) return { gini: null, poiCount: 0 };
-
   const G = gini(scoresLack);
 
   fairActive = true;
@@ -1691,13 +1699,13 @@ async function computeOverallFairness(catList) {
       return acc;
     }, {});
     const res = await computeIfCityFairness(catList, weightsByCat, { setOverall: true });
-    overallGini = res.inequality;
+    overallGini = Number.isFinite(res.giniCoeff) ? res.giniCoeff : res.inequality;
     districtScoresSuppressed = false;
-    if (overallGiniOut) overallGiniOut.textContent = formatFairnessBadgeValue(res.inequality);
+    if (overallGiniOut) overallGiniOut.textContent = formatFairnessBadgeValue(overallGini);
     if (parallelCoordsOpen) {
       updateParallelCoordsPanel();
     }
-    return { overall_gini: res.inequality };
+    return { overall_gini: overallGini };
   }
   if (!baseCityFC) throw new Error('No buildings loaded.');
   const allowRouting = ROUTING_ENABLE_OVERALL && allowRoutingForFairness(catList?.length || 0);
@@ -1705,7 +1713,8 @@ async function computeOverallFairness(catList) {
   const jobs = catList.map(cat => (async () => {
     try {
       const fc = await fetchPOIsWithRetry(cat, baseCityFC);
-      const arr = fc.features.map(p => ({ c: p.geometry.coordinates, name: p.properties?.name || '(unnamed)' }));
+      const filtered = filterFetchedPOIsForWhatIf(fc.features);
+      const arr = filtered.map(p => ({ c: p.geometry.coordinates, name: p.properties?.name || '(unnamed)' }));
       return { cat, ok: true, arr };
     } catch (e) {
       console.warn('POI fetch failed for', cat, e);
@@ -1748,7 +1757,7 @@ async function computeOverallFairness(catList) {
   for (const f of baseCityFC.features) {
     const props = f.properties || (f.properties = {});
     if (!props.fair_multi) props.fair_multi = {};
-    const cB = fastCentroid(f);  // bbox midpoint (cached); ~10x faster than turf.centroid in 50k-building loops
+    const cB = turf.centroid(f).geometry.coordinates;
 
     for (const cat of validCats) {
       const arr = catToArr[cat];

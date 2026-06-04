@@ -576,7 +576,9 @@ async function recomputeFairnessAfterWhatIf() {
           ? Object.fromEntries(selectedPOIMix.map(({ cat, weight }) => [cat, weight]))
           : { [fairCategory]: 1 };
         const ifCityRes = await computeIfCityFairness(cats, weightsByCat);
-        result.categoryGini = Number.isFinite(ifCityRes?.inequality) ? ifCityRes.inequality : null;
+        result.categoryGini = Number.isFinite(ifCityRes?.giniCoeff) ? ifCityRes.giniCoeff
+          : Number.isFinite(ifCityRes?.inequality) ? ifCityRes.inequality : null;
+        currentCategoryGini = result.categoryGini;
         if (giniOut && Number.isFinite(result.categoryGini)) {
           const label = fairCategory === 'mix'
             ? 'Mix'
@@ -604,6 +606,7 @@ async function recomputeFairnessAfterWhatIf() {
       const prefix = fairnessModel === 'ifcity' ? 'GE(α=2)' : 'Gini';
       giniOut.textContent = `${label} ${prefix}: ${formatFairnessBadgeValue(result.categoryGini)}`;
     }
+    window.faveInspector?.refresh?.();
 
     hideGlobalSpinner();
     // --- Refresh DR and Parallel Coordinates so mock buildings are included ---
@@ -816,7 +819,7 @@ function applyOverallCandidate(cat, rows, categories, candidateCoord) {
   });
 }
 
-function findBestOverallCandidate({
+async function findBestOverallCandidate({
   cat,
   kind,
   bbox,
@@ -827,6 +830,7 @@ function findBestOverallCandidate({
   usedIds
 }) {
   const { rows, categories, baselineGini, thresholds } = overallState;
+  const metricRows = overallState.metricRows || rows;
   const candidates = pickCandidateRows(rows, {
     kind,
     bbox,
@@ -839,8 +843,10 @@ function findBestOverallCandidate({
   });
   if (!candidates.length) return null;
   let best = null;
-  for (const candidate of candidates) {
-    const g = giniWithOverallCandidate(cat, rows, categories, candidate.centroid);
+  for (let ci = 0; ci < candidates.length; ci += 1) {
+    if (ci > 0 && ci % 5 === 0) await new Promise(r => setTimeout(r, 0));
+    const candidate = candidates[ci];
+    const g = giniWithOverallCandidate(cat, metricRows, categories, candidate.centroid);
     if (!best || g < best.giniAfter) {
       best = { candidate, giniAfter: g };
     }
@@ -1135,9 +1141,18 @@ async function computeWhatIfSuggestionsForCategory({ cat, kind, count, bbox, cen
   const minSpacingMeters = getSuggestionMinDistanceMeters(bbox);
   const exactMode = isExactCityWideSingleCandidateMode({ count, bbox, center, radiusKm, areaFocus });
 
+  // Gini/entropy is computed over a stratified sample when cities have many buildings.
+  // Candidate SELECTION still uses the full row set; only the O(N) objective evaluation uses the sample.
+  // Sample elements are object references, so applyCandidateToRows / applyIfCityCandidate mutations
+  // propagate correctly into the sample for multi-candidate placement.
+  const METRIC_SAMPLE_SIZE = 4000;
+
   if (fairnessModel === 'ifcity') {
     const state = await computeIfCitySuggestionState([cat], { [cat]: 1 });
-    const { rows, categories, baselineInequality, thresholds } = state;
+    const { rows, categories, thresholds } = state;
+    const sampleStep = rows.length > METRIC_SAMPLE_SIZE ? Math.floor(rows.length / METRIC_SAMPLE_SIZE) : 1;
+    const entropyRows = sampleStep > 1 ? rows.filter((_, i) => i % sampleStep === 0) : rows;
+    const baselineInequality = generalizedEntropy(entropyRows.map(r => r.benefit), IF_CITY_ALPHA);
 
     for (let n = 0; n < count; n += 1) {
       const candidates = pickCandidateRows(rows, {
@@ -1151,14 +1166,16 @@ async function computeWhatIfSuggestionsForCategory({ cat, kind, count, bbox, cen
         usedCoords,
         minSpacingMeters,
         cat,
-        limit: exactMode ? Number.POSITIVE_INFINITY : WHATIF_SUGGESTION_LIMIT
+        limit: exactMode ? WHATIF_SUGGESTION_EXACT_LIMIT : WHATIF_SUGGESTION_LIMIT
       });
       if (!candidates.length) break;
 
       let best = null;
       const metricEps = 0.0005;
-      for (const candidate of candidates) {
-        const inequality = generalizedEntropyWithIfCityCandidate(cat, rows, categories, candidate.centroid, { [cat]: 1 });
+      for (let ci = 0; ci < candidates.length; ci++) {
+        if (ci > 0 && ci % 5 === 0) await new Promise(r => setTimeout(r, 0));
+        const candidate = candidates[ci];
+        const inequality = generalizedEntropyWithIfCityCandidate(cat, entropyRows, categories, candidate.centroid, { [cat]: 1 });
         if (!best || inequality < best.inequality - metricEps) {
           best = { candidate, inequality, dist: distanceToNearestUsed(candidate.centroid, usedCoords) };
           continue;
@@ -1193,7 +1210,9 @@ async function computeWhatIfSuggestionsForCategory({ cat, kind, count, bbox, cen
   if (!buildingRows.length) {
     throw new Error('No buildings available to score.');
   }
-  const baselineGini = giniFromBuildingScores(buildingRows);
+  const giniSampleStep = buildingRows.length > METRIC_SAMPLE_SIZE ? Math.floor(buildingRows.length / METRIC_SAMPLE_SIZE) : 1;
+  const giniRows = giniSampleStep > 1 ? buildingRows.filter((_, i) => i % giniSampleStep === 0) : buildingRows;
+  const baselineGini = giniFromBuildingScores(giniRows);
   const thresholds = getCityAreaThresholds(buildingRows);
 
   for (let n = 0; n < count; n += 1) {
@@ -1207,14 +1226,16 @@ async function computeWhatIfSuggestionsForCategory({ cat, kind, count, bbox, cen
       thresholds,
       usedCoords,
       minSpacingMeters,
-      limit: exactMode ? Number.POSITIVE_INFINITY : WHATIF_SUGGESTION_LIMIT
+      limit: exactMode ? WHATIF_SUGGESTION_EXACT_LIMIT : WHATIF_SUGGESTION_LIMIT
     });
     if (!candidates.length) break;
 
     let best = null;
     const giniEps = 0.0005;
-    for (const candidate of candidates) {
-      const g = giniWithCandidate(cat, buildingRows, candidate.centroid);
+    for (let ci = 0; ci < candidates.length; ci++) {
+      if (ci > 0 && ci % 5 === 0) await new Promise(r => setTimeout(r, 0));
+      const candidate = candidates[ci];
+      const g = giniWithCandidate(cat, giniRows, candidate.centroid);
       if (!best || g < best.gini - giniEps) {
         best = { candidate, gini: g, dist: distanceToNearestUsed(candidate.centroid, usedCoords) };
         continue;
@@ -1265,6 +1286,8 @@ async function computeWhatIfSuggestions({
   if (!categoryList.length) {
     throw new Error('Select at least one POI category to suggest.');
   }
+  const METRIC_SAMPLE_SIZE_OVERALL = 4000;
+
   if (target === 'overall') {
     const overallCats = (fairnessCategories && fairnessCategories.length)
       ? fairnessCategories
@@ -1276,9 +1299,13 @@ async function computeWhatIfSuggestions({
     if (fairnessModel === 'ifcity') {
       const weightsByCat = Object.fromEntries(overallCats.map((cat) => [cat, 1]));
       const overallState = await computeIfCitySuggestionState(overallCats, weightsByCat);
-      const { rows, categories, validCats, baselineInequality, thresholds } = overallState;
+      const { rows, categories, validCats, thresholds } = overallState;
+      const stepO = rows.length > METRIC_SAMPLE_SIZE_OVERALL ? Math.floor(rows.length / METRIC_SAMPLE_SIZE_OVERALL) : 1;
+      const entropyRows = stepO > 1 ? rows.filter((_, i) => i % stepO === 0) : rows;
+      const baselineInequality = generalizedEntropy(entropyRows.map(r => r.benefit), IF_CITY_ALPHA);
       for (let n = 0; n < count; n += 1) {
         let bestPick = null;
+        let ci = 0;
         for (const cat of categoryList) {
           if (!validCats.includes(cat)) continue;
           const candidates = pickCandidateRows(rows, {
@@ -1295,7 +1322,9 @@ async function computeWhatIfSuggestions({
           });
           if (!candidates.length) continue;
           for (const candidate of candidates) {
-            const inequality = generalizedEntropyWithIfCityCandidate(cat, rows, categories, candidate.centroid, weightsByCat);
+            if (ci > 0 && ci % 5 === 0) await new Promise(r => setTimeout(r, 0));
+            ci += 1;
+            const inequality = generalizedEntropyWithIfCityCandidate(cat, entropyRows, categories, candidate.centroid, weightsByCat);
             if (!bestPick || inequality < bestPick.giniAfter) {
               bestPick = {
                 kind,
@@ -1317,10 +1346,12 @@ async function computeWhatIfSuggestions({
       }
     } else {
       const overallState = await computeOverallSuggestionState(overallCats);
+      const stepO = overallState.rows.length > METRIC_SAMPLE_SIZE_OVERALL ? Math.floor(overallState.rows.length / METRIC_SAMPLE_SIZE_OVERALL) : 1;
+      overallState.metricRows = stepO > 1 ? overallState.rows.filter((_, i) => i % stepO === 0) : overallState.rows;
       for (let n = 0; n < count; n += 1) {
         let bestPick = null;
         for (const cat of categoryList) {
-          const pick = findBestOverallCandidate({
+          const pick = await findBestOverallCandidate({
             cat,
             kind,
             bbox,
@@ -1449,8 +1480,8 @@ async function verifyWhatIfSuggestionsOptimality(config, suggestions) {
   const requestedCount = Math.max(1, Number.isFinite(config.count) ? config.count : currentSuggestions.length);
   const minSpacingMeters = getSuggestionMinDistanceMeters(bbox);
   const exactMode = requestedCount === 1 && categories.length === 1;
-  const maxCombos = exactMode ? Number.MAX_SAFE_INTEGER : 50000;
-  const maxPoolSize = exactMode ? Number.POSITIVE_INFINITY : 120;
+  const maxCombos = exactMode ? WHATIF_SUGGESTION_EXACT_LIMIT : 50000;
+  const maxPoolSize = exactMode ? WHATIF_SUGGESTION_EXACT_LIMIT : 120;
   let combosChecked = 0;
   let truncated = false;
 
@@ -1483,7 +1514,7 @@ async function verifyWhatIfSuggestionsOptimality(config, suggestions) {
         cat,
         usedCoords: [],
         minSpacingMeters: 0,
-        limit: exactMode ? Number.POSITIVE_INFINITY : WHATIF_SUGGESTION_LIMIT
+        limit: exactMode ? WHATIF_SUGGESTION_EXACT_LIMIT : WHATIF_SUGGESTION_LIMIT
        });
       candidates.forEach((candidate) => {
         uncappedPool.push({ cat, candidate });
@@ -1521,47 +1552,57 @@ async function verifyWhatIfSuggestionsOptimality(config, suggestions) {
     const usedCoords = [];
     let combosCheckedLocal = 0;
 
-    const dfs = (start) => {
-      if (combosChecked >= maxCombos) {
-        truncated = true;
-        return;
-      }
-      if (current.length === count) {
+    if (count === 1) {
+      // Flat async loop — yields every 50 iterations so the browser stays responsive.
+      for (let i = 0; i < pool.length; i += 1) {
+        if (i > 0 && i % 5 === 0) await new Promise(r => setTimeout(r, 0));
+        if (combosChecked >= maxCombos) { truncated = true; break; }
+        const item = pool[i];
+        if (usedIds.has(item.candidate.idx)) continue;
         combosChecked += 1;
         combosCheckedLocal += 1;
         const testRows = cloneRowsForWhatIf(rows, fairnessModel);
-        current.forEach((entry) => {
-          applyCandidate(testRows, entry.cat, entry.candidate.centroid, categoriesForState);
-        });
+        applyCandidate(testRows, item.cat, item.candidate.centroid, categoriesForState);
         const objective = evalObjective(testRows, categoriesForState);
         if (objective < bestObjective) {
           bestObjective = objective;
-          bestSelection = current.map((entry) => ({ ...entry }));
+          bestSelection = [{ ...item }];
         }
-        return;
       }
-
-      for (let i = start; i < pool.length; i += 1) {
-        if (combosChecked >= maxCombos) {
-          truncated = true;
+    } else {
+      const dfs = (start) => {
+        if (combosChecked >= maxCombos) { truncated = true; return; }
+        if (current.length === count) {
+          combosChecked += 1;
+          combosCheckedLocal += 1;
+          const testRows = cloneRowsForWhatIf(rows, fairnessModel);
+          current.forEach((entry) => {
+            applyCandidate(testRows, entry.cat, entry.candidate.centroid, categoriesForState);
+          });
+          const objective = evalObjective(testRows, categoriesForState);
+          if (objective < bestObjective) {
+            bestObjective = objective;
+            bestSelection = current.map((entry) => ({ ...entry }));
+          }
           return;
         }
-        const item = pool[i];
-        const idx = item.candidate.idx;
-        if (usedIds.has(idx)) continue;
-        if (!isFarFromUsed(item.candidate.centroid, usedCoords, minSpacingMeters)) continue;
-
-        usedIds.add(idx);
-        usedCoords.push(item.candidate.centroid);
-        current.push(item);
-        dfs(i + 1);
-        current.pop();
-        usedCoords.pop();
-        usedIds.delete(idx);
-      }
-    };
-
-    dfs(0);
+        for (let i = start; i < pool.length; i += 1) {
+          if (combosChecked >= maxCombos) { truncated = true; return; }
+          const item = pool[i];
+          const idx = item.candidate.idx;
+          if (usedIds.has(idx)) continue;
+          if (!isFarFromUsed(item.candidate.centroid, usedCoords, minSpacingMeters)) continue;
+          usedIds.add(idx);
+          usedCoords.push(item.candidate.centroid);
+          current.push(item);
+          dfs(i + 1);
+          current.pop();
+          usedCoords.pop();
+          usedIds.delete(idx);
+        }
+      };
+      dfs(0);
+    }
     if (!Number.isFinite(bestObjective)) {
       throw new Error('Unable to evaluate combinations for this scenario.');
     }

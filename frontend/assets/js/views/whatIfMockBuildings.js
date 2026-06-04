@@ -117,6 +117,7 @@ async function applyWhatIfLassoFromRing(lassoRing, { countsOverride = null } = {
   }
 
   setWhatIfLassoSelection(lassoRing);
+  await ensureForbiddenZones();
   const lassoPoly = turf.polygon([lassoRing]);
   const screenPolygon = buildWhatIfLassoScreenPolygon(lassoRing);
   if (!screenPolygon) return;
@@ -186,6 +187,10 @@ async function applyWhatIfLassoFromRing(lassoRing, { countsOverride = null } = {
       }
       const ll = map.unproject([x, y]);
       if (!ll) continue;
+
+      // Forbidden-zone check via baked GeoJSON (works with raster basemap)
+      if (isLngLatInForbiddenZone([ll.lng, ll.lat])) continue;
+
       const sizeRange = whatIfMockFootprintMax - whatIfMockFootprintMin;
       const size = whatIfMockFootprintMin + Math.random() * Math.max(0, sizeRange);
       const geom = createMockBuildingPolygon([ll.lng, ll.lat], size, 'random', whatIfMockShapeVariation);
@@ -196,7 +201,7 @@ async function applyWhatIfLassoFromRing(lassoRing, { countsOverride = null } = {
         properties: {}
       };
 
-      // Check all corners of the building polygon against road/water layers
+      // Check all corners of the building polygon against road/water layers (vector basemap only)
       if (avoidLayerIds.length) {
         const coords = geom.coordinates?.[0] || [];
         let hitsInfra = false;

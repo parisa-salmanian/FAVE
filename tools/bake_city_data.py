@@ -244,6 +244,18 @@ def filter_school_subtype(features: list[dict[str, Any]], category: str) -> list
     return filtered if filtered else features
 
 
+FORBIDDEN_ZONE_SELECTORS: list[str] = [
+    'way["natural"="water"]',
+    'relation["natural"="water"]',
+    'way["waterway"="riverbank"]',
+    'way["waterway"="dock"]',
+    'way["landuse"="reservoir"]',
+    'relation["landuse"="reservoir"]',
+    'way["natural"="wetland"]',
+    'relation["natural"="wetland"]',
+]
+
+
 def build_overpass_body(bbox: list[float], selectors: list[str]) -> str:
     south, west, north, east = bbox
     sel_block = "\n      ".join(f"{q}({south},{west},{north},{east});" for q in selectors)
@@ -252,6 +264,97 @@ def build_overpass_body(bbox: list[float], selectors: list[str]) -> str:
         f"(\n      {sel_block}\n);\n"
         f"out center tags;"
     )
+
+
+def build_overpass_body_geom(bbox: list[float], selectors: list[str]) -> str:
+    """Request full inline geometry via 'out geom' — avoids manual node/way assembly."""
+    south, west, north, east = bbox
+    sel_block = "\n      ".join(f"{q}({south},{west},{north},{east});" for q in selectors)
+    return (
+        f"[out:json][timeout:180];\n"
+        f"(\n      {sel_block}\n);\n"
+        f"out geom;"
+    )
+
+
+def _coords_approx_equal(a: tuple[float, float], b: tuple[float, float], tol: float = 1e-7) -> bool:
+    return abs(a[0] - b[0]) < tol and abs(a[1] - b[1]) < tol
+
+
+def _assemble_rings(segments: list[list[tuple[float, float]]]) -> list[list[tuple[float, float]]]:
+    """Chain open way segments into closed rings (handles split multipolygon outer members)."""
+    segs = [list(s) for s in segments if len(s) >= 2]
+    rings: list[list[tuple[float, float]]] = []
+    while segs:
+        ring = segs.pop(0)
+        changed = True
+        while changed and not _coords_approx_equal(ring[0], ring[-1]):
+            changed = False
+            for i, seg in enumerate(segs):
+                if _coords_approx_equal(ring[-1], seg[0]):
+                    ring.extend(seg[1:])
+                    segs.pop(i)
+                    changed = True
+                    break
+                if _coords_approx_equal(ring[-1], seg[-1]):
+                    ring.extend(reversed(seg[:-1]))
+                    segs.pop(i)
+                    changed = True
+                    break
+        if len(ring) >= 4:
+            if not _coords_approx_equal(ring[0], ring[-1]):
+                ring.append(ring[0])
+            rings.append(ring)
+    return rings
+
+
+def overpass_to_polygons(opj: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert Overpass 'out geom' response to Polygon features.
+
+    'out geom' embeds coordinates directly in each element:
+    - way: el["geometry"] = [{"lat": .., "lon": ..}, ...]
+    - relation: el["members"][i]["geometry"] = [{"lat": .., "lon": ..}, ...]
+    """
+    features: list[dict[str, Any]] = []
+    seen: set[str] = set()  # deduplicate by osm_type:osm_id
+
+    for el in opj.get("elements", []):
+        key = f"{el['type']}:{el['id']}"
+        if key in seen:
+            continue
+
+        if el["type"] == "way":
+            raw = el.get("geometry") or []
+            coords = [(pt["lon"], pt["lat"]) for pt in raw if "lon" in pt and "lat" in pt]
+            if len(coords) < 4:
+                continue
+            if not _coords_approx_equal(coords[0], coords[-1]):
+                coords.append(coords[0])
+            seen.add(key)
+            features.append({
+                "type": "Feature",
+                "properties": {},
+                "geometry": {"type": "Polygon", "coordinates": [coords]},
+            })
+
+        elif el["type"] == "relation":
+            outer_segs: list[list[tuple[float, float]]] = []
+            for member in el.get("members", []):
+                if member.get("role") != "outer" or member.get("type") != "way":
+                    continue
+                raw = member.get("geometry") or []
+                coords = [(pt["lon"], pt["lat"]) for pt in raw if "lon" in pt and "lat" in pt]
+                if coords:
+                    outer_segs.append(coords)
+            for ring in _assemble_rings(outer_segs):
+                seen.add(key)
+                features.append({
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {"type": "Polygon", "coordinates": [ring]},
+                })
+
+    return features
 
 
 def bake_city(key: str, query_string: str, force: bool, log) -> None:
@@ -306,6 +409,30 @@ def bake_city(key: str, query_string: str, force: bool, log) -> None:
         counts[category] = len(feats)
         log(f"[{key}] {category}: {len(feats)} POIs → {out_path.relative_to(REPO_ROOT)}")
         time.sleep(OVERPASS_INTER_QUERY_DELAY_S)
+
+    # Forbidden zones: water bodies, wetlands (polygon geometry required)
+    forbidden_path = out_dir / "forbidden_zones.geojson"
+    if not forbidden_path.exists() or force:
+        log(f"[{key}] querying Overpass for forbidden zones (water/wetlands)…")
+        time.sleep(OVERPASS_INTER_QUERY_DELAY_S)
+        body = build_overpass_body_geom(bbox, FORBIDDEN_ZONE_SELECTORS)
+        try:
+            opj = overpass_query(body)
+            feats = overpass_to_polygons(opj)
+            fz_fc = {"type": "FeatureCollection", "features": feats}
+            forbidden_path.write_text(
+                json.dumps(fz_fc, ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            log(f"[{key}] forbidden_zones: {len(feats)} polygons → {forbidden_path.relative_to(REPO_ROOT)}")
+        except Exception as exc:
+            log(f"[{key}] WARNING: forbidden_zones fetch failed ({exc}); skipping")
+    else:
+        try:
+            fz_cached = json.loads(forbidden_path.read_text(encoding="utf-8"))
+            log(f"[{key}] forbidden_zones: cached ({len(fz_cached.get('features', []))} polygons), skipping")
+        except Exception:
+            pass
 
     meta["counts"] = counts
     meta["baked_at"] = datetime.now(timezone.utc).isoformat()

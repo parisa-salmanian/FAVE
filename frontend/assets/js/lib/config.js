@@ -142,6 +142,10 @@ const PARALLEL_COORDS_MAX_LINES = Number.isFinite(globalThis.PARALLEL_COORDS_MAX
 globalThis.PARALLEL_COORDS_MAX_LINES = PARALLEL_COORDS_MAX_LINES;
 const SELF_POI_EPS_M = 5;
 const WHATIF_SUGGESTION_LIMIT = 120;
+// Cap for exact city-wide search: top-N most under-served buildings by score.
+// pickCandidateRows already sorts ascending by score so these are the best candidates.
+// Infinity was the original value but caused O(N²) hangs for any real city.
+const WHATIF_SUGGESTION_EXACT_LIMIT = 500;
 const WHATIF_EXACT_MAX_COMBOS = 2000000n;
 
 function isExactCityWideSingleCandidateMode({ count, bbox, center, radiusKm, areaFocus }) {

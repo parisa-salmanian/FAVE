@@ -13,6 +13,7 @@ let lastCityName = 'Växjö';
 let baseCityFC  = null;
 let newbuildsFC = null;
 let districtFC  = null;
+let forbiddenZonesFC = null;   // water/natural-area polygons baked per city; null until loaded
 // Växjö demand-weight state (population distributed proportionally by building floor area)
 let vaxjoDistrictIndex  = null;   // [{feat, code}]
 let vaxjoBuildingPopMap = null;   // Map<featureIndex, estimatedResidents>
@@ -39,6 +40,7 @@ let fairnessComputeGen = 0;  // incremented on clear; computations check this be
 let poiCache = {};               // per-category POI cache for current bbox
 let currentPOIsFC = null;        // current marker POIs (single or union for mix)
 let overallGini = null;
+let currentCategoryGini = null;  // per-selection Gini; updated on every compute/clear
 let fairnessTravelMode = FAIRNESS_TRAVEL_MODE_DEFAULT;
 let fairnessModel = FAIRNESS_MODEL_DEFAULT;
 let fairnessColorScheme = FAIRNESS_COLOR_SCHEME_DEFAULT;
@@ -1486,12 +1488,10 @@ function wireUI() {
       if (mix.length === 1) {
         const singleCat = mix[0].cat;
         const res = await computeFairnessFast(singleCat);
-        if (fairnessComputeGen !== genAtStart) return;
         fairStatus.textContent = '';
         giniOut.textContent = `${prettyPOIName(singleCat)} Gini: ${formatFairnessBadgeValue(res.gini)}`;
       } else {
         const res = await computeFairnessWeighted(mix); // recomputes + recolors
-        if (fairnessComputeGen !== genAtStart) return;
         fairStatus.textContent = '';
         giniOut.textContent = `Mix Gini: ${formatFairnessBadgeValue(res.gini)}`;
         showSidePanel('mix', res.gini, res.poiCount, window.getFairnessSummary?.());
@@ -1732,4 +1732,5 @@ function applyDistrictDatasetForCity(city) {
   mezoMaskPolygon = null;
   mezoHexData = [];
   districtLandClipSignature = '';
+  forbiddenZonesFC = null;
 }

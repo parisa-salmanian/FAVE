@@ -655,25 +655,17 @@ async function runWhatIfSuggestionFromChat(prompt, overrides = {}) {
       fairnessCategories: categories.length ? categories : ALL_CATEGORIES,
       areaFocus
     });
-    const shouldAutoVerifyExact = count === 1 && categories.length === 1;
-    let exactSuggestions = suggestions;
-    if (shouldAutoVerifyExact) {
-      const exactReport = await verifyWhatIfSuggestionsOptimality(whatIfLastSuggestionConfig, suggestions);
-      exactSuggestions = Array.isArray(exactReport?.bestSuggestions) && exactReport.bestSuggestions.length
-        ? exactReport.bestSuggestions
-        : suggestions;
-    }
-    if (!exactSuggestions.length) {
+    if (!suggestions.length) {
       throw new Error('No feasible city-wide suggestions found under current filters/model.');
     }
-    setWhatIfSuggestions(exactSuggestions);
-    const summaryText = formatWhatIfSuggestionSummary(exactSuggestions);
-    const verifyHint = shouldAutoVerifyExact ? '' : ' Verify optimality can run bounded search for multi-location requests.';
+    setWhatIfSuggestions(suggestions);
+    const summaryText = formatWhatIfSuggestionSummary(suggestions);
+    const verifyHint = ' Verify optimality can run bounded search for multi-location requests.';
     updateWhatIfSuggestionUI(
       rationale ? `${summaryText} ${rationale}${verifyHint}` : `${summaryText}${verifyHint}`,
       { hasSuggestion: true }
     );
-    return exactSuggestions;
+    return suggestions;
   } catch (err) {
     updateWhatIfSuggestionUI(err?.message || 'Unable to generate suggestions.', { isError: true });
     throw err;
@@ -824,6 +816,28 @@ function getWhatIfAvoidLayerIds() {
     .map((layer) => layer.id);
 }
 
+async function ensureForbiddenZones() {
+  if (forbiddenZonesFC) return forbiddenZonesFC;
+  const cityKey = normalizeCityKey(lastCityName);
+  if (!cityKey) return null;
+  try {
+    const r = await fetch(`assets/data/cities/${cityKey}/forbidden_zones.geojson`, { cache: 'force-cache' });
+    if (!r.ok) return null;
+    forbiddenZonesFC = await r.json();
+  } catch {
+    forbiddenZonesFC = null;
+  }
+  return forbiddenZonesFC;
+}
+
+function isLngLatInForbiddenZone(lngLat) {
+  if (!forbiddenZonesFC?.features?.length) return false;
+  const pt = turf.point(lngLat);
+  return forbiddenZonesFC.features.some(f => {
+    try { return turf.booleanPointInPolygon(pt, f); } catch { return false; }
+  });
+}
+
 function createWhatIfBuilding(lngLat, categoryOverride = null) {
   if (!baseCityFC?.features?.length) return null;
   const canonical = categoryOverride || whatIfType || ALL_CATEGORIES[0] || 'grocery';
@@ -905,12 +919,37 @@ function createWhatIfMockBuildingsLayer() {
 }
 
 
+function showWhatIfBlockedToast(msg) {
+  const id = 'whatif-blocked-toast';
+  let el = document.getElementById(id);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = id;
+    el.className = 'toast align-items-center text-bg-warning border-0 position-fixed bottom-0 start-50 translate-middle-x mb-4';
+    el.style.zIndex = '9999';
+    el.setAttribute('role', 'alert');
+    el.setAttribute('aria-live', 'assertive');
+    el.innerHTML = '<div class="d-flex"><div class="toast-body fw-semibold"></div>' +
+      '<button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button></div>';
+    document.body.appendChild(el);
+  }
+  el.querySelector('.toast-body').textContent = msg;
+  bootstrap.Toast.getOrCreateInstance(el, { delay: 3000 }).show();
+}
+
 async function handleWhatIfMapClick(event) {
   if (whatIfMode !== 'add' || !event?.lngLat) return;
   if (mapLasso.active) return;
   if (whatIfLasso.active) return;
   if (Date.now() - lastFeatureClickAt < 260) return;
+
   const lngLat = [event.lngLat.lng, event.lngLat.lat];
+
+  await ensureForbiddenZones();
+  if (isLngLatInForbiddenZone(lngLat)) {
+    showWhatIfBlockedToast("Can't place a building here — water or natural area.");
+    return;
+  }
   const categoryOverride = getActiveWhatIfCategory();
 
   const beforeCatGini = extractDisplayedGiniValue(giniOut?.textContent || '');
