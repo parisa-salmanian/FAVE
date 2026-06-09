@@ -323,6 +323,8 @@ body[data-theme="dark"] #inspector[data-open="true"] {
 #metricStrip .metric {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
   gap: 2px;
   padding: 0 14px;
   border-right: 1px solid rgba(28, 25, 22, 0.08);

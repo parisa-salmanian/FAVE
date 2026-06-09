@@ -17,8 +17,16 @@
 
   <!-- MapLibre GL CSS -->
   <link href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css" rel="stylesheet"/>
-  <link rel="stylesheet" href="assets/css/shell.css"/>
-  <link rel="stylesheet" href="assets/css/inspector.css"/>
+  <!-- dev cache-busting for local stylesheets (see the JS loader at end of body) -->
+  <script>
+    (function () {
+      var v = Date.now();
+      var hrefs = ['assets/css/shell.css', 'assets/css/inspector.css'];
+      for (var i = 0; i < hrefs.length; i++) {
+        document.write('<link rel="stylesheet" href="' + hrefs[i] + '?v=' + v + '"/>');
+      }
+    })();
+  </script>
 
   <style>
     html, body { height: 100%; margin: 0; }
@@ -959,6 +967,7 @@
               <option value="walking" selected>Walking distance</option>
               <option value="driving">Car distance</option>
               <option value="cycling">Cycling distance</option>
+              <option value="transit">Public transport</option>
             </select>
           </li>
            <li class="nav-item d-flex align-items-center ms-3">
@@ -1037,8 +1046,8 @@
   </button>
 
   <div id="metricStrip" aria-hidden="false">
-    <div class="metric" data-metric-tip="Overall Fairness — mean of per-building fairness scores (0 = unfair, 1 = fully fair). ↑ higher is better."><span class="metric-label">Overall <svg class="metric-dir metric-dir-up" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="14" x2="8" y2="3"/><polyline points="3,8 8,3 13,8"/></svg></span><span class="metric-value" id="metricOverall">—</span></div>
-    <div class="metric" data-metric-tip="Gini Inequality — how unevenly fairness is distributed across the city (0 = perfectly equal, 1 = maximum inequality). ↓ lower is better."><span class="metric-label">Gini <svg class="metric-dir metric-dir-down" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="3" x2="8" y2="14"/><polyline points="3,9 8,14 13,9"/></svg></span><span class="metric-value" id="metricGini">—</span></div>
+    <div class="metric" data-metric-tip="Overall Fairness — mean of per-building fairness scores (0 = unfair, 1 = fully fair). ↑ higher is better."><span class="metric-label">Overall Fairness <svg class="metric-dir metric-dir-up" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="14" x2="8" y2="3"/><polyline points="3,8 8,3 13,8"/></svg></span><span class="metric-value" id="metricOverall">—</span></div>
+    <div class="metric" data-metric-tip="Gini Inequality — how unevenly fairness is distributed across the city (0 = perfectly equal, 1 = maximum inequality). ↓ lower is better."><span class="metric-label"><span id="metricGiniLabel">Gini</span> <svg class="metric-dir metric-dir-down" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="3" x2="8" y2="14"/><polyline points="3,9 8,14 13,9"/></svg></span><span class="metric-value" id="metricGini">—</span></div>
     <div class="metric" data-metric-tip="Total POIs across the currently selected categories."><span class="metric-label">POIs</span><span class="metric-value" id="metricPois">0</span></div>
     <div class="metric" id="metricUnitsBox" data-metric-tip="Macro = districts, Meso = hex cells, Micro = buildings. The label and count follow the active scale."><span class="metric-label" id="metricUnitsLabel">Cells</span><span class="metric-value" id="metricCells">0</span></div>
   </div>
@@ -1087,7 +1096,7 @@
         <div class="kv-list">
           <div class="kv">
             <span class="kv-key">Overall fairness</span>
-            <span class="kv-val"><span id="inspOverallFairness">—</span><span class="insp-pill">Gini</span></span>
+            <span class="kv-val"><span id="inspOverallFairness">—</span><span class="insp-pill" id="inspOverallPill">Gini</span></span>
           </div>
           <div class="kv">
             <span class="kv-key">Inequality (Gini)</span>
@@ -1541,50 +1550,60 @@
   <!-- d3 for lasso + engine bar chart -->
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 
-  <!-- lib (constants, state, encoders, helpers) -->
-  <script src="assets/js/lib/config.js"></script>
-  <script src="assets/js/lib/cityPaths.js"></script>
-  <script src="assets/js/lib/poi.js"></script>
-  <script src="assets/js/lib/visuals.js"></script>
-  <script src="assets/js/lib/poiAtlas.js"></script>
-  <script src="assets/js/lib/helpers.js"></script>
-  <script src="assets/js/lib/drEncoders.js"></script>
-  <script src="assets/js/lib/state.js"></script>
-  <script src="assets/js/lib/utils.js"></script>
-
-  <!-- models (data, math) -->
-  <script src="assets/js/models/changeHistory.js"></script>
-  <script src="assets/js/models/districts.js"></script>
-  <script src="assets/js/models/loaders.js"></script>
-  <script src="assets/js/models/cityLoader.js"></script>
-  <script src="assets/js/models/fairness.js"></script>
-  <script src="assets/js/models/summarize.js"></script>
-
-  <!-- views (rendering) -->
-  <script src="assets/js/views/popupView.js"></script>
-  <script src="assets/js/views/overlays.js"></script>
-  <script src="assets/js/views/poiMarkers.js"></script>
-  <script src="assets/js/views/layers.js"></script>
-  <script src="assets/js/views/whatIfMockBuildings.js"></script>
-  <script src="assets/js/views/sidePanel.js"></script>
-  <script src="assets/js/views/yearHighlight.js"></script>
-  <script src="assets/js/views/drSpinner.js"></script>
-  <script src="assets/js/views/drView.js"></script>
-  <script src="assets/js/views/inspector.js"></script>
-  <script src="assets/js/views/shell.js"></script>
-
-  <!-- controllers (interactions) -->
-  <script src="assets/js/controllers/mapLasso.js"></script>
-  <script src="assets/js/controllers/interaction.js"></script>
-  <script src="assets/js/controllers/apiClient.js"></script>
-
-  <!-- entry: thin orchestrator + last orphan helpers -->
-  <script src="assets/js/main.js"></script>
-
-  <!-- post-main controllers/wrappers (depend on main.js bindings) -->
-  <script src="assets/js/controllers/drFeatureMode.js"></script>
-  <script src="assets/js/models/history.js"></script>
-  <script src="assets/js/controllers/llm.js"></script>
-  <script src="assets/js/views/equity.js"></script>
+  <!-- Local modules — loaded through a tiny dev cache-busting loader so a plain
+       refresh always runs the newest JS (these are order-sensitive classical
+       scripts; document.write during initial parse preserves execution order).
+       Edit the ordered list below when adding/moving a module.
+       Order: lib -> models -> views -> controllers -> main -> post-main wrappers. -->
+  <script>
+    (function () {
+      var v = Date.now(); // dev: bust browser cache every load (local files are tiny)
+      var srcs = [
+        // lib (constants, state, encoders, helpers)
+        'assets/js/lib/config.js',
+        'assets/js/lib/cityPaths.js',
+        'assets/js/lib/poi.js',
+        'assets/js/lib/visuals.js',
+        'assets/js/lib/poiAtlas.js',
+        'assets/js/lib/helpers.js',
+        'assets/js/lib/drEncoders.js',
+        'assets/js/lib/state.js',
+        'assets/js/lib/utils.js',
+        // models (data, math)
+        'assets/js/models/changeHistory.js',
+        'assets/js/models/districts.js',
+        'assets/js/models/loaders.js',
+        'assets/js/models/cityLoader.js',
+        'assets/js/models/fairness.js',
+        'assets/js/models/summarize.js',
+        // views (rendering)
+        'assets/js/views/popupView.js',
+        'assets/js/views/overlays.js',
+        'assets/js/views/poiMarkers.js',
+        'assets/js/views/layers.js',
+        'assets/js/views/whatIfMockBuildings.js',
+        'assets/js/views/sidePanel.js',
+        'assets/js/views/yearHighlight.js',
+        'assets/js/views/drSpinner.js',
+        'assets/js/views/drView.js',
+        'assets/js/views/inspector.js',
+        'assets/js/views/shell.js',
+        // controllers (interactions)
+        'assets/js/controllers/mapLasso.js',
+        'assets/js/controllers/interaction.js',
+        'assets/js/controllers/apiClient.js',
+        // entry: thin orchestrator + last orphan helpers
+        'assets/js/main.js',
+        // post-main controllers/wrappers (depend on main.js bindings)
+        'assets/js/controllers/drFeatureMode.js',
+        'assets/js/models/history.js',
+        'assets/js/controllers/llm.js',
+        'assets/js/views/equity.js'
+      ];
+      for (var i = 0; i < srcs.length; i++) {
+        document.write('<script src="' + srcs[i] + '?v=' + v + '"><\/script>');
+      }
+    })();
+  </script>
 </body>
 </html>

@@ -1,0 +1,43 @@
+# Local OSRM routing servers for FAVE — three profiles (walking / cycling /
+# driving). These run ONLY during development, to bake road-distance matrices
+# into frontend/assets/data/. The running FAVE app never talks to them — it
+# reads the baked files. See RUNBOOK.md for the one-time preprocessing steps
+# you must run before `docker compose up`.
+#
+# Ports (host -> container):
+#   foot  : 5001 -> 5000
+#   bike  : 5002 -> 5000
+#   car   : 5003 -> 5000
+#
+# --max-table-size must be >= (POIs + building batch) used by bake_routing.py.
+
+services:
+  osrm-foot:
+    image: osrm/osrm-backend:latest
+    platform: linux/amd64
+    command: osrm-routed --algorithm mld --max-table-size 10000 /data/sweden-latest.osrm
+    volumes:
+      - ./data/foot:/data
+    ports:
+      - "5001:5000"
+    restart: unless-stopped
+
+  osrm-bike:
+    image: osrm/osrm-backend:latest
+    platform: linux/amd64
+    command: osrm-routed --algorithm mld --max-table-size 10000 /data/sweden-latest.osrm
+    volumes:
+      - ./data/bike:/data
+    ports:
+      - "5002:5000"
+    restart: unless-stopped
+
+  osrm-car:
+    image: osrm/osrm-backend:latest
+    platform: linux/amd64
+    command: osrm-routed --algorithm mld --max-table-size 10000 /data/sweden-latest.osrm
+    volumes:
+      - ./data/car:/data
+    ports:
+      - "5003:5000"
+    restart: unless-stopped

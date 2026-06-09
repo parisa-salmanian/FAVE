@@ -37,11 +37,16 @@ const TRAVEL_SPEED_KMH = {
   walking: 5,
   cycling: 15,
   driving: 40,
+  // Transit has no single speed; this is only used by the haversine fallback
+  // for buildings with no baked transit entry — i.e. "no service nearby, you
+  // walk". The baked transit path uses real door-to-door seconds, not this.
+  transit: 5,
 };
 const FAIRNESS_EFFORT_MULTIPLIER = {
   walking: 1,
   cycling: 0.7,
   driving: 0.45,
+  transit: 0.8,
 };
 const FAIRNESS_TRAVEL_MODE_DEFAULT = 'walking';
 
@@ -112,16 +117,25 @@ const IF_CITY_MODE_DISTANCE_FACTOR = {
   walking: 1.0,
   cycling: 1.55,
   driving: 1.85,
+  // Perceived-cost multiplier applied to transit travel TIME (see
+  // ifCityTransitTimeForMode). R5's seconds already include walking, waiting
+  // and transfers, so we keep this modest rather than double-penalising.
+  transit: 1.4,
 };
 const IF_CITY_MODE_DETOUR_FACTOR = {
   walking: 1.0,
   cycling: 1.15,
   driving: 1.3,
+  // Only used by the haversine fallback (no baked transit entry → walk).
+  transit: 1.0,
 };
 const IF_CITY_MODE_SPEED_KMH = {
   walking: 5,
   cycling: 15,
   driving: 40,
+  // Fallback-only (no baked transit entry → walk). The baked transit path
+  // decays on real R5 seconds via ifCityTransitTimeForMode, not this speed.
+  transit: 5,
 };
 const IF_CITY_REFERENCE_SPEED_KMH = IF_CITY_MODE_SPEED_KMH.walking;
 

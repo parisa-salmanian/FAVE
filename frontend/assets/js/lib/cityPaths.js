@@ -121,7 +121,11 @@ const ANDAMAL_TO_BUILDING_TYPE = {
 const GENDER_AGE_POP_URL_BY_CITY_KEY = {
   vaxjo: 'assets/data/gender-age-population.json',
   malmo: 'assets/data/malmo_age_gender.json',
-  stockholm: 'assets/data/stockholm_age_gender.json'
+  stockholm: 'assets/data/stockholm_age_gender.json',
+  goteborg: 'assets/data/goteborg_age_gender.json',
+  kalmar: 'assets/data/kalmar_age_gender_population.json',
+  norrkoping: 'assets/data/norrkoping_age_gender.json',
+  uppsala: 'assets/data/uppsala_age_gender.json'
 };
 const DEFAULT_GENDER_AGE_POP_URL = 'assets/data/gender-age-population.json';
 const GENDER_AGE_POP_URL = 'assets/data/gender-age-population.json';

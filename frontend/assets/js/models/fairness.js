@@ -667,7 +667,8 @@ function haversineMeters(a, b) {
 function normalizeTravelMode(mode) {
   const normalized = String(mode || '').toLowerCase();
   if (normalized === 'car') return 'driving';
-  if (['walking', 'cycling', 'driving'].includes(normalized)) return normalized;
+  if (['pt', 'public_transport', 'public-transport'].includes(normalized)) return 'transit';
+  if (['walking', 'cycling', 'driving', 'transit'].includes(normalized)) return normalized;
   return FAIRNESS_TRAVEL_MODE_DEFAULT;
 }
 
@@ -915,6 +916,66 @@ function ifCityDistanceForMode(km, mode = FAIRNESS_TRAVEL_MODE_DEFAULT) {
   return travelHours * IF_CITY_REFERENCE_SPEED_KMH * behaviorFactor;
 }
 
+// Like ifCityDistanceForMode but for a REAL road-network distance (from baked
+// OSRM matrices). The detour factor is dropped — the input km is already the
+// true road distance, not a straight-line estimate that needs inflating.
+function ifCityRoadDistanceForMode(networkKm, mode = FAIRNESS_TRAVEL_MODE_DEFAULT) {
+  const normalized = normalizeTravelMode(mode);
+  const behaviorFactor = IF_CITY_MODE_DISTANCE_FACTOR[normalized] ?? 1;
+  const speed = IF_CITY_MODE_SPEED_KMH[normalized] ?? IF_CITY_REFERENCE_SPEED_KMH;
+  const travelHours = networkKm / Math.max(1e-6, speed);
+  return travelHours * IF_CITY_REFERENCE_SPEED_KMH * behaviorFactor;
+}
+
+// Transit accessibility decays on door-to-door travel TIME (baked from R5 as
+// seconds: walk-to-stop + wait + in-vehicle + transfers + walk-to-destination),
+// not distance — a few stops on a fast bus beats a long walk. We map seconds
+// onto the same "effective km" axis the gravity decay uses for every other mode
+// (travelHours × reference walk speed × behaviour factor), so transit scores are
+// directly comparable to walking/cycling/driving.
+function ifCityTransitTimeForMode(seconds) {
+  const behaviorFactor = IF_CITY_MODE_DISTANCE_FACTOR.transit ?? 1;
+  const travelHours = Math.max(0, Number(seconds) || 0) / 3600;
+  return travelHours * IF_CITY_REFERENCE_SPEED_KMH * behaviorFactor;
+}
+
+/* -------- Baked road-distance access (offline OSRM matrices) ----------------
+   Per city/mode/category file at cities/<key>/routing/<mode>/<cat>.json holds,
+   per building, the k nearest POIs by real road distance: { key[], m[], s[], v[] }
+   where m/s/v are arrays (metres, seconds, opportunity weight). We load each
+   file once per session into a Map keyed by the building centroid "lon,lat"
+   (6 decimals — identical to tools/bake_routing.py). When a building has no
+   baked entry, callers fall back to local haversine (never the network). */
+let bakedRoutingCache = Object.create(null); // `${cityKey}|${mode}|${cat}` -> Map | null
+let demandWeightsBuiltFor = null;            // city key the current vaxjoBuildingPopMap was built for
+
+async function ensureBakedRouting(cityKey, mode, cats) {
+  if (!cityKey || !Array.isArray(cats) || !cats.length) return;
+  await Promise.all(cats.map(async (cat) => {
+    const cacheKey = `${cityKey}|${mode}|${cat}`;
+    if (cacheKey in bakedRoutingCache) return;
+    try {
+      const r = await fetch(`assets/data/cities/${cityKey}/routing/${mode}/${cat}.json`);
+      if (!r.ok) { bakedRoutingCache[cacheKey] = null; return; }
+      const data = await r.json();
+      const keys = data.key || [], m = data.m || [], s = data.s || [], v = data.v || [];
+      const map = new Map();
+      for (let i = 0; i < keys.length; i++) {
+        map.set(keys[i], { m: m[i] || [], s: s[i] || [], v: v[i] || [] });
+      }
+      bakedRoutingCache[cacheKey] = map.size ? map : null;
+    } catch {
+      bakedRoutingCache[cacheKey] = null;
+    }
+  }));
+}
+
+function bakedRoutingNeighbours(cityKey, mode, cat, lon, lat) {
+  const map = bakedRoutingCache[`${cityKey}|${mode}|${cat}`];
+  if (!map) return null;
+  return map.get(`${lon.toFixed(6)},${lat.toFixed(6)}`) || null;
+}
+
 function ifCityEquityWeightForFeature(feature) {
   const props = feature?.properties || {};
   // IF-City equity weighting should come from population/social group signals.
@@ -935,13 +996,33 @@ function ifCityEquityWeightForFeature(feature) {
   return weight;
 }
 
-function ifCityAccessibilityForBuilding(cB, poiArr, cat, mode = FAIRNESS_TRAVEL_MODE_DEFAULT) {
+function ifCityAccessibilityForBuilding(cB, poiArr, cat, mode = FAIRNESS_TRAVEL_MODE_DEFAULT, baked = null) {
   // Only the nearest 3 POIs contribute, to prevent city-centre accumulation effect.
   // Hot path: this runs ~N_buildings × N_categories times during a fairness compute,
   // so we avoid the previous map().sort() (O(P log P) + 1 alloc per call) and pick
   // the top-3 distances in a single pass with no intermediate allocation.
   const kappa = ifCityKappa(cat);
   const rho = ifCityPriorityWeight(cat);
+
+  // Baked path: use the 3 nearest POIs by REAL road distance (OSRM), with the
+  // baked opportunity weight v. Same gravity sum, real distances instead of
+  // straight-line × detour estimate.
+  if (baked && Array.isArray(baked.m) && baked.m.length) {
+    // Transit decays on baked door-to-door seconds (s[]); all other modes decay
+    // on baked road distance (m[]). The neighbours were already ranked nearest-
+    // first by the baker (by time for transit, by distance otherwise).
+    const isTransit = normalizeTravelMode(mode) === 'transit';
+    let sum = 0;
+    const n = Math.min(3, baked.m.length);
+    for (let i = 0; i < n; i++) {
+      const v = Number.isFinite(baked.v?.[i]) ? baked.v[i] : 1;
+      const effectiveKm = isTransit
+        ? ifCityTransitTimeForMode(baked.s?.[i])
+        : ifCityRoadDistanceForMode(baked.m[i] / 1000, mode);
+      sum += rho * v * Math.exp(-kappa * effectiveKm);
+    }
+    return sum;
+  }
 
   let d0 = Infinity, d1 = Infinity, d2 = Infinity;
   let p0 = null, p1 = null, p2 = null;
@@ -1143,6 +1224,50 @@ function findDistrictCodeForPoint(coord, index) {
 }
 
 /**
+ * Map<buildingFeatureIndex, regsoCode> via the SAME batch point-in-polygon the
+ * city alignment uses (turf.pointsWithinPolygon). The older per-building
+ * turf.booleanPointInPolygon loop silently returned no matches for some
+ * CRS-converted district sets (e.g. Malmö's EPSG:3006 → WGS84 polygons),
+ * which zeroed out population/demand weighting. This mirrors the proven
+ * alignBuildingCoverageToDistricts path so demand weighting works for all cities.
+ */
+function buildBuildingDistrictCodeMap(buildingFeatures, districtFeatures) {
+  const map = new Map();
+  const districts = (districtFeatures || []).filter((d) => {
+    const t = d?.geometry?.type;
+    return t === 'Polygon' || t === 'MultiPolygon';
+  });
+  if (!districts.length || !Array.isArray(buildingFeatures)) return map;
+
+  const pts = [];
+  for (let i = 0; i < buildingFeatures.length; i++) {
+    const f = buildingFeatures[i];
+    if (!f?.geometry) continue;
+    let c = null;
+    try {
+      c = (typeof fastCentroid === 'function')
+        ? fastCentroid(f)
+        : turf.centroid(f).geometry.coordinates;
+    } catch { c = null; }
+    if (c) pts.push(turf.point(c, { __idx: i }));
+  }
+  if (!pts.length) return map;
+
+  const ptsFC = turf.featureCollection(pts);
+  for (const d of districts) {
+    const code = regsoCodeFromProps(d.properties || {});
+    if (!code) continue;
+    let within = null;
+    try { within = turf.pointsWithinPolygon(ptsFC, d); } catch { continue; }
+    for (const p of (within?.features || [])) {
+      const idx = p?.properties?.__idx;
+      if (Number.isInteger(idx) && !map.has(idx)) map.set(idx, code);
+    }
+  }
+  return map;
+}
+
+/**
  * Estimate building floor area: footprint_m2 × number_of_floors
  * Floors derived from height (÷3) or building:levels property.
  */
@@ -1197,9 +1322,12 @@ async function buildVaxjoBuildingPopulationMap(districtSpatialIndex) {
     if (totals?.total > 0) districtPop.set(code, totals.total);
   }
 
+  // Building -> district code, computed once via the robust batch method.
+  const districtCodeByIdx = buildBuildingDistrictCodeMap(baseCityFC.features, districtFC.features);
+
   // Step B: for each district, sum floor area of all residential buildings inside it
   const districtTotalFloor = new Map();
-  baseCityFC.features.forEach((feat) => {
+  baseCityFC.features.forEach((feat, idx) => {
     const props = feat.properties || {};
     let centroid;
     try { centroid = turf.centroid(feat).geometry.coordinates; } catch { return; }
@@ -1220,7 +1348,7 @@ async function buildVaxjoBuildingPopulationMap(districtSpatialIndex) {
     if (isUnknownWithoutMatch) demandDebug.unknownTreatedAsResidentialStepB += 1;
     if (!isResidential) return;
     demandDebug.residentialBuildingsCounted += 1;
-    const code = findDistrictCodeForPoint(centroid, districtSpatialIndex);
+    const code = districtCodeByIdx.get(idx);
     if (!code) return;
     const floorArea = buildingFloorAreaM2(feat);
     districtTotalFloor.set(code, (districtTotalFloor.get(code) || 0) + floorArea);
@@ -1246,7 +1374,7 @@ async function buildVaxjoBuildingPopulationMap(districtSpatialIndex) {
       canonicalBuildingType(resolvedCategory) === 'residential';
     if (isUnknownWithoutMatch) demandDebug.unknownTreatedAsResidentialStepC += 1;
     if (!isResidential) return;
-    const code = findDistrictCodeForPoint(centroid, districtSpatialIndex);
+    const code = districtCodeByIdx.get(idx);
     if (!code) return;
     const totalFloor = districtTotalFloor.get(code) || 0;
     const totalPop   = districtPop.get(code) || 0;
@@ -1260,13 +1388,22 @@ async function buildVaxjoBuildingPopulationMap(districtSpatialIndex) {
   return buildingPopMap;
 }
 
-/** Initialize demand weights once both districtFC and baseCityFC are loaded (Växjö only) */
+/** Initialize population-based demand weights once districtFC and baseCityFC
+ *  are loaded. Runs for ANY city that has demographics wired in
+ *  GENDER_AGE_POP_URL_BY_CITY_KEY (the spatial index + population map are
+ *  city-agnostic — they read the current districtFC/baseCityFC/pop data).
+ *  The vaxjo* names are historical; this now applies to all supported cities. */
 async function initVaxjoDemandWeights() {
+  // Needs BOTH districts and buildings loaded. Called eagerly on district load
+  // (may no-op if buildings aren't ready yet) AND defensively at the start of a
+  // fairness compute, so it reliably runs once both are present. Cached per city.
   if (!districtFC?.features?.length || !baseCityFC?.features?.length) return;
-  if (districtCityKeyFromInput(lastCityName) !== 'vaxjo') return;
+  const cityKey = districtCityKeyFromInput(lastCityName) || lastCityName || 'city';
+  if (demandWeightsBuiltFor === cityKey && vaxjoBuildingPopMap) return;
   vaxjoDistrictIndex  = buildVaxjoDistrictSpatialIndex();
   vaxjoBuildingPopMap = await buildVaxjoBuildingPopulationMap(vaxjoDistrictIndex);
-  console.log('[IF-City] Växjö demand weights ready —',
+  demandWeightsBuiltFor = cityKey;
+  console.log(`[IF-City] demand weights ready for "${cityKey}" —`,
     vaxjoBuildingPopMap.size, 'residential buildings assigned population estimates');
   if (window.__ifcityDemandDebug) {
     console.log('[IF-City] Demand debug:', window.__ifcityDemandDebug);
@@ -1316,19 +1453,36 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
   if (updateUI && currentPOIsFC?.features?.length) {
     currentPOIsFC.features = dedupePOIFeaturesForDisplay(currentPOIsFC.features);
   }
+  // Categories that gained interactively-added (what-if / mock building) POIs:
+  // baked routing can't know those, so we use live haversine for them.
+  const dynamicCats = new Set();
   Object.entries(whatIfMap).forEach(([cat, items]) => {
     if (!catToPOI[cat]) catToPOI[cat] = [];
+    if (items.length) dynamicCats.add(cat);
     catToPOI[cat].push(...items.map(item => ({ ...item, v: 1 })));
   });
   const buildingPOIs = collectBuildingPOIsByCat(catList, { includeWhatIf: true });
   Object.entries(buildingPOIs).forEach(([cat, items]) => {
     if (!catToPOI[cat]) catToPOI[cat] = [];
+    if (items.length) dynamicCats.add(cat);
     catToPOI[cat].push(...items.map(item => ({ ...item, v: 1 })));
   });
 
   for (const cat of catList) {
     catToPOI[cat] = dedupeIFCityPOIs(catToPOI[cat]);
   }
+
+  // Preload baked road-distance matrices for the active mode + categories that
+  // have no interactive POIs. Loaded once per session; lookups in the loop are
+  // O(1). Missing data simply leaves the haversine fallback in place.
+  const routingCityKey = normalizeCityKey(lastCityName);
+  const routingMode = normalizeTravelMode(fairnessTravelMode);
+  await ensureBakedRouting(routingCityKey, routingMode, catList.filter(c => !dynamicCats.has(c)));
+
+  // Make sure population-based demand weights exist for the current city before
+  // the loop reads vaxjoBuildingPopMap (guards against the district/building
+  // load-order race that left demand weighting off for non-Växjö cities).
+  await initVaxjoDemandWeights();
 
   // Per-building loop: for cities like Göteborg (~283k features) this runs long
   // enough that Firefox warns the user with "stop this page". Yield to the
@@ -1361,7 +1515,10 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
       for (const cat of catList) {
         const arr = catToPOI[cat] || [];
         if (!arr.length) continue;
-        const access = ifCityAccessibilityForBuilding(cB, arr, cat, fairnessTravelMode);
+        const baked = dynamicCats.has(cat)
+          ? null
+          : bakedRoutingNeighbours(routingCityKey, routingMode, cat, cB[0], cB[1]);
+        const access = ifCityAccessibilityForBuilding(cB, arr, cat, fairnessTravelMode, baked);
         // Keep the raw access available, but score is filled in by the
         // city-wide normalisation pass below so it always lands in 0..1.
         fm[cat] = { access, score: 0 };

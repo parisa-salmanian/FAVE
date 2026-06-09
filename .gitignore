@@ -3,6 +3,18 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.venv-transit/
+
+# --- Transit bake tooling (dev-only; never commit; see tools/transit/RUNBOOK.md) ---
+# GTFS feeds, per-city OSM crops, and JVM crash logs.
+tools/transit/*.zip
+tools/transit/osm_crops/
+tools/transit/hs_err_pid*.log
+
+# --- OSRM dev data (multi-GB, regenerable via tools/osrm/setup_osrm.sh) ---
+# The Sweden OSM extract (769 MB) exceeds GitHub's 100 MB limit; the processed
+# .osrm graphs are several GB. Never commit — only the scripts/compose/runbook.
+tools/osrm/data/
 
 # --- Editor / OS ---
 .DS_Store

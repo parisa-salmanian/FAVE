@@ -62,6 +62,19 @@
     return [];
   }
 
+  // Label for the Gini pill next to "Overall fairness": the name of the
+  // selected POI (e.g. "Hospital Gini"), "Mix Gini" when more than one POI
+  // is selected, or a plain "Gini" when nothing is active.
+  function overallPillLabel() {
+    const isFairActive = (typeof fairActive !== 'undefined' && fairActive);
+    const cat = (typeof fairCategory !== 'undefined') ? fairCategory : '';
+    if (!isFairActive || !cat) return 'Gini';
+    if (cat === 'mix') return 'Mix Gini';
+    const name = POI_LABEL[cat]
+      || (typeof prettyPOIName === 'function' ? prettyPOIName(cat) : cat);
+    return `${name} Gini`;
+  }
+
   function renderCityOverview() {
     const isFairActive = (typeof fairActive !== 'undefined' && fairActive);
     const catGini2 = (typeof currentCategoryGini !== 'undefined' && Number.isFinite(currentCategoryGini))
@@ -77,6 +90,7 @@
     };
     setText('inspCityName', cityName);
     setText('inspOverallFairness', displayGini != null ? fmt(displayGini) : '—');
+    setText('inspOverallPill', overallPillLabel());
     setText('inspGini', displayGini != null ? fmt(displayGini) : '—');
     setText('inspPoiCount', String(poiCount));
     setText('inspActiveCats', String(activeCats.length));
@@ -308,6 +322,7 @@
     }
 
     setText('metricOverall', meanFair != null ? fmt(meanFair) : '—');
+    setText('metricGiniLabel', overallPillLabel());
     setText('metricGini', giniVal != null ? fmt(giniVal) : '—');
     setText('metricPois', String(poiCount));
     setText('metricUnitsLabel', unitsLabel);

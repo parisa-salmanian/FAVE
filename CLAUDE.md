@@ -95,12 +95,57 @@ Re-bake when:
 
 ## OSRM and routing
 
-OSRM is **not** called at runtime. The fairness backend
-(`api/fairness_routes.py`) currently still has the OSRM code path, but the
-production behavior should always fall through to Euclidean. If you bring
-back road-distance fairness, the right architecture is to bake distance
-matrices into `frontend/assets/data/cities/<key>/routing/` during city
-addition (using a local OSRM instance), not to reintroduce live calls.
+OSRM is **not** called at runtime. Road-distance fairness is served from
+**baked matrices**, computed once during development with a local OSRM
+instance and stored under `frontend/assets/data/cities/<key>/routing/`:
+
+- `tools/osrm/` — Docker setup for three local OSRM servers (walking/cycling/
+  driving) + `RUNBOOK.md`. Dev-only; the app never talks to these.
+- `tools/bake_routing.py` — for each building, bakes the 3 nearest POIs by
+  real road distance per category per mode into
+  `routing/<mode>/<cat>.json` (`{ key[], m[], s[], v[] }`, keyed by the
+  building centroid `"lon,lat"` at 6 decimals — turf.centroid semantics,
+  matched in JS).
+- Frontend: `fairness.js` `ifCityAccessibilityForBuilding` uses the baked
+  road distances when present (`ensureBakedRouting` / `bakedRoutingNeighbours`),
+  and **falls back to local haversine** when a building has no baked entry or
+  when interactive what-if POIs are active. Never a live network call.
+
+Re-bake after changing POIs or OSRM profiles (`--force`). The old live OSRM
+path in `api/fairness_routes.py` / `interaction.js` is legacy and gated off
+(`USE_TRAVEL_TIME=false`).
+
+### Public transport (transit mode)
+
+OSRM can't route transit (no timetables), so the `transit` mode has its **own**
+offline bake using GTFS + r5py (Conveyal R5):
+
+- Data: a static GTFS feed (Trafiklab "GTFS Sverige 3", covers all Swedish
+  cities) at `tools/transit/gtfs-sweden.zip`, plus the OSM extract already used
+  for OSRM (walk access/egress legs). Dev-only, never at runtime.
+- `tools/bake_transit.py` — bakes the nearest POIs **by door-to-door transit
+  time** into `routing/transit/<cat>.json`, **same `{key,m,s,v}` schema** as the
+  OSRM bake so the frontend reads it via the same `ensureBakedRouting` path. For
+  transit, `s[]` is the meaningful field (seconds) and `m[]` is informational
+  straight-line metres. See `tools/transit/RUNBOOK.md`.
+- Scenario: a single representative **weekday morning peak** (one `--date`,
+  08:00 window, median time). Transit is time-dependent — that one scenario is
+  what the UI's "Public transport" mode means. Re-bake with a different date for
+  another scenario.
+- Frontend: transit decays on **time** (`s[]`) via `ifCityTransitTimeForMode`,
+  not distance — see the `isTransit` branch in `ifCityAccessibilityForBuilding`
+  (`fairness.js`). Buildings with no reachable POI fall back to walking. Mode is
+  wired through `normalizeTravelMode` + the `transit` entries in the
+  `TRAVEL_SPEED_KMH` / `IF_CITY_MODE_*` tables in `lib/config.js`.
+
+## Population / demand weighting
+
+The IF-City model weights each building's accessibility by estimated
+population (demand). `initVaxjoDemandWeights` (historical name) runs for **any**
+city wired into `GENDER_AGE_POP_URL_BY_CITY_KEY` (cityPaths.js) — it
+distributes district REGSO population across residential buildings by floor
+area. Add a city's `*_age_gender*.json` to that map to enable population
+weighting for it; otherwise demand weight defaults to 1 (distance-only).
 
 ## Local dev (running the app)
 

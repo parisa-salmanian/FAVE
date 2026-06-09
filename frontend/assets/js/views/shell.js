@@ -24,6 +24,7 @@
     walk: '<circle cx="13" cy="4" r="1.6"/><path d="M11.5 9l1.5 4 3 1 1 5"/><path d="M11 8.5L8 12l1 4-1 5"/>',
     bike: '<circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M6 17 9 7l4 1 3 6 2-4"/><path d="M9 7h2"/>',
     car: '<path d="M5 13l1.5-4.5h11L19 13"/><path d="M3 17v-4h18v4"/><circle cx="7" cy="17" r="1.5"/><circle cx="17" cy="17" r="1.5"/>',
+    bus: '<rect x="4" y="4" width="16" height="13" rx="2"/><path d="M4 11h16"/><circle cx="8" cy="20" r="1.4"/><circle cx="16" cy="20" r="1.4"/><path d="M6 17v2M18 17v2"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     minus: '<path d="M5 12h14"/>',
     chev: '<path d="M6 9l6 6 6-6"/>',
@@ -186,6 +187,7 @@
       { id: 'walking', icon: 'walk', label: 'Walk', tip: 'Walking distance' },
       { id: 'cycling', icon: 'bike', label: 'Cycle', tip: 'Cycling distance' },
       { id: 'driving', icon: 'car',  label: 'Car', tip: 'Driving distance' },
+      { id: 'transit', icon: 'bus',  label: 'Transit', tip: 'Public transport' },
     ];
     w.innerHTML = modes.map(m =>
       `<button data-mode="${m.id}" data-active="${m.id === 'walking' ? 'true' : 'false'}" type="button" data-tooltip="${m.tip}" aria-label="${m.tip}">${svg(m.icon, 13)} ${m.label}</button>`
@@ -818,6 +820,7 @@
               <span class="help-mode help-mode-active">${svg('walk', 13)} Walk</span>
               <span class="help-mode">${svg('bike', 13)} Cycle</span>
               <span class="help-mode">${svg('car', 13)} Car</span>
+              <span class="help-mode">${svg('bus', 13)} Transit</span>
             </div>
           </section>
 
@@ -1233,27 +1236,39 @@
       body.appendChild(div);
       body.scrollTop = body.scrollHeight;
     }
-    function fire() {
+    async function fire() {
       const txt = (input.value || '').trim();
       if (!txt) return;
       appendMsg(txt, 'user');
       input.value = '';
-      // Proxy to legacy chatbot input if present.
-      const legacyInput = document.querySelector('#chatbotPanel textarea, #chatbotPanel input[type="text"]');
-      const legacyForm = document.querySelector('#chatbotPanel form');
-      if (legacyInput) {
-        legacyInput.value = txt;
-        legacyInput.dispatchEvent(new Event('input', { bubbles: true }));
+      // Run the real planner pipeline directly. callLLM/dispatchActions are
+      // global functions declared in controllers/llm.js (classical script),
+      // resolved here at call time. The earlier approach proxied to the legacy
+      // #chatbotPanel, but its send button is type="button" with no <form>, so
+      // neither the submit nor the fallback selector ever fired — the request
+      // was never sent and the map never updated.
+      if (typeof callLLM !== 'function' || typeof dispatchActions !== 'function') {
+        appendMsg('Assistant is not available right now.', 'assistant');
+        return;
       }
-      if (legacyForm) {
-        legacyForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-      } else {
-        // Fallback: try a send button inside chatbotPanel.
-        const sendBtn = document.querySelector('#chatbotPanel button[type="submit"], #chatbotPanel .chatbot-send');
-        if (sendBtn) sendBtn.click();
+      const reply = document.createElement('div');
+      reply.className = 'ai-msg';
+      reply.textContent = 'Thinking…';
+      body.appendChild(reply);
+      body.scrollTop = body.scrollHeight;
+      try {
+        const plan = await callLLM(txt);
+        const note = await dispatchActions(plan);
+        reply.textContent = note || 'Done.';
+      } catch (e) {
+        console.error('Ask the map failed', e);
+        const base = (typeof API_BASE !== 'undefined' && API_BASE) ? API_BASE : 'the API';
+        const hint = (e instanceof TypeError || /Failed to fetch/i.test(e?.message || ''))
+          ? ` Check that ${base} is running and CORS allows this origin.`
+          : '';
+        reply.textContent = `Sorry, something went wrong: ${e?.message || 'Unknown error.'}${hint}`;
       }
-      // Show a placeholder reply (real one comes from existing logic if wired).
-      setTimeout(() => appendMsg('Working on it…', 'assistant'), 200);
+      body.scrollTop = body.scrollHeight;
     }
     send?.addEventListener('click', fire);
     input?.addEventListener('keydown', e => {
