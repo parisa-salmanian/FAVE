@@ -1,0 +1,45 @@
+{
+  "city": "malmo",
+  "baked_at": "2026-06-10T12:09:34.102299+00:00",
+  "key_format": "lon,lat",
+  "key_decimals": 6,
+  "building_count": 88431,
+  "modes": {
+    "walking": {
+      "grocery": 88431,
+      "hospital": 88431,
+      "pharmacy": 88431,
+      "dentistry": 88431,
+      "healthcare_center": 88431,
+      "veterinary": 88431,
+      "university": 88431,
+      "kindergarten": 88431,
+      "school_primary": 88431,
+      "school_high": 88431
+    },
+    "cycling": {
+      "grocery": 88431,
+      "hospital": 88431,
+      "pharmacy": 88431,
+      "dentistry": 88431,
+      "healthcare_center": 88431,
+      "veterinary": 88431,
+      "university": 88431,
+      "kindergarten": 88431,
+      "school_primary": 88431,
+      "school_high": 88431
+    },
+    "driving": {
+      "grocery": 88431,
+      "hospital": 88431,
+      "pharmacy": 88431,
+      "dentistry": 88431,
+      "healthcare_center": 88431,
+      "veterinary": 88431,
+      "university": 88431,
+      "kindergarten": 88431,
+      "school_primary": 88431,
+      "school_high": 88431
+    }
+  }
+}

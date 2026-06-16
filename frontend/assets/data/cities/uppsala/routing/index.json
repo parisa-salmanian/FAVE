@@ -1,0 +1,21 @@
+{
+  "city": "uppsala",
+  "baked_at": "2026-06-05T12:29:59.781127+00:00",
+  "key_format": "lon,lat",
+  "key_decimals": 6,
+  "building_count": 117947,
+  "modes": {
+    "cycling": {
+      "grocery": 117947,
+      "hospital": 117947,
+      "pharmacy": 117947,
+      "dentistry": 117947,
+      "healthcare_center": 117947,
+      "veterinary": 117947,
+      "university": 117947,
+      "kindergarten": 117947,
+      "school_primary": 117947,
+      "school_high": 117947
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "city": "stockholm",
+  "baked_at": "2026-06-05T21:22:44.005758+00:00",
+  "key_format": "lon,lat",
+  "key_decimals": 6,
+  "building_count": 242371,
+  "modes": {
+    "cycling": {
+      "grocery": 242371,
+      "hospital": 242371,
+      "pharmacy": 242371,
+      "dentistry": 242371,
+      "healthcare_center": 242371,
+      "veterinary": 242371,
+      "university": 242371,
+      "kindergarten": 242371,
+      "school_primary": 242371,
+      "school_high": 242371
+    }
+  }
+}

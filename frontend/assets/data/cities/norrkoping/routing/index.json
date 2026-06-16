@@ -1,0 +1,21 @@
+{
+  "city": "norrkoping",
+  "baked_at": "2026-06-05T16:40:51.656431+00:00",
+  "key_format": "lon,lat",
+  "key_decimals": 6,
+  "building_count": 196055,
+  "modes": {
+    "cycling": {
+      "grocery": 196055,
+      "hospital": 196055,
+      "pharmacy": 196055,
+      "dentistry": 196055,
+      "healthcare_center": 196055,
+      "veterinary": 196055,
+      "university": 196055,
+      "kindergarten": 196055,
+      "school_primary": 196055,
+      "school_high": 196055
+    }
+  }
+}
