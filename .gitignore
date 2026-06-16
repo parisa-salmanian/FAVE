@@ -33,6 +33,11 @@ frontend/assets/data/DeSO_2025.gpkg
 # Run tools/fetch_lantmateriet_buildings.py to populate this folder.
 lantmateriet/
 
+# --- OSRM graph cache (local-only; ~12 GB, files exceed GitHub's 100 MB limit) ---
+# Regeneratable build cache for baking routing matrices. Re-download/rebuild via
+# the OSRM bake setup; the baked matrices live under cities/*/routing instead.
+tools/osrm/
+
 # --- Secrets (NEVER commit) ---
 .env
 .lantmateriet_credentials
