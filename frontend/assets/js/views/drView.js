@@ -348,6 +348,23 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     } else if (colorBy === 'poi') {
       colors = pickedRows.map((r) => Number.isFinite(r.focused) ? rampColor01(r.focused) : grey(100));
       updateLegend('poi', `Legend (${prettyPOIName(fairCategory) || 'Selected fairness'})`, 'Most fair (left) → Least fair (right)');
+    } else if (colorBy === 'need' || colorBy === 'income') {
+      // Color by an SCB axis (district need or median income). Min–max normalise
+      // across the sample so the ramp spans the actual value range.
+      const get = (r) => colorBy === 'need'
+        ? (Number.isFinite(r.richNeed) ? r.richNeed : r.demNeed)
+        : (Number.isFinite(r.richIncome) ? r.richIncome : r.demIncome);
+      const vals = pickedRows.map(get).filter(Number.isFinite);
+      const lo = vals.length ? Math.min(...vals) : 0;
+      const hi = vals.length ? Math.max(...vals) : 1;
+      const span = (hi - lo) || 1;
+      colors = pickedRows.map((r) => {
+        const v = get(r);
+        return Number.isFinite(v) ? rampColor01((v - lo) / span) : grey(120);
+      });
+      const label = colorBy === 'need' ? 'SCB need (deprivation)' : 'SCB median income';
+      const dir = colorBy === 'need' ? 'Low need → High need' : 'Low income → High income';
+      updateLegend(colorBy, `Legend (${label})`, dir);
     } else if (colorBy === 'year') {
       colors = pickedRows.map((r) => Number.isFinite(r.yearLike) ? rampColor01(r.yearLike) : grey(110));
       updateLegend('year', `Legend (${mode} temporal proxy)`, 'Low (left) → High (right)');
@@ -376,7 +393,20 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         fairKindergarten:pickedRows.map(r => r.kindergarten),
         fairSchoolHigh:  pickedRows.map(r => r.schoolHigh),
         categoryCode: pickedRows.map(r => r.categoryLike),
-        isChange: pickedRows.map(r => r.isChangeLike)
+        isChange: pickedRows.map(r => r.isChangeLike),
+        // Demographic metrics (district mode only; undefined elsewhere -> ignored
+        // by computeFeatureDifferences' Number.isFinite filter). Includes the
+        // composite need index used by need-weighted fairness.
+        ...Object.fromEntries(
+          (typeof DEMOGRAPHIC_FEATURES !== 'undefined' ? DEMOGRAPHIC_FEATURES : [])
+            .map(f => [f.key, pickedRows.map(r => r[f.key])])
+        ),
+        demNeed: pickedRows.map(r => r.demNeed),
+        // Rich building-level features (modal-gap + built form + demo)
+        ...Object.fromEntries(
+          (typeof DR_RICH_FEATURES !== 'undefined' ? DR_RICH_FEATURES : [])
+            .map(f => [f.key, pickedRows.map(r => r[f.key])])
+        )
       },
       featureLabels: keys.map(key => labels[key]),
       mode
@@ -386,11 +416,13 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
   if (mode === 'district') {
     if (!districtFC?.features?.length) throw new Error('No districts loaded.');
     const sample = districtFC.features;
+    const demoFeats = (typeof DEMOGRAPHIC_FEATURES !== 'undefined') ? DEMOGRAPHIC_FEATURES : [];
     const rows = sample.map((f) => {
       const props = f?.properties || {};
       const byCat = props.__fairByCat || {};
       const areaSqKm = turf.area(f) / 1e6;
-      return {
+      const demo = props.__demo || {};
+      const row = {
         overall: Number(props.__fairOverall),
         focused: Number(props.__score),
         grocery: Number(byCat.grocery),
@@ -406,10 +438,16 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         yearRaw: null,
         categoryLike: Number(props.__count),
         changeLike: 0,
-        isChangeLike: 0
+        isChangeLike: 0,
+        demNeed: Number.isFinite(props.__needZ) ? props.__needZ : null
       };
+      demoFeats.forEach((d) => {
+        const v = Number(demo[d.json]);
+        row[d.key] = Number.isFinite(v) ? v : null;
+      });
+      return row;
     });
-    return makeMatrix(sample, rows, {
+    const districtLabels = {
       overall: 'overall fairness (z)',
       focused: 'focused fairness (z)',
       grocery: 'grocery fairness (z)',
@@ -421,7 +459,17 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       schoolHigh: 'high school fairness (z)',
       areaLike: 'log(area km²) (z)',
       heightLike: 'building count (z)'
-    });
+    };
+    // Add demographic columns only if at least one district carries them, so the
+    // matrix never gains dead all-zero dimensions when demographics are absent.
+    const hasDemo = rows.some(r => demoFeats.some(d => Number.isFinite(r[d.key])));
+    if (hasDemo) {
+      demoFeats.forEach((d) => { districtLabels[d.key] = d.label; });
+      if (rows.some(r => Number.isFinite(r.demNeed))) {
+        districtLabels.demNeed = 'Need index (dem)';
+      }
+    }
+    return makeMatrix(sample, rows, districtLabels);
   }
 
   if (mode === 'mezo') {
@@ -466,11 +514,13 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
   if (!baseCityFC?.features?.length) throw new Error('No buildings loaded.');
 
   const sample = baseCityFC.features;
+  const richFeats = (typeof DR_RICH_FEATURES !== 'undefined') ? DR_RICH_FEATURES : [];
   const rows = sample.map((f) => {
     const props = f.properties || {};
     const built = getBuiltYear(props);
     const fm = props.fair_multi || {};
-    return {
+    const rich = props.__drRich || null;
+    const row = {
       overall: Number(props.fair_overall?.score),
       focused: Number(props.fair?.score),
       grocery: Number(fm.grocery?.score),
@@ -490,9 +540,14 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       changeLike: Number(props.change_score),
       isChangeLike: props.is_change ? 1 : 0
     };
+    richFeats.forEach((rf) => {
+      const v = rich ? Number(rich[rf.json]) : NaN;
+      row[rf.key] = Number.isFinite(v) ? v : null;
+    });
+    return row;
   });
 
-  return makeMatrix(sample, rows, {
+  const buildingLabels = {
     heightLike: 'height (z)',
     yearLike: 'built-year (z)',
     overall: 'overall fairness (z)',
@@ -505,7 +560,12 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     kindergarten: 'kindergarten fairness (z)',
     schoolHigh: 'high school fairness (z)',
     categoryLike: 'category code (z)'
-  });
+  };
+  // Add the baked rich dimensions only if at least one sampled building has them.
+  const hasRich = rows.some(r => richFeats.some(rf => Number.isFinite(r[rf.key])));
+  if (hasRich) richFeats.forEach((rf) => { buildingLabels[rf.key] = rf.label; });
+
+  return makeMatrix(sample, rows, buildingLabels);
 }
 
 function updateLegend(kind, title, text) {
@@ -1190,6 +1250,14 @@ const DR_FEATURE_CONFIG = [
   { key: 'fairSchoolHigh',   label: 'High school fairness' },
   { key: 'areaLog',      label: 'Footprint area (log m²)' },
   { key: 'changeScore',  label: 'Change score (S1)' },
+  // Demographic features (district mode). Generated from DEMOGRAPHIC_FEATURES so
+  // the contrastive/EBM panels rank them alongside accessibility.
+  ...((typeof DEMOGRAPHIC_FEATURES !== 'undefined' ? DEMOGRAPHIC_FEATURES : [])
+      .map(f => ({ key: f.key, label: f.label }))),
+  { key: 'demNeed', label: 'Need index (dem)' },
+  // Rich building-level features (modal-gap + built form + demo) for EBM/contrastive.
+  ...((typeof DR_RICH_FEATURES !== 'undefined' ? DR_RICH_FEATURES : [])
+      .map(f => ({ key: f.key, label: f.label }))),
 ];
 
 // Small numeric helpers
@@ -1669,6 +1737,27 @@ function parallelCoordsModeLabel(mode) {
   return 'buildings';
 }
 
+// --- Demographic PCP axes (district mode) ---------------------------------
+// Each axis carries a normalised [0,1] value for plotting (shared y-scale) plus
+// the real value for the tooltip. Built from DEMOGRAPHIC_FEATURES + need index.
+function pcDemoAxes() {
+  const base = (typeof DEMOGRAPHIC_FEATURES !== 'undefined' ? DEMOGRAPHIC_FEATURES : [])
+    .map(f => ({ key: f.key, label: f.label.replace(/\s*\(dem\)$/i, ''), json: f.json }));
+  base.push({ key: 'demNeed', label: 'Need index', json: '__needZ' });
+  return base;
+}
+function pcFeatureSetForPCP() {
+  // PCP follows the same Features selector as the DR scatter.
+  const v = document.getElementById('drFeatureSet')?.value || 'access';
+  return ['access', 'access_demo', 'demo'].includes(v) ? v : 'access';
+}
+// Friendly axis label, demographic-aware.
+function prettyParallelAxis(cat) {
+  const demo = pcDemoAxes().find(a => a.key === cat);
+  if (demo) return demo.label;
+  return prettyPOIName(cat);
+}
+
 function getOrderedParallelCoordsCategories(categories) {
   const unique = Array.from(new Set((categories || []).filter(Boolean)));
   const hasOverall = unique.includes(PARALLEL_COORDS_OVERALL_KEY);
@@ -1764,8 +1853,44 @@ function getParallelCoordsDataset(mode) {
     const avg = rawValues.length ? rawValues.reduce((a, b) => a + b, 0) / rawValues.length : null;
     if (!Number.isFinite(overall)) overall = avg;
     values[PARALLEL_COORDS_OVERALL_KEY] = Number.isFinite(overall) ? Math.max(0, Math.min(1, overall)) : null;
-    return { id: row.id, label: row.label || row.id, values, count, min, max, avg, source: row.source };
+    // Capture real demographic values (district mode) for later normalisation.
+    const realValues = {};
+    if (mode === 'district') {
+      const props = row?.source?.properties || {};
+      const demo = props.__demo || {};
+      pcDemoAxes().forEach((a) => {
+        const v = a.json === '__needZ' ? Number(props.__needZ) : Number(demo[a.json]);
+        if (Number.isFinite(v)) realValues[a.key] = v;
+      });
+    }
+    return { id: row.id, label: row.label || row.id, values, realValues, count, min, max, avg, source: row.source };
   }).filter(row => row.count > 0);
+
+  // Append demographic axes in DISTRICT mode whenever the data is present —
+  // independent of the DR scatter's Features dropdown (the district PCP is the
+  // place these belong). Plotted as per-axis min–max normalised [0,1]; the
+  // renderer relabels the endpoints with real values and the tooltip shows them.
+  let extraCategories = [];
+  const fs = pcFeatureSetForPCP();
+  if (mode === 'district') {
+    const axes = pcDemoAxes().filter(a => rows.some(r => Number.isFinite(r.realValues?.[a.key])));
+    axes.forEach((a) => {
+      const vals = rows.map(r => r.realValues?.[a.key]).filter(Number.isFinite);
+      const lo = Math.min(...vals), hi = Math.max(...vals);
+      const span = (hi - lo) || 1;
+      rows.forEach((r) => {
+        const v = r.realValues?.[a.key];
+        r.values[a.key] = Number.isFinite(v) ? (v - lo) / span : null;
+      });
+    });
+    extraCategories = axes.map(a => a.key);
+  }
+
+  let outCategories = categoriesWithOverall.concat(extraCategories);
+  // Only "Extra dims only" drops the fairness axes; otherwise show fairness + demo.
+  if (mode === 'district' && fs === 'demo' && extraCategories.length) {
+    outCategories = [PARALLEL_COORDS_OVERALL_KEY, ...extraCategories];
+  }
 
   const rawMaxPC = parseInt(parallelCoordsMaxPoints, 10);
   const maxLines = (rawMaxPC <= 0 || !Number.isFinite(rawMaxPC)) ? Infinity : Math.max(200, rawMaxPC);
@@ -1774,7 +1899,7 @@ function getParallelCoordsDataset(mode) {
     rows = rows.filter((_, idx) => idx % step === 0);
   }
 
-  return { rows, total, categories: categoriesWithOverall };
+  return { rows, total, categories: outCategories };
 }
 
 function isEntityDRSelected(entity) {
@@ -2053,9 +2178,14 @@ function renderParallelCoords(rows, total, modeLabel, categories, { pending = fa
     if (!datum?.row) { tooltip.style('opacity', 0); return; }
     const [mx, my] = d3.pointer(event, chart);
     const valueRows = categories.map(cat => {
+      const real = datum.row.realValues?.[cat];
+      if (Number.isFinite(real)) {
+        const shown = (cat === 'demNeed') ? real.toFixed(2) : real.toFixed(1);
+        return `<div>${prettyParallelAxis(cat)}: ${shown}</div>`;
+      }
       const val = datum.row.values[cat];
       const pct = Number.isFinite(val) ? `${Math.round(val * 100)}%` : '—';
-      return `<div>${prettyPOIName(cat)}: ${pct}</div>`;
+      return `<div>${prettyParallelAxis(cat)}: ${pct}</div>`;
     }).join('');
     tooltip
       .style('left', `${mx + 10}px`)
@@ -2102,26 +2232,47 @@ function renderParallelCoords(rows, total, modeLabel, categories, { pending = fa
     if (sync) applyParallelCoordsSelection(currentSelectedRows);
   };
 
+  // Real value range per axis. Demographic/rich axes are min–max normalised to
+  // [0,1] for plotting, so their 0–1 ticks are meaningless; we relabel the
+  // endpoints with the actual values (e.g. unemployment 4.8% … 38.6%).
+  const realRange = {};
+  categories.forEach((cat) => {
+    const vs = rows.map((r) => r.realValues?.[cat]).filter(Number.isFinite);
+    if (vs.length) realRange[cat] = { min: Math.min(...vs), max: Math.max(...vs) };
+  });
+  const fmtReal = (v) => Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1);
+
   const axisGroup = svg.append('g');
   categories.forEach((cat) => {
     const gx = axisGroup.append('g')
       .attr('transform', `translate(${x(cat)},0)`);
     gx.call(d3.axisLeft(y).ticks(4).tickSize(0));
-    gx.selectAll('text')
-      .attr('font-size', 8)
-      .attr('fill', 'var(--ink-3, #8a8278)');
+    const rr = realRange[cat];
+    if (rr) {
+      // Replace the 0–1 ticks with the real min/max of this normalised axis.
+      gx.selectAll('text').remove();
+      gx.append('text').attr('x', 4).attr('y', y(1)).attr('font-size', 7)
+        .attr('fill', 'var(--ink-3, #8a8278)').text(fmtReal(rr.max));
+      gx.append('text').attr('x', 4).attr('y', y(0)).attr('font-size', 7)
+        .attr('fill', 'var(--ink-3, #8a8278)').text(fmtReal(rr.min));
+    } else {
+      gx.selectAll('text').attr('font-size', 8).attr('fill', 'var(--ink-3, #8a8278)');
+    }
     gx.selectAll('path').attr('stroke', 'var(--line-strong, rgba(28, 25, 22, 0.16))');
     gx.selectAll('line').remove();
-    // Dimension label at the TOP of each axis (matches the design's
-    // ParallelCoords). Inter, weight 500, ink-2 colour.
+    // Dimension label at the TOP of each axis. Truncate long demographic names
+    // so axes don't overlap; full name shown on hover.
+    const fullName = prettyParallelAxis(cat);
+    const shortName = fullName.length > 12 ? `${fullName.slice(0, 11)}…` : fullName;
     const axisLabel = gx.append('text')
       .attr('y', margin.top - 12)
       .attr('text-anchor', 'middle')
-      .attr('font-size', 10)
+      .attr('font-size', 9)
       .attr('font-weight', 500)
       .attr('fill', 'var(--ink-2, #5b544c)')
       .style('cursor', 'grab')
-      .text(prettyPOIName(cat));
+      .text(shortName);
+    axisLabel.append('title').text(fullName);
 
     axisLabel.call(
       d3.drag()
@@ -3784,15 +3935,17 @@ function buildContrastiveEngineExplanation() {
   const selection = drPlot.lastSelectionIdx || [];
   if (!selection.length) return null;
 
-  // Use your existing per-feature difference computation
-  const diff = drPlot.lastFeatureDiff ||
-    computeFeatureDifferences(selection);
+  // Recompute fresh (do NOT reuse drPlot.lastFeatureDiff): the cached diff was
+  // computed for whatever feature set was active earlier, which froze the bar
+  // list to the same features. Recomputing reflects the current Features set.
+  const diff = computeFeatureDifferences(selection);
+  drPlot.lastFeatureDiff = diff;
 
   const feats = diff && diff.features ? diff.features : [];
   if (!feats.length) return null;
 
-  // Take top few features by |effect|
-  const top = feats.slice(0, 8);
+  // Take top features by |effect| (show the full set, was capped at 8).
+  const top = feats.slice(0, 16);
 
   return {
     mode: 'contrast',
@@ -3957,7 +4110,7 @@ function drawEngineBarChart(engineData) {
     return;
   }
 
- const top = engineData.ranked.slice(0, 7);
+ const top = engineData.ranked.slice(0, 16); // show full ranking (was capped at 7)
   const width = enginePlotEl.clientWidth || 260;
   const margin = { top: 26, right: 12, bottom: 52, left: 170 };
   const minInnerHeight = top.length * 24;
@@ -4416,6 +4569,11 @@ function clearDRProjection(showMessage = true) {
     resetDROverlayAndSelection(); // clear overlay & selection BEFORE plotting
 
     drPlot.runNonce = (Number(drPlot.runNonce) || 0) + 1;
+    // Building mode: attach baked rich features (modal-gap + built form + demo)
+    // so the matrix carries the extra independent dimensions. One-time per city.
+    if (currentDRDataMode() === 'building' && typeof ensureRichBuildingFeatures === 'function') {
+      try { await ensureRichBuildingFeatures(); } catch (_) { /* optional */ }
+    }
     const { X, colors, sampleCount, sample, metrics, featureLabels, dims } =
       collectDRData(maxPts, normalize, colorBy, drPlot.runNonce);
 

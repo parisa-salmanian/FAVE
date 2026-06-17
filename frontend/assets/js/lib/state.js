@@ -19,6 +19,18 @@ let vaxjoDistrictIndex  = null;   // [{feat, code}]
 let vaxjoBuildingPopMap = null;   // Map<featureIndex, estimatedResidents>
 let lantmaterietIndex = null; // [{centroid: [lng,lat], objekttyp: string}]
 
+// Rich per-building DR features (modal-gap + built form + demo), baked offline by
+// tools/bake_dr_features.py. Keyed by centroid "lon,lat" rounded to 5 decimals.
+let cityDrFeatures      = null;   // Map<coordKey, {field: value}>
+let drRichBuildingsJoined = false; // one-time join flag (reset on city change)
+
+// SCB demographics + need-weighted fairness (revertible feature; off by default).
+let cityDemographics    = null;   // Map<regsokod, {field: value}>  (from demographics_<city>.json)
+let cityNeedByRegso     = null;   // Map<regsokod, needZ>  (composite deprivation, z-scored)
+let vaxjoBuildingNeedMap = null;  // Map<featureIndex, needZ>  (building -> its district's needZ)
+let needWeightEnabled   = false;  // UI toggle: fold demographic "need" into IF-City equity weight
+let needWeightStrength  = 0.5;    // UI slider: 0 = off, higher = stronger need weighting
+
 let firstFeat = null, secondFeat = null, routeGeoJSON = null;
 
 // Categories to precompute for overall
@@ -926,6 +938,53 @@ function wireUI() {
       setFairnessColorScheme(fairnessColorSchemeSelect.value, { refreshLayers: true });
     });
   }
+
+  // Need-weighted fairness toggle + strength (SCB demographics → equity weight).
+  const needToggleEl = document.getElementById('needWeightToggle');
+  const needStrengthEl = document.getElementById('needWeightStrength');
+  const needStrengthValEl = document.getElementById('needWeightStrengthVal');
+  const runNeedRecompute = async (desc) => {
+    if (typeof recomputeFairnessAfterWhatIf !== 'function') return;
+    // Make sure demographics (and thus the need index) are loaded before recompute.
+    if (needWeightEnabled && typeof ensureDemographicsData === 'function') {
+      await ensureDemographicsData(activeDistrictCityKey).catch(() => null);
+    }
+    const scoreSnapshot = (typeof captureScoreSnapshot === 'function') ? captureScoreSnapshot() : null;
+    showGlobalSpinner('Recomputing fairness…');
+    await waitForSpinnerPaint();
+    try {
+      await recomputeFairnessAfterWhatIf();
+      if (scoreSnapshot && typeof applyDeltaColorsFromSnapshot === 'function') {
+        applyDeltaColorsFromSnapshot(scoreSnapshot, changeLogIdCounter);
+      }
+    } catch (err) {
+      console.error('need-weight recompute failed', err);
+    } finally {
+      hideGlobalSpinner();
+    }
+  };
+  if (needToggleEl) {
+    needToggleEl.checked = !!needWeightEnabled;
+    if (needStrengthEl) needStrengthEl.disabled = !needWeightEnabled;
+    needToggleEl.addEventListener('change', async () => {
+      needWeightEnabled = needToggleEl.checked;
+      if (needStrengthEl) needStrengthEl.disabled = !needWeightEnabled;
+      await runNeedRecompute();
+    });
+  }
+  if (needStrengthEl) {
+    needStrengthEl.value = String(needWeightStrength);
+    if (needStrengthValEl) needStrengthValEl.textContent = String(needWeightStrength);
+    needStrengthEl.addEventListener('input', () => {
+      needWeightStrength = parseFloat(needStrengthEl.value) || 0;
+      if (needStrengthValEl) needStrengthValEl.textContent = needStrengthEl.value;
+    });
+    needStrengthEl.addEventListener('change', async () => {
+      needWeightStrength = parseFloat(needStrengthEl.value) || 0;
+      if (needWeightEnabled) await runNeedRecompute();
+    });
+  }
+
   updateFairnessLegendUI();
 
   document.getElementById('changesReplayBtn')?.addEventListener('click', () => startTransitionReplay());

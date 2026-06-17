@@ -280,6 +280,13 @@ async function ensureDistrictData() {
       initVaxjoDemandWeights();
       mezoMaskPolygon = null;
       districtLoadError = null;
+      // Join baked SCB demographics onto district features (offline). Optional —
+      // failures are swallowed so districts still work without demographics.
+      if (typeof ensureDemographicsData === 'function') {
+        return ensureDemographicsData(activeDistrictCityKey)
+          .then(() => { attachDemographicsToDistricts(fc); return fc; })
+          .catch(() => fc);
+      }
       return fc;
     })
     .catch(err => { districtLoadError = err; districtLoadPromise = null; throw err; });

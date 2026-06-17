@@ -1260,14 +1260,40 @@ async function buildVaxjoBuildingPopulationMap(districtSpatialIndex) {
   return buildingPopMap;
 }
 
+/**
+ * Map each building to its district's composite need (deprivation) z-score, so the
+ * IF-City equity weight can be raised in high-need areas. Geometry-only (independent
+ * of the toggle/strength), built once at init. Needs cityNeedByRegso (demographics.js).
+ */
+function buildVaxjoBuildingNeedMap(districtSpatialIndex) {
+  const out = new Map();
+  if (!cityNeedByRegso || !cityNeedByRegso.size || !baseCityFC?.features) return out;
+  baseCityFC.features.forEach((feat, idx) => {
+    let centroid;
+    try { centroid = turf.centroid(feat).geometry.coordinates; } catch { return; }
+    if (!centroid) return;
+    const code = findDistrictCodeForPoint(centroid, districtSpatialIndex);
+    if (!code) return;
+    const nz = cityNeedByRegso.get(code);
+    if (Number.isFinite(nz)) out.set(idx, nz);
+  });
+  return out;
+}
+
 /** Initialize demand weights once both districtFC and baseCityFC are loaded (Växjö only) */
 async function initVaxjoDemandWeights() {
   if (!districtFC?.features?.length || !baseCityFC?.features?.length) return;
   if (districtCityKeyFromInput(lastCityName) !== 'vaxjo') return;
   vaxjoDistrictIndex  = buildVaxjoDistrictSpatialIndex();
   vaxjoBuildingPopMap = await buildVaxjoBuildingPopulationMap(vaxjoDistrictIndex);
+  // Make sure demographics are loaded before mapping buildings -> need index.
+  if (typeof ensureDemographicsData === 'function') {
+    await ensureDemographicsData(activeDistrictCityKey).catch(() => null);
+  }
+  vaxjoBuildingNeedMap = buildVaxjoBuildingNeedMap(vaxjoDistrictIndex);
   console.log('[IF-City] Växjö demand weights ready —',
-    vaxjoBuildingPopMap.size, 'residential buildings assigned population estimates');
+    vaxjoBuildingPopMap.size, 'residential buildings assigned population estimates;',
+    vaxjoBuildingNeedMap.size, 'buildings with need index');
   if (window.__ifcityDemandDebug) {
     console.log('[IF-City] Demand debug:', window.__ifcityDemandDebug);
   }
@@ -1277,6 +1303,20 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
   if (!baseCityFC) throw new Error('No buildings loaded.');
   const updateUI = !setOverall;
   const myGen = updateUI ? fairnessComputeGen : null;
+
+  // Lazy-build the per-building need map if need-weighting is on but the map is
+  // empty. This must NOT gate on vaxjoDistrictIndex: initVaxjoDemandWeights bails
+  // early when districts load before buildings, leaving the index null — so we
+  // (re)build the district index here too, from districtFC (already loaded).
+  if (needWeightEnabled && cityNeedByRegso?.size
+      && (!vaxjoBuildingNeedMap || !vaxjoBuildingNeedMap.size)) {
+    if ((!vaxjoDistrictIndex || !vaxjoDistrictIndex.length) && districtFC?.features?.length) {
+      vaxjoDistrictIndex = buildVaxjoDistrictSpatialIndex();
+    }
+    if (vaxjoDistrictIndex?.length) {
+      vaxjoBuildingNeedMap = buildVaxjoBuildingNeedMap(vaxjoDistrictIndex);
+    }
+  }
 
   const fetched = await Promise.all(
     catList.map(cat =>
@@ -1379,13 +1419,26 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
         demandWeight = estPop > 0 ? Math.max(0.5, Math.min(5.0, Math.log1p(estPop))) : 1.0;
       }
 
-      const benefit = Math.max(0, benefitRaw) * equityWeight * demandWeight;
+      // Need-weighted equity (revertible; off unless the UI toggle is on). Folds the
+      // district's composite deprivation z-score into the IF-City equity weight, so
+      // under-served high-need areas read as more unfair and skew Gini/inequality.
+      let needWeight = 1.0;
+      let needZ = null;
+      if (needWeightEnabled && vaxjoBuildingNeedMap) {
+        needZ = vaxjoBuildingNeedMap.get(featIdx);
+        needWeight = (typeof needWeightFromZ === 'function')
+          ? needWeightFromZ(needZ, needWeightStrength) : 1.0;
+      }
+
+      const benefit = Math.max(0, benefitRaw) * equityWeight * demandWeight * needWeight;
       benefits.push(benefit);
 
       if (updateUI) {
         props.fair_multi = fm;
       }
-      props.__ifcity = { utility, benefit, equity_weight: equityWeight, demand_weight: demandWeight };
+      props.__ifcity = { utility, benefit, equity_weight: equityWeight,
+        demand_weight: demandWeight, need_weight: needWeight,
+        need_z: Number.isFinite(needZ) ? needZ : null };
     }
     if (batchEnd < len) {
       // setTimeout(0) is enough for Firefox to mark the page responsive.

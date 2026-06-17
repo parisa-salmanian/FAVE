@@ -118,6 +118,49 @@ const ANDAMAL_TO_BUILDING_TYPE = {
   'ospecificerad':       'Other / unknown'
 };
 
+// Per-RegSO SCB demographics, baked OFFLINE by tools/bake_scb_demographics.py +
+// tools/analysis/scb_parse.py. Keyed by regsokod. Read at runtime from the
+// bundled JSON only — never from the SCB API (CLAUDE.md hard rule).
+const DEMOGRAPHICS_URL_BY_CITY_KEY = {
+  vaxjo: 'assets/data/demographics_vaxjo.json'
+};
+
+// Demographic features surfaced in the DR / EBM / contrastive / PCP views.
+//   json  = field name in demographics_<city>.json
+//   key   = metric key used inside drView (dr* matrix + metrics)
+//   label = axis / feature label. The " (dem)" suffix is how drFeatureMode.js
+//           tells demographic features apart from accessibility ones.
+const DEMOGRAPHIC_FEATURES = [
+  { json: 'employed_pct',             key: 'demEmployed',      label: 'Employment rate (dem)' },
+  { json: 'unemployed_pct',           key: 'demUnemployed',    label: 'Unemployment (dem)' },
+  { json: 'longterm_unemployed_pct',  key: 'demLongUnemp',     label: 'Long-term unemployed (dem)' },
+  { json: 'managerial_pct',           key: 'demManagerial',    label: 'Managerial jobs (dem)' },
+  { json: 'median_disp_income_pba',   key: 'demIncome',        label: 'Median income (dem)' },
+  { json: 'income_support_share_pct', key: 'demIncomeSupport', label: 'Income support (dem)' },
+  { json: 'eligible_higher_edu_pct',  key: 'demHigherEdu',     label: 'Higher-ed eligible (dem)' },
+  { json: 'students_pct',             key: 'demStudents',      label: 'Students (dem)' }
+];
+
+// Rich per-building DR features (baked offline by tools/bake_dr_features.py).
+const DR_FEATURES_URL_BY_CITY_KEY = {
+  vaxjo: 'assets/data/dr_features_vaxjo.json'
+};
+
+// The "winning combo" extra dimensions added to the building-level DR matrix
+// (ACCESS already enters via the fairness scores). Label suffixes (modal)/(morph)/
+// (dem) let drFeatureMode.js group them as the non-accessibility feature set.
+//   json = field in dr_features_<city>.json ; key = DR metric key ; label = axis label
+const DR_RICH_FEATURES = [
+  { json: 'modal_walk_drive',  key: 'richModalWD', label: 'Walk/drive access (modal)' },
+  { json: 'modal_cycle_drive', key: 'richModalCD', label: 'Cycle/drive access (modal)' },
+  { json: 'form_height',       key: 'richHeight',  label: 'Building height (morph)' },
+  { json: 'form_logarea',      key: 'richLogArea', label: 'Footprint area (morph)' },
+  { json: 'form_logdensity',   key: 'richDensity', label: 'Local density (morph)' },
+  { json: 'form_multifamily',  key: 'richMulti',   label: 'Multi-family (morph)' },
+  { json: 'demo_need',         key: 'richNeed',    label: 'Need index (dem)' },
+  { json: 'demo_income',       key: 'richIncome',  label: 'Median income (dem)' }
+];
+
 const GENDER_AGE_POP_URL_BY_CITY_KEY = {
   vaxjo: 'assets/data/gender-age-population.json',
   malmo: 'assets/data/malmo_age_gender.json',
