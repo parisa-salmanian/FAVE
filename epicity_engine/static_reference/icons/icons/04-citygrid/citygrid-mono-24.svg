@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 64 64" shape-rendering="geometricPrecision">
+  <title>EpiCity — City Grid (mono, 24px)</title>
+  <rect x="12" y="12" width="18" height="18" rx="3" fill="#2a3340"></rect>
+      <rect x="34" y="12" width="18" height="18" rx="3" fill="#ff4466"></rect>
+      <rect x="12" y="34" width="18" height="18" rx="3" fill="#2a3340"></rect>
+      <rect x="34" y="34" width="18" height="18" rx="3" fill="#2a3340"></rect>
+</svg>

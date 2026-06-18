@@ -17,6 +17,15 @@ node_modules/
 # --- Runtime / cache / job output (per-run; never commit) ---
 api_data/
 frontend/assets/data/cache/
+# OSMnx/Overpass bake cache (top-level, ~450 MB hash-named responses; regenerable).
+cache/
+
+# --- EpiCity raw source data (bake-time only, regenerable from the EpiCity
+# checkout; ~700 MB). The runtime app loads only the BAKED products
+# (transit/network.json, demographics/deso.geojson, access2sfca/*), which ARE
+# committed. Re-bake with tools/bake_*.py if you need to regenerate them. ---
+frontend/assets/data/epicity/
+frontend/assets/data/cities/*/epicity/
 
 # --- Large data files: tracked via Git LFS, not ignored. ---
 # (see .gitattributes for the LFS pattern list.)

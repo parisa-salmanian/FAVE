@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 64 64" shape-rendering="geometricPrecision">
+  <title>EpiCity — City Grid (light, 32px)</title>
+  <rect width="64" height="64" rx="14" fill="#ff4466"></rect>
+  <rect x="11" y="11" width="19" height="19" rx="3" fill="#ffffff" opacity="0.55"></rect>
+      <rect x="34" y="11" width="19" height="19" rx="3" fill="#ffffff"></rect>
+      <rect x="11" y="34" width="19" height="19" rx="3" fill="#ffffff" opacity="0.55"></rect>
+      <rect x="34" y="34" width="19" height="19" rx="3" fill="#ffffff" opacity="0.55"></rect>
+  <line x1="32" y1="8" x2="32" y2="56" stroke="#ff4466" stroke-width="2"></line>
+      <line x1="8" y1="32" x2="56" y2="32" stroke="#ff4466" stroke-width="2"></line>
+</svg>

@@ -667,7 +667,8 @@ function haversineMeters(a, b) {
 function normalizeTravelMode(mode) {
   const normalized = String(mode || '').toLowerCase();
   if (normalized === 'car') return 'driving';
-  if (['walking', 'cycling', 'driving'].includes(normalized)) return normalized;
+  if (normalized === 'pt' || normalized === 'public_transport' || normalized === 'public-transport') return 'transit';
+  if (['walking', 'cycling', 'driving', 'transit'].includes(normalized)) return normalized;
   return FAIRNESS_TRAVEL_MODE_DEFAULT;
 }
 
@@ -915,6 +916,18 @@ function ifCityDistanceForMode(km, mode = FAIRNESS_TRAVEL_MODE_DEFAULT) {
   return travelHours * IF_CITY_REFERENCE_SPEED_KMH * behaviorFactor;
 }
 
+// Like ifCityDistanceForMode but for REAL network distances (baked routing
+// matrices): the detour factor is dropped because the distance already follows
+// the street/path network. Speed (→ travel time) and the per-mode behaviour
+// factor are kept so modes stay comparable.
+function ifCityNetworkDistanceForMode(km, mode = FAIRNESS_TRAVEL_MODE_DEFAULT) {
+  const normalized = normalizeTravelMode(mode);
+  const behaviorFactor = IF_CITY_MODE_DISTANCE_FACTOR[normalized] ?? 1;
+  const speed = IF_CITY_MODE_SPEED_KMH[normalized] ?? IF_CITY_REFERENCE_SPEED_KMH;
+  const travelHours = km / Math.max(1e-6, speed);
+  return travelHours * IF_CITY_REFERENCE_SPEED_KMH * behaviorFactor;
+}
+
 function ifCityEquityWeightForFeature(feature) {
   const props = feature?.properties || {};
   // IF-City equity weighting should come from population/social group signals.
@@ -935,13 +948,32 @@ function ifCityEquityWeightForFeature(feature) {
   return weight;
 }
 
-function ifCityAccessibilityForBuilding(cB, poiArr, cat, mode = FAIRNESS_TRAVEL_MODE_DEFAULT) {
+function ifCityAccessibilityForBuilding(cB, poiArr, cat, mode = FAIRNESS_TRAVEL_MODE_DEFAULT, transitCtx = null, netCtx = null) {
   // Only the nearest 3 POIs contribute, to prevent city-centre accumulation effect.
   // Hot path: this runs ~N_buildings × N_categories times during a fairness compute,
   // so we avoid the previous map().sort() (O(P log P) + 1 alloc per call) and pick
   // the top-3 distances in a single pass with no intermediate allocation.
   const kappa = ifCityKappa(cat);
   const rho = ifCityPriorityWeight(cat);
+
+  // Network branch: use baked REAL network distances (walk/cycle/drive) when a
+  // routing matrix is loaded for this category and it has no what-if edits.
+  if (netCtx && netCtx.row >= 0 && netCtx.cats && netCtx.cats.has(cat)
+      && typeof routingDistsForRow === 'function') {
+    const r = routingDistsForRow(cat, netCtx.row);
+    if (r && r.dists && r.dists.length) {
+      let sum = 0;
+      const k = Math.min(3, r.dists.length);
+      for (let i = 0; i < k; i++) {
+        const dm = r.dists[i];
+        if (!Number.isFinite(dm)) continue;
+        const v = Number.isFinite(r.vals?.[i]) ? r.vals[i] : 1;
+        sum += rho * v * Math.exp(-kappa * ifCityNetworkDistanceForMode(dm / 1000, mode));
+      }
+      return sum;
+    }
+    // no baked row for this building → fall through to haversine
+  }
 
   let d0 = Infinity, d1 = Infinity, d2 = Infinity;
   let p0 = null, p1 = null, p2 = null;
@@ -954,18 +986,30 @@ function ifCityAccessibilityForBuilding(cB, poiArr, cat, mode = FAIRNESS_TRAVEL_
     else if (dist < d2) { d2 = dist; p2 = poi; }
   }
 
+  // Effective travel distance (normalised to walking-equivalent km). For the
+  // transit mode with a baked network loaded, use the real stop network; fall
+  // back to the per-mode speed model (also used by walking/cycling/driving).
+  const useTransit = !!(transitCtx && transitCtx.ready);
+  const effKm = (poi, distMeters) => {
+    if (useTransit) {
+      const tk = transitEffectiveKm(transitCtx.originStops, poi);
+      if (tk != null) return tk;
+    }
+    return ifCityDistanceForMode(distMeters / 1000, mode);
+  };
+
   let sum = 0;
   if (p0) {
     const v = Number.isFinite(p0.v) ? p0.v : 1;
-    sum += rho * v * Math.exp(-kappa * ifCityDistanceForMode(d0 / 1000, mode));
+    sum += rho * v * Math.exp(-kappa * effKm(p0, d0));
   }
   if (p1) {
     const v = Number.isFinite(p1.v) ? p1.v : 1;
-    sum += rho * v * Math.exp(-kappa * ifCityDistanceForMode(d1 / 1000, mode));
+    sum += rho * v * Math.exp(-kappa * effKm(p1, d1));
   }
   if (p2) {
     const v = Number.isFinite(p2.v) ? p2.v : 1;
-    sum += rho * v * Math.exp(-kappa * ifCityDistanceForMode(d2 / 1000, mode));
+    sum += rho * v * Math.exp(-kappa * effKm(p2, d2));
   }
   return sum;
 }
@@ -1385,6 +1429,43 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
   const accessByCat = Object.fromEntries(
     catList.map((cat) => [cat, new Array(len).fill(NaN)])
   );
+
+  // Public-transport mode: load the baked transit network for the active city
+  // once up front, so each building's travel time comes from the real stop
+  // network (access walk + wait + in-vehicle + egress). Falls back silently to
+  // the per-mode speed model if no network is baked for this city.
+  const transitMode = normalizeTravelMode(fairnessTravelMode) === 'transit';
+  let transitNetReadyFlag = false;
+  if (transitMode && typeof ensureTransitNetwork === 'function') {
+    try { await ensureTransitNetwork(); transitNetReadyFlag = transitReady(); }
+    catch { transitNetReadyFlag = false; }
+  }
+
+  // EpiCity per-DESO demographics → demand (population) + need (income/age) weights.
+  // Loaded and mapped to buildings once; drives demandWeight/socioWeight below.
+  if (typeof ensureEpicityDemographics === 'function') {
+    try { await ensureEpicityDemographics(); } catch (e) { /* fall back to neutral weights */ }
+  }
+
+  // Real network distances (walk/cycle/drive): load baked routing matrices for the
+  // active mode. Categories with what-if edits keep the haversine model (their
+  // added/removed POIs aren't in the static matrices).
+  let netCats = null;
+  const networkMode = !transitMode &&
+    ['walking', 'cycling', 'driving'].includes(normalizeTravelMode(fairnessTravelMode));
+  if (networkMode && typeof ensureRoutingMatrices === 'function') {
+    try {
+      await ensureRoutingMatrices(undefined, normalizeTravelMode(fairnessTravelMode), catList);
+      const whatIfCats = new Set();
+      for (const cat of catList) {
+        if ((whatIfMap[cat] && whatIfMap[cat].length) ||
+            (buildingPOIs[cat] && buildingPOIs[cat].length)) whatIfCats.add(cat);
+      }
+      netCats = new Set(catList.filter(c => routingHasCat(c) && !whatIfCats.has(c)));
+      if (!netCats.size) netCats = null;
+    } catch { netCats = null; }
+  }
+
   for (let batchStart = 0; batchStart < len; batchStart += BATCH) {
     const batchEnd = Math.min(batchStart + BATCH, len);
     for (let featIdx = batchStart; featIdx < batchEnd; featIdx++) {
@@ -1394,6 +1475,15 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
       try { cB = turf.centroid(f).geometry.coordinates; } catch { benefits.push(0); continue; }
       if (!cB) { benefits.push(0); continue; }
 
+      // Per-building transit origin stops (computed once, reused across cats).
+      const transitCtx = transitNetReadyFlag
+        ? { ready: true, originStops: transitNearestStops(cB) }
+        : null;
+      // Per-building routing-matrix row (real network distances), reused across cats.
+      const netCtx = netCats
+        ? { row: routingRowForPoint(cB[0], cB[1]), cats: netCats }
+        : null;
+
       const fm = {};
       if (updateUI) delete props.fair;
 
@@ -1401,7 +1491,7 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
       for (const cat of catList) {
         const arr = catToPOI[cat] || [];
         if (!arr.length) continue;
-        const access = ifCityAccessibilityForBuilding(cB, arr, cat, fairnessTravelMode);
+        const access = ifCityAccessibilityForBuilding(cB, arr, cat, fairnessTravelMode, transitCtx, netCtx);
         // Keep the raw access available, but score is filled in by the
         // city-wide normalisation pass below so it always lands in 0..1.
         fm[cat] = { access, score: 0 };
@@ -1413,9 +1503,15 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
       const benefitRaw   = utility - IF_CITY_BASELINE_UTILITY;
       const equityWeight = ifCityEquityWeightForFeature(f);
 
+      // Demand: prefer EpiCity per-DESO population distributed over RESIDENTIAL
+      // buildings only (all 7 cities; residential via andamal1='Bostad'); fall back
+      // to the Växjö residential SCB map. Denser residential buildings weigh more.
       let demandWeight = 1.0;
-      if (vaxjoBuildingPopMap) {
-        const estPop = vaxjoBuildingPopMap.get(featIdx) || 0;
+      const popMap = (typeof epiBuildingPopMap !== 'undefined' && epiBuildingPopMap && epiBuildingPopMap.size)
+        ? epiBuildingPopMap
+        : ((vaxjoBuildingPopMap && vaxjoBuildingPopMap.size) ? vaxjoBuildingPopMap : null);
+      if (popMap) {
+        const estPop = popMap.get(featIdx) || 0;
         demandWeight = estPop > 0 ? Math.max(0.5, Math.min(5.0, Math.log1p(estPop))) : 1.0;
       }
 
@@ -1430,7 +1526,22 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
           ? needWeightFromZ(needZ, needWeightStrength) : 1.0;
       }
 
-      const benefit = Math.max(0, benefitRaw) * equityWeight * demandWeight * needWeight;
+      // EpiCity socioeconomic need (low income + high age-dependency, per DESO).
+      // On by default (EPI_SOCIO_STRENGTH) so the demographics shape fairness/Gini:
+      // deprived areas with poor access read as more unfair. Separate from the
+      // manual SCB need toggle above.
+      let socioWeight = 1.0;
+      let socioZ = null;
+      if (typeof epiBuildingNeedMap !== 'undefined' && epiBuildingNeedMap
+          && typeof needWeightFromZ === 'function') {
+        socioZ = epiBuildingNeedMap.get(featIdx);
+        if (Number.isFinite(socioZ)) {
+          const strength = (typeof EPI_SOCIO_STRENGTH !== 'undefined') ? EPI_SOCIO_STRENGTH : 0;
+          socioWeight = needWeightFromZ(socioZ, strength);
+        }
+      }
+
+      const benefit = Math.max(0, benefitRaw) * equityWeight * demandWeight * needWeight * socioWeight;
       benefits.push(benefit);
 
       if (updateUI) {
@@ -1438,7 +1549,8 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
       }
       props.__ifcity = { utility, benefit, equity_weight: equityWeight,
         demand_weight: demandWeight, need_weight: needWeight,
-        need_z: Number.isFinite(needZ) ? needZ : null };
+        need_z: Number.isFinite(needZ) ? needZ : null,
+        socio_weight: socioWeight, socio_z: Number.isFinite(socioZ) ? socioZ : null };
     }
     if (batchEnd < len) {
       // setTimeout(0) is enough for Firefox to mark the page responsive.

@@ -17,3 +17,8 @@
 frontend/assets/data/byggnad_*.geojson filter=lfs diff=lfs merge=lfs -text
 frontend/assets/data/lantmateriat-byggnadsverk-buildings-wgs84-11-12-2024.geojson filter=lfs diff=lfs merge=lfs -text
 frontend/assets/data/bldg_web.geojson filter=lfs diff=lfs merge=lfs -text
+
+# Baked accessibility/transit products (large compact JSON, up to ~44 MB each) —
+# LFS like the building geojsons so plain git history stays small.
+frontend/assets/data/cities/*/access2sfca/*.json filter=lfs diff=lfs merge=lfs -text
+frontend/assets/data/cities/*/transit/*.json filter=lfs diff=lfs merge=lfs -text

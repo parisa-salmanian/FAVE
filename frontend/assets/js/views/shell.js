@@ -24,6 +24,7 @@
     walk: '<circle cx="13" cy="4" r="1.6"/><path d="M11.5 9l1.5 4 3 1 1 5"/><path d="M11 8.5L8 12l1 4-1 5"/>',
     bike: '<circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M6 17 9 7l4 1 3 6 2-4"/><path d="M9 7h2"/>',
     car: '<path d="M5 13l1.5-4.5h11L19 13"/><path d="M3 17v-4h18v4"/><circle cx="7" cy="17" r="1.5"/><circle cx="17" cy="17" r="1.5"/>',
+    bus: '<rect x="4" y="4" width="16" height="12" rx="2"/><path d="M4 11h16"/><path d="M8 16v2M16 16v2"/><circle cx="8" cy="13.5" r="0.8"/><circle cx="16" cy="13.5" r="0.8"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     minus: '<path d="M5 12h14"/>',
     chev: '<path d="M6 9l6 6 6-6"/>',
@@ -186,6 +187,7 @@
       { id: 'walking', icon: 'walk', label: 'Walk', tip: 'Walking distance' },
       { id: 'cycling', icon: 'bike', label: 'Cycle', tip: 'Cycling distance' },
       { id: 'driving', icon: 'car',  label: 'Car', tip: 'Driving distance' },
+      { id: 'transit', icon: 'bus',  label: 'Transit', tip: 'Public transport' },
     ];
     w.innerHTML = modes.map(m =>
       `<button data-mode="${m.id}" data-active="${m.id === 'walking' ? 'true' : 'false'}" type="button" data-tooltip="${m.tip}" aria-label="${m.tip}">${svg(m.icon, 13)} ${m.label}</button>`

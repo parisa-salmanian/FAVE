@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EpiCity — Epidemic Simulation</title>
+  <!-- Browser-tab icon. Swap href to switch icon sets:
+         icons/icons/04-citygrid/citygrid-dark-256.svg  (current)
+         icons/icons/01-radar/radar-dark-256.svg
+         favicon.svg                                    (legacy citygrid 256) -->
+  <link rel="icon" type="image/svg+xml" href="icons/icons/04-citygrid/citygrid-dark-256.svg">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="in-macro">
+
+<!-- ── Shared SVG icon sprite ─────────────────────────────────────────────── -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="ic-play"        viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="ic-pause"       viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="ic-reset"       viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/></symbol>
+    <symbol id="ic-sun"         viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/></symbol>
+    <symbol id="ic-flow"        viewBox="0 0 24 24"><path d="M3 7h13l-3-3M21 17H8l3 3"/></symbol>
+    <symbol id="ic-tree"        viewBox="0 0 24 24"><path d="M12 3l5 7h-3v5h-4v-5H7z M12 15v6"/></symbol>
+    <symbol id="ic-bus"         viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="12" rx="2"/><path d="M4 11h16M7 17v2M17 17v2"/></symbol>
+    <symbol id="ic-pin"         viewBox="0 0 24 24"><path d="M12 21s7-6.5 7-12a7 7 0 1 0-14 0c0 5.5 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></symbol>
+    <symbol id="ic-areas"       viewBox="0 0 24 24"><path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15"/></symbol>
+    <symbol id="ic-3d"          viewBox="0 0 24 24"><path d="M12 3l9 5v8l-9 5-9-5V8z"/><path d="M12 12l9-4M12 12l-9-4M12 12v9"/></symbol>
+    <symbol id="ic-gear"        viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.3.9a7 7 0 0 0-2-1.2L14 3h-4l-.6 2.5a7 7 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.6A7 7 0 0 0 5 12a7 7 0 0 0 .1 1.2l-2 1.6 2 3.4 2.3-.9a7 7 0 0 0 2 1.2L10 21h4l.6-2.5a7 7 0 0 0 2-1.2l2.3.9 2-3.4-2-1.6A7 7 0 0 0 19 12z"/></symbol>
+    <symbol id="ic-info"        viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8h0M12 12v4"/></symbol>
+    <symbol id="ic-globe"       viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+    <symbol id="ic-lock"        viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 1 1 8 0v4"/></symbol>
+    <symbol id="ic-mask"        viewBox="0 0 24 24"><path d="M4 9c4-2 12-2 16 0v6c-4 2-12 2-16 0z"/><path d="M4 11c3 1 5 1 8 1s5 0 8-1M4 13c3 1 5 1 8 1s5 0 8-1"/></symbol>
+    <symbol id="ic-distance"    viewBox="0 0 24 24"><circle cx="7" cy="12" r="3"/><circle cx="17" cy="12" r="3"/><path d="M10 12h4"/></symbol>
+    <symbol id="ic-vaccine"     viewBox="0 0 24 24"><path d="M14 3l7 7M9 8l7 7M3 21l4-4 4 4M12 5l7 7-8 8H4v-7z"/></symbol>
+    <symbol id="ic-school"      viewBox="0 0 24 24"><path d="M3 9l9-4 9 4-9 4z"/><path d="M7 11v5c0 1 2.5 2 5 2s5-1 5-2v-5"/></symbol>
+    <symbol id="ic-test"        viewBox="0 0 24 24"><path d="M9 3h6v5l4 8a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4l4-8z"/><path d="M7 16h10"/></symbol>
+    <symbol id="ic-search"      viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="ic-chev"        viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="ic-chev-right"  viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="ic-chev-left"   viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
+    <symbol id="ic-check"       viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></symbol>
+    <symbol id="ic-close"       viewBox="0 0 24 24"><path d="M6 6l12 12M6 18 18 6"/></symbol>
+    <symbol id="ic-layers"      viewBox="0 0 24 24"><path d="M12 3 2 8l10 5 10-5z"/><path d="M2 13l10 5 10-5M2 18l10 5 10-5"/></symbol>
+    <symbol id="ic-alert"       viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h0"/></symbol>
+    <symbol id="ic-dl"          viewBox="0 0 24 24"><path d="M12 3v13M6 11l6 6 6-6M4 21h16"/></symbol>
+    <symbol id="ic-curve"       viewBox="0 0 24 24"><path d="M3 20c4 0 6-12 10-12s4 10 8 10"/><path d="M3 20h18"/></symbol>
+    <symbol id="ic-paint"       viewBox="0 0 24 24"><path d="M19 11H5l-2 5 2 5h14l2-5z"/><path d="M5 11V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6"/></symbol>
+    <symbol id="ic-patient"     viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M5 21c0-4 3-7 7-7s7 3 7 7"/></symbol>
+    <symbol id="ic-collapse"    viewBox="0 0 24 24"><path d="M21 3 14 10M14 4v6h6M3 21l7-7M10 14H4v6"/></symbol>
+  </defs>
+</svg>
+
+<!-- ── Loading overlay ────────────────────────────────────────────────────── -->
+<div id="loadingOverlay" aria-hidden="true">
+  <div class="loading-spinner"></div>
+  <div class="loading-title" id="loadingTitle">Loading…</div>
+  <div class="loading-sub" id="loadingSub">Building the city</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     STATE 01 · Macro / City-picker view
+     ════════════════════════════════════════════════════════════════════════ -->
+<div id="macro-view">
+  <div id="macro-stage"></div>
+
+  <header id="macro-header">
+    <div class="brand-pill" id="macroBrand">
+      <span class="logo" aria-hidden="true"></span>
+      <span class="name">Epi<em>City</em></span>
+      <span class="sep"></span>
+      <span class="sub" id="macroTitle" data-i18n="app_title_sweden">Sweden</span>
+    </div>
+    <span class="header-spacer"></span>
+    <span class="pill-info" id="macroCount">
+      <span class="dot"></span><span id="macroCountText">—</span>
+    </span>
+    <div id="btnLangMacro" class="lang-switch">
+      <button class="on" data-lang-btn="en"><span class="flag en"></span>EN</button>
+      <button data-lang-btn="sv"><span class="flag sv"></span>SV</button>
+    </div>
+  </header>
+
+  <!-- Welcome side panel -->
+  <aside class="intro-sidepanel">
+    <h1 id="introHeadline" data-i18n="intro_headline">Simulate an epidemic in any Swedish city.</h1>
+    <div class="sub" id="introSub" data-i18n="intro_sub">EpiCity runs SEIR simulations on real population &amp; geography data — choose a city to begin.</div>
+    <div class="step"><div class="n">1</div><div><div class="t" data-i18n="intro_step1_t">Pick a city</div><div class="d" data-i18n="intro_step1_d">Click any marker on the map</div></div></div>
+    <div class="step"><div class="n">2</div><div><div class="t" data-i18n="intro_step2_t">Seed patient zero</div><div class="d" data-i18n="intro_step2_d">Drop an infected person anywhere</div></div></div>
+    <div class="step"><div class="n">3</div><div><div class="t" data-i18n="intro_step3_t">Run &amp; intervene</div><div class="d" data-i18n="intro_step3_d">Watch the outbreak, apply measures</div></div></div>
+  </aside>
+
+  <!-- Search panel — now anchored to the right (replaces the old city card) -->
+  <div class="intro-search" id="introSearch">
+    <div class="row">
+      <svg class="i i-lg" style="color:var(--text-mute)"><use href="#ic-search"/></svg>
+      <input id="introSearchInput" type="text" data-i18n-placeholder="search_cities" placeholder="Search cities, regions…" autocomplete="off">
+      <span class="kbd">⌘K</span>
+    </div>
+    <div class="divider"></div>
+    <div class="suggest-head" id="introRecentHead" data-i18n="recently_simulated">Recently simulated</div>
+    <div id="introRecentList"></div>
+  </div>
+
+  <!-- Footer: just the version chip — the counter is now in the header pill
+       and the colour legend was removed (it wasn't carrying real meaning). -->
+  <div class="intro-counter">
+    <span>v0.0.5</span>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     STATE 02-04 · City simulation view
+     ════════════════════════════════════════════════════════════════════════ -->
+<div id="city-view">
+
+<div id="map-container"></div>
+<!-- Secondary map shown only in compare side-by-side mode. Fill-extrusion
+     buildings drive its rendering — kept lightweight by reusing the same
+     style as the primary map and a GeoJSON source for diff colours. -->
+<div id="map-container-b" hidden></div>
+<!-- SEIR overlays for split mode. Hidden by default; populated by ui.js
+     when the user enters side-by-side so each half has its own day's
+     compartments centered over it. -->
+<div id="kpiOverlayA" class="kpi-overlay" hidden></div>
+<div id="kpiOverlayB" class="kpi-overlay" hidden></div>
+<div id="dayNightOverlay"></div>
+<canvas id="snowCanvas"></canvas>
+<!-- Dark wash that dims the basemap when the infection-flow layer is
+     active so the orange chain reads cleanly against red buildings. -->
+<div id="infectionFlowWash"></div>
+<canvas id="infectionFlowCanvas"></canvas>
+
+<!-- Vertical divider drawn on top of the city canvas in compare side-by-side
+     mode. Toggled visible by static/compare.js. The day-number spans are
+     populated dynamically so the user sees e.g. "DAY A · 12". -->
+<div id="cmpDivider" aria-hidden="true">
+  <span class="cmp-divider-label left"><span data-i18n="day_a">Day A</span> · <span id="cmpDividerLabelA">—</span></span>
+  <span class="cmp-divider-label right"><span data-i18n="day_b">Day B</span> · <span id="cmpDividerLabelB">—</span></span>
+</div>
+
+<div id="overlay">
+
+  <!-- Top bar: brand (left) · centered KPI strip · lang + actions (right) -->
+  <div id="topbar">
+    <div class="brand-pill" id="cityBrand">
+      <!-- Globe leads the brand pill so the back-to-overview affordance
+           is the first thing the user sees on the left. -->
+      <button class="icon-btn icon-btn-sm brand-globe" id="btnGlobe" title="Back to Sweden map"><svg class="i"><use href="#ic-globe"/></svg></button>
+      <span class="logo" aria-hidden="true"></span>
+      <span class="name">EpiCity</span>
+      <span class="sep"></span>
+      <span class="sub" id="cityNameBadge"></span>
+    </div>
+    <!-- Pick patient zero — sized + aligned to the EpiCity brand pill.
+         Germ emoji matches the patient-zero POI marker on the map. -->
+    <button class="brand-pill brand-pill-action" id="btnPickZero" type="button" data-i18n-title="pick_patient_zero" title="Pick patient zero (click a building)">
+      <span class="logo-ico germ-ico" aria-hidden="true">🦠</span>
+      <span class="name" data-i18n="pick_patient_zero">Pick Patient Zero</span>
+    </button>
+    <span class="spacer"></span>
+    <!-- Centered column: KPI strip on top, infection-intensity legend
+         directly underneath, both horizontally centered. -->
+    <div id="topbarCenter">
+      <div id="kpiStrip">
+        <div class="kpi" id="kpiS"><span class="lbl"><span class="kpi-dot" style="background:var(--s-s)"></span>S</span><span class="val" id="statS">—</span><span class="trend" id="trendS"></span></div>
+        <div class="kpi" id="kpiE"><span class="lbl"><span class="kpi-dot" style="background:var(--s-e)"></span>E</span><span class="val" id="statE">—</span><span class="trend" id="trendE"></span></div>
+        <div class="kpi" id="kpiI"><span class="lbl"><span class="kpi-dot" style="background:var(--s-i)"></span>I</span><span class="val" id="statI">—</span><span class="trend" id="trendI"></span></div>
+        <div class="kpi" id="kpiR"><span class="lbl"><span class="kpi-dot" style="background:var(--s-r)"></span>R</span><span class="val" id="statR">—</span><span class="trend" id="trendR"></span></div>
+        <div class="kpi" id="kpiD"><span class="lbl"><span class="kpi-dot" style="background:var(--s-d)"></span>D</span><span class="val" id="statD">—</span><span class="trend" id="trendD"></span></div>
+        <div class="kpi hidden" id="kpiCases"><span class="lbl">Total</span><span class="val" id="statCases">—</span></div>
+      </div>
+    </div>
+    <span class="spacer"></span>
+    <div id="btnLangCity" class="lang-switch">
+      <button class="on" data-lang-btn="en"><span class="flag en"></span>EN</button>
+      <button data-lang-btn="sv"><span class="flag sv"></span>SV</button>
+    </div>
+    <div id="topActions">
+      <button class="icon-btn" id="btnCmdK" title="Search (⌘K)"><svg class="i"><use href="#ic-search"/></svg></button>
+      <button class="icon-btn" id="btnStats" title="Live statistics" style="font-size:1.05rem;line-height:1">📊</button>
+      <button class="icon-btn" id="btnSettings" title="Model parameters"><svg class="i"><use href="#ic-gear"/></svg></button>
+      <button class="icon-btn" id="btnAbout" title="About EpiCity"><svg class="i"><use href="#ic-info"/></svg></button>
+    </div>
+    <!-- Statistics floating panel — toggled by btnStats. Positioned on the
+         right side, mirrors the visual style of the settings popover. -->
+    <div id="statsPanel" class="modal-card" style="display:none;position:fixed;top:64px;right:14px;width:300px;max-height:calc(100vh - 80px);overflow-y:auto;z-index:60;padding:14px 16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <div style="font-size:0.9rem;font-weight:700;color:#f87171">📊 <span data-i18n="stats_title">Statistics</span></div>
+        <span style="flex:1"></span>
+        <button id="statsHide" title="Hide" style="background:transparent;border:none;color:#64748b;font-size:1rem;cursor:pointer;padding:0 4px">✕</button>
+      </div>
+      <div id="statsBody"></div>
+    </div>
+  </div>
+
+  <!-- Left sidebar — single element that animates between mini (icons
+       only) and full (icons + labels + switches). No separate panel.
+       Hovering the sidebar expands it; mouseleave collapses it back. -->
+  <div id="sidebar" class="mini">
+    <div id="sidebarPanel">
+      <!-- Layer toggles -->
+      <div class="sp-section" id="sp-layers">
+        <div class="sp-section-h" data-i18n="map_layers">Map layers</div>
+        <div class="layer-row active" id="btnTopView" data-key="topview" title="Toggle 2D/3D camera">
+          <span class="ico"><svg class="i"><use href="#ic-3d"/></svg></span>
+          <span class="lbl"><span data-i18n="layer_3d">3D heights</span></span>
+          <div class="sw"></div>
+        </div>
+        <div class="layer-row" id="btnNeighborhoods" data-key="areas" title="Show administrative areas">
+          <span class="ico"><svg class="i"><use href="#ic-areas"/></svg></span>
+          <span class="lbl"><span data-i18n="layer_areas">Administrative areas</span></span>
+          <div class="sw"></div>
+        </div>
+        <div class="layer-row" id="btnDayNight" data-key="daynight" title="Day / Night shadows">
+          <span class="ico"><svg class="i"><use href="#ic-sun"/></svg></span>
+          <span class="lbl"><span data-i18n="layer_daynight">Day / Night</span></span>
+          <div class="sw"></div>
+        </div>
+        <div class="layer-row" id="btnFlow" data-key="flow" title="Infection-spread paths from patient zero to currently infectious buildings">
+          <span class="ico"><svg class="i"><use href="#ic-flow"/></svg></span>
+          <span class="lbl"><span data-i18n="layer_flow">Infection flow</span></span>
+          <div class="sw"></div>
+        </div>
+        <div class="layer-row" id="btnAgents" data-key="agents" title="ABM only: show individual agents as dots, commuting between home and work">
+          <span class="ico"><svg class="i"><use href="#ic-patient"/></svg></span>
+          <span class="lbl"><span data-i18n="layer_agents">Agents (ABM)</span></span>
+          <div class="sw"></div>
+        </div>
+        <div class="layer-row" id="btnNature" data-key="nature" title="Water effects + 3D trees">
+          <span class="ico"><svg class="i"><use href="#ic-tree"/></svg></span>
+          <span class="lbl"><span data-i18n="layer_nature">Nature</span></span>
+          <div class="sw"></div>
+        </div>
+        <div class="layer-row" id="btnTransport" data-key="transport" title="Public transport lines">
+          <span class="ico"><svg class="i"><use href="#ic-bus"/></svg></span>
+          <span class="lbl"><span data-i18n="layer_transport">Transport</span></span>
+          <div class="sw"></div>
+        </div>
+        <!-- Legacy transport sub-rows kept hidden (the user-facing
+             affordance is now #transportPop, opened on hover). The
+             checkboxes inside are still wired by ui.js so toggling them
+             from the popover works through the same code path. -->
+        <div class="sub-rows hidden" id="transportPanel">
+          <label class="sub-row"><input type="checkbox" data-hl="train"><span class="hl-dot" style="background:#f97316"></span><span class="hl-label" id="hlTrain" data-i18n="train_lines">Train lines</span></label>
+          <label class="sub-row"><input type="checkbox" data-hl="tram"><span class="hl-dot" style="background:#22c55e"></span><span class="hl-label" id="hlTram" data-i18n="tram_lines">Tram lines</span></label>
+          <label class="sub-row"><input type="checkbox" data-hl="ferry"><span class="hl-dot" style="background:#0891b2"></span><span class="hl-label" id="hlFerry" data-i18n="ferry_routes">Ferry routes</span></label>
+          <label class="sub-row"><input type="checkbox" data-hl="bus"><span class="hl-dot" style="background:#f59e0b"></span><span class="hl-label" id="hlBus" data-i18n="bus_lines">Bus lines</span></label>
+        </div>
+        <div class="layer-row" id="btnPOI" data-key="poi" title="Show points of interest">
+          <span class="ico"><svg class="i"><use href="#ic-pin"/></svg></span>
+          <span class="lbl"><span data-i18n="layer_poi">Points of interest</span></span>
+          <span class="cbadge hidden" id="poiCountBadge"></span>
+          <div class="sw"></div>
+        </div>
+        <!-- Legacy POI dropdown — kept hidden so ui.js still populates _poiBuckets -->
+        <div id="poiPanel" class="hidden">
+          <div class="poi-title" id="lblPointsOfInterest">Points of Interest</div>
+          <div id="poiList"></div>
+        </div>
+      </div>
+
+      <!-- Visualization: color / height / scale + zone swatches + gradient bar -->
+      <div class="sp-section" id="sp-viz">
+        <div class="sp-section-h" data-i18n="visualization">Visualization</div>
+        <div id="legendBody"></div>
+      </div>
+
+      <!-- Epidemic curve -->
+      <div class="sp-section" id="sp-chart">
+        <div class="sp-section-h" data-i18n="epidemic_curve">Epidemic curve</div>
+        <div id="chartPanel">
+          <div id="chartBody">
+            <div class="chart-legend">
+              <span class="cl-item"><span class="cl-line" style="background:var(--s-s)"></span>S</span>
+              <span class="cl-item"><span class="cl-line" style="background:var(--s-e)"></span>E</span>
+              <span class="cl-item"><span class="cl-line" style="background:var(--s-i)"></span>I</span>
+              <span class="cl-item"><span class="cl-line" style="background:var(--s-r)"></span>R</span>
+              <span class="cl-item"><span class="cl-line" style="background:var(--s-d)"></span>D</span>
+            </div>
+            <canvas id="chartCanvas"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Interventions -->
+      <div class="sp-section" id="sp-iv">
+        <div class="sp-section-h">
+          <span data-i18n="interventions">Interventions</span>
+          <span class="ivCountBadge hidden" id="ivBadge">0</span>
+        </div>
+        <!-- Collapsed-mode summary: a single icon with an "active / total"
+             count badge. Turns red the moment any intervention is on. -->
+        <div class="iv-mini" id="ivMini" title="Interventions">
+          <span class="ico"><svg class="i"><use href="#ic-alert"/></svg></span>
+          <span class="iv-mini-count" id="ivMiniCount">0/0</span>
+        </div>
+        <div id="ivBody">
+          <div class="iv-list" id="ivList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Building search popover — opens when the user clicks the city-view
+       search icon. Lists matching buildings/POIs from the current city
+       and flies the camera to whichever is selected. -->
+  <div class="search-pop hidden" id="buildingSearch">
+    <div class="search-pop-input">
+      <svg class="i" style="color:var(--text-mute)"><use href="#ic-search"/></svg>
+      <input id="buildingSearchInput" type="text" data-i18n-placeholder="search_buildings" placeholder="Search buildings, POIs… (try 'church' / 'kyrka')" autocomplete="off">
+      <span class="kbd">Esc</span>
+    </div>
+    <div class="search-pop-list" id="buildingSearchList"></div>
+  </div>
+
+  <!-- Infection-flow popover — opens on hover of the Flow row when the
+       layer is active. Lets the user customise how the per-building
+       infection chain is rendered: edge color, thickness, animation
+       speed, arrowhead, and cumulative vs per-day temporal mode. -->
+  <div class="poi-pop" id="flowPop">
+    <div class="poi-head">
+      <h3 data-i18n="layer_flow">Infection flow</h3>
+    </div>
+    <div class="flow-pop-body">
+      <div class="flow-row">
+        <label class="flow-label" for="flowColorMode" data-i18n="flow_opt_color">Edge color</label>
+        <select class="flow-select" id="flowColorMode">
+          <option value="constant" data-i18n="flow_constant">Constant</option>
+          <option value="intensity" data-i18n="flow_by_intensity" selected>By infection intensity</option>
+        </select>
+      </div>
+      <div class="flow-row">
+        <label class="flow-label" for="flowThicknessMode" data-i18n="flow_opt_thickness">Edge thickness</label>
+        <select class="flow-select" id="flowThicknessMode">
+          <option value="constant" data-i18n="flow_constant">Constant</option>
+          <option value="intensity" data-i18n="flow_by_intensity" selected>By infection intensity</option>
+        </select>
+      </div>
+      <div class="flow-row">
+        <label class="flow-label" for="flowSpeedMode" data-i18n="flow_opt_speed">Animation speed</label>
+        <select class="flow-select" id="flowSpeedMode">
+          <option value="constant" data-i18n="flow_constant">Constant</option>
+          <option value="intensity" data-i18n="flow_by_intensity" selected>By infection intensity</option>
+        </select>
+      </div>
+      <div class="flow-row">
+        <label class="flow-label" for="flowTemporal" data-i18n="flow_opt_temporal">Edges shown</label>
+        <select class="flow-select" id="flowTemporal">
+          <option value="cumulative" data-i18n="flow_cumulative">Cumulative</option>
+          <option value="timestamp" data-i18n="flow_timestamp" selected>Current day only</option>
+        </select>
+      </div>
+      <div class="flow-row">
+        <label class="flow-label" for="flowArrowhead" data-i18n="flow_opt_arrow">Arrowhead</label>
+        <label class="flow-toggle">
+          <input type="checkbox" id="flowArrowhead">
+          <span class="flow-toggle-track"><span class="flow-toggle-thumb"></span></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Transport popover — same chrome as the POI popover; opens on
+       hover of the Transport row. Lists the four mode toggles + a
+       small per-mode stop/line count strip. -->
+  <div class="poi-pop" id="transportPop">
+    <div class="poi-head">
+      <h3 data-i18n="layer_transport">Transport</h3>
+      <span class="count-pill" id="transportPopCount">—</span>
+    </div>
+    <div class="poi-list" id="transportPopList"></div>
+    <div class="poi-footer">
+      <div class="foot-left" id="transportShowAll">
+        <span class="tri-toggle" id="transportShowAllToggle"></span>
+        <span data-i18n="show_all_routes">Show all routes</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Infection-intensity legend — floats in the bottom-right corner
+       like a map legend so it never crowds the top bar. -->
+  <div id="legendPill">
+    <span data-i18n="infection_intensity">Infection intensity</span>
+    <div class="grad" id="legendPillGrad"></div>
+    <span class="end" id="legendPillEnd">0 → max</span>
+  </div>
+
+  <!-- POI popover -->
+  <div class="poi-pop" id="poiPop">
+    <div class="poi-head">
+      <h3 id="poiPopTitle">Points of interest</h3>
+      <span class="count-pill" id="poiPopCount">— / —</span>
+      <span class="close" id="poiPopClose"><svg class="i"><use href="#ic-close"/></svg></span>
+    </div>
+    <div class="poi-search">
+      <div class="wrap">
+        <svg class="i" style="color:var(--text-mute)"><use href="#ic-search"/></svg>
+        <input id="poiSearchInput" type="text" data-i18n-placeholder="search_places" placeholder="Search places or categories…">
+      </div>
+    </div>
+    <div class="poi-list" id="poiPopList"></div>
+    <div class="poi-footer">
+      <div class="foot-left" id="poiShowAll">
+        <span class="tri-toggle" id="poiShowAllToggle"></span>
+        <span data-i18n="show_all_on_map">Show all on map</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings popover -->
+  <div id="settingsPop">
+    <div class="sp-title" id="lblModelParameters">Model Parameters</div>
+    <!-- rows injected by settings.js -->
+  </div>
+  <!-- Legacy alias — settings.js still targets #settingsPanel -->
+  <div id="settingsPanel" class="hidden"><div class="sp-title"></div></div>
+
+  <!-- Bottom playbar — 2-row CSS grid:
+         row 1: R-eff · play/pause/speed · Growth   (all three same size)
+         row 2: timeline (full width spanning all three columns) -->
+  <div id="playbar">
+    <div class="reff-pill" id="reffPill">
+      <div class="gg" id="reffGauge"></div>
+      <div>
+        <div class="lbl">R-eff</div>
+        <div class="val" id="rEffBadge">—</div>
+      </div>
+    </div>
+    <div class="play-pill">
+      <button class="icon-btn" id="btnReset" title="Reset"><svg class="i"><use href="#ic-reset"/></svg></button>
+      <button class="go" id="btnPlay" title="Play / Pause"><svg class="i i-lg" id="btnPlayIcon"><use href="#ic-play"/></svg></button>
+      <div class="speed">
+        <button class="speed-pip" data-speed="1">1×</button>
+        <button class="speed-pip on active" data-speed="2">2×</button>
+        <button class="speed-pip" data-speed="3">3×</button>
+      </div>
+    </div>
+    <div class="reff-pill" id="growthPill">
+      <div class="gg" id="growthGauge"></div>
+      <div>
+        <div class="lbl" data-i18n="growth">Growth</div>
+        <div class="val" id="growthBadge">—</div>
+      </div>
+    </div>
+    <div class="time-pill" id="timelinePanel">
+      <div class="top">
+        <span class="day" id="dayCounter">Day 0</span>
+        <span class="clock" id="todHour">00:00</span>
+        <!-- Centered season pill — icon + translated name. Updated from
+             state.climate.season by ui.js _updateStats(). -->
+        <span class="season-pill" id="seasonPill" title="">
+          <span class="season-ico" id="seasonIco">·</span>
+          <span class="season-lbl" id="seasonLbl">—</span>
+        </span>
+        <span class="tag"><span id="todPhase">—</span></span>
+        <div class="todbar-wrap"><div id="todBar"></div></div>
+      </div>
+      <div class="track" id="timelineTrack">
+        <svg id="timelineCurve" preserveAspectRatio="none"></svg>
+        <div class="fill" id="scrubberFill"></div>
+        <div class="knob" id="scrubberKnob"></div>
+        <input type="range" id="tlScrubber" class="scrubber-input" min="0" max="0" value="0">
+      </div>
+      <!-- Bottom row: scrubber start/end + Run, with the climate pills
+           (temperature, weather) absolutely centred so they don't shift
+           as the surrounding text widths change. -->
+      <div class="top time-pill-bottom">
+        <span class="clock tl-left" id="tlStart">Day 0</span>
+        <span class="climate-center">
+          <span class="cs-pill" id="csTempPill" title="">
+            <span class="cs-ico" id="csTempIco">🌡</span>
+            <span class="cs-val" id="csTempVal">— °C</span>
+          </span>
+          <span class="cs-pill" id="csWxPill" title="">
+            <span class="cs-ico" id="csWxIco">·</span>
+            <span class="cs-val" id="csWxVal">—</span>
+          </span>
+        </span>
+        <span class="tl-right">
+          <span class="clock" id="tlCurrent">Day 0</span>
+          <button class="replay cmp-toggle" id="btnCompare" title="Comparison view" data-i18n-title="compare_title" disabled><span data-i18n="compare">⇆ Compare</span></button>
+          <button class="replay" id="btnReplay" title="Replay history" disabled>▶ Run</button>
+        </span>
+      </div>
+
+      <!-- Comparison view popover. Hidden by default; expands above the
+           timeline when the user clicks ⇆ Compare. Anchored to the right
+           edge of the timeline panel so it appears next to its trigger
+           button instead of stretching across the bottom of the screen. -->
+      <div class="compare-panel" id="comparePanel" hidden>
+        <div class="compare-head">
+          <span class="compare-title">⇆ <span data-i18n="compare_two_days">Comparison view</span></span>
+          <button class="compare-close" id="btnCompareClose" title="Close compare" data-i18n-title="compare_off" aria-label="Close">×</button>
+        </div>
+        <div class="compare-mode-tabs" role="tablist">
+          <button class="compare-mode-tab active" data-mode="diff" id="cmpTabDiff" role="tab">
+            <span class="cmp-tab-ico">▦</span>
+            <span data-i18n="mode_diff">Diff map</span>
+          </button>
+          <button class="compare-mode-tab" data-mode="split" id="cmpTabSplit" role="tab">
+            <span class="cmp-tab-ico">▥</span>
+            <span data-i18n="mode_split">Side by side</span>
+          </button>
+        </div>
+        <div class="compare-day-row">
+          <span class="compare-day-label cmp-a">
+            <span class="cmp-dot"></span>
+            <span data-i18n="day_a">Day A</span>
+          </span>
+          <input type="range" class="compare-day-slider cmp-a" id="cmpDayARange" min="0" max="0" value="0">
+          <span class="compare-day-num cmp-a" id="cmpDayANum">0</span>
+        </div>
+        <div class="compare-day-row">
+          <span class="compare-day-label cmp-b">
+            <span class="cmp-dot"></span>
+            <span data-i18n="day_b">Day B</span>
+          </span>
+          <input type="range" class="compare-day-slider cmp-b" id="cmpDayBRange" min="0" max="0" value="0">
+          <span class="compare-day-num cmp-b" id="cmpDayBNum">0</span>
+        </div>
+        <div class="compare-legend" id="cmpLegendRow">
+          <span data-i18n="compare_legend_dec">Decreased</span>
+          <span class="ramp"></span>
+          <span data-i18n="compare_legend_inc">Increased</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tooltips -->
+  <div id="tooltip"></div>
+  <div id="transportTip"></div>
+
+  <!-- Growth-rate explainer — hovered from #growthPill in the playbar. -->
+  <div class="pop-info-tooltip" id="growthInfoTip">
+    <div data-lang="en">
+      <b>Growth rate</b><br><br>
+      Daily % change in <b>active</b> infections — the sum of
+      <span style="color:var(--s-e)"><b>E</b></span> (exposed) and
+      <span style="color:var(--s-i)"><b>I</b></span> (infectious).<br><br>
+      <span style="color:var(--accent)">Positive — outbreak is expanding</span><br>
+      <span style="color:var(--text-mute)">≈ 0% — outbreak is steady</span><br>
+      <span style="color:var(--s-s)">Negative — outbreak is shrinking</span><br><br>
+      <i style="color:var(--text-mute)">Computed as
+        ((E+I)<sub>today</sub> − (E+I)<sub>yesterday</sub>) / (E+I)<sub>yesterday</sub>.</i>
+    </div>
+    <div data-lang="sv">
+      <b>Tillväxttakt</b><br><br>
+      Daglig procentuell förändring av <b>aktiva</b> smittor — summan av
+      <span style="color:var(--s-e)"><b>E</b></span> (exponerade) och
+      <span style="color:var(--s-i)"><b>I</b></span> (smittsamma).<br><br>
+      <span style="color:var(--accent)">Positiv — utbrottet växer</span><br>
+      <span style="color:var(--text-mute)">≈ 0% — utbrottet är stabilt</span><br>
+      <span style="color:var(--s-s)">Negativ — utbrottet minskar</span><br><br>
+      <i style="color:var(--text-mute)">Beräknas som
+        ((E+I)<sub>idag</sub> − (E+I)<sub>igår</sub>) / (E+I)<sub>igår</sub>.</i>
+    </div>
+  </div>
+
+  <!-- R-eff-only explainer — opened on hover of the R-eff pill. Kept
+       short so it never overlaps the playbar visually. -->
+  <div class="pop-info-tooltip" id="reffInfoTip">
+    <div data-lang="en">
+      <b>R<sub>eff</sub></b> — <b>Effective Reproduction Number</b><br><br>
+      Average secondary infections per infectious person, given current
+      immunity and active interventions.<br><br>
+      <span style="color:var(--accent)">R &gt; 1 — outbreak is growing</span><br>
+      <span style="color:var(--text-mute)">R = 1 — outbreak is stable</span><br>
+      <span style="color:var(--s-s)">R &lt; 1 — outbreak is shrinking</span><br><br>
+      <i style="color:var(--text-mute)">Formula: R<sub>0</sub> × (S / N), with R<sub>0</sub> = β / γ.</i>
+    </div>
+    <div data-lang="sv">
+      <b>R<sub>eff</sub></b> — <b>Effektivt reproduktionstal</b><br><br>
+      Genomsnittligt antal sekundära infektioner per smittsam person,
+      givet aktuell immunitet och aktiva åtgärder.<br><br>
+      <span style="color:var(--accent)">R &gt; 1 — utbrottet växer</span><br>
+      <span style="color:var(--text-mute)">R = 1 — utbrottet är stabilt</span><br>
+      <span style="color:var(--s-s)">R &lt; 1 — utbrottet minskar</span><br><br>
+      <i style="color:var(--text-mute)">Formel: R<sub>0</sub> × (S / N), med R<sub>0</sub> = β / γ.</i>
+    </div>
+  </div>
+
+  <!-- Full SEIR explainer — opened on hover of the centered KPI strip. -->
+  <button id="popInfoBtn" class="hidden" aria-hidden="true"></button>
+  <div class="pop-info-tooltip" id="popInfoTip">
+    <div data-lang="en">
+      <b>SEIR Compartments</b><br><br>
+      <span style="color:var(--s-s)"><b>S</b> Susceptible</span> — not yet infected<br>
+      <span style="color:var(--s-e)"><b>E</b> Exposed</span> — incubating (~5 days)<br>
+      <span style="color:var(--s-i)"><b>I</b> Infectious</span> — actively spreading<br>
+      <span style="color:var(--s-r)"><b>R</b> Recovered</span> — immune<br>
+      <span style="color:var(--s-d)"><b>D</b> Deaths</span><br><br>
+      <i style="color:var(--text-mute)">Hover R-eff to see the reproduction-number explanation.</i>
+    </div>
+    <div data-lang="sv">
+      <b>SEIR-fack</b><br><br>
+      <span style="color:var(--s-s)"><b>S</b> Mottagliga</span> — ännu inte smittade<br>
+      <span style="color:var(--s-e)"><b>E</b> Exponerade</span> — inkuberar (~5 dagar)<br>
+      <span style="color:var(--s-i)"><b>I</b> Smittsamma</span> — sprider aktivt<br>
+      <span style="color:var(--s-r)"><b>R</b> Tillfrisknade</span> — immuna<br>
+      <span style="color:var(--s-d)"><b>D</b> Dödsfall</span><br><br>
+      <i style="color:var(--text-mute)">Håll muspekaren över R-eff för förklaringen av reproduktionstalet.</i>
+    </div>
+  </div>
+
+</div><!-- #overlay -->
+
+<!-- ── About modal ────────────────────────────────────────────────────────── -->
+<div id="aboutBackdrop" class="modal-backdrop" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+    <button class="modal-close" id="aboutClose" aria-label="Close">×</button>
+    <nav class="modal-tabs" role="tablist">
+      <button class="tab-btn active" data-tab="general"    role="tab" aria-selected="true"  data-i18n="about_tab_general">🌍 General</button>
+      <button class="tab-btn"        data-tab="expert"     role="tab" aria-selected="false" data-i18n="about_tab_advanced">🧪 Advanced</button>
+      <button class="tab-btn"        data-tab="references" role="tab" aria-selected="false" data-i18n="about_tab_references">📚 References</button>
+    </nav>
+    <div class="modal-body">
+
+      <section class="tab-pane active" data-tab="general" role="tabpanel">
+        <div data-lang="sv">
+        <h3>🌍 Vad är EpiCity?</h3>
+        <p>EpiCity är en rumslig epidemisimulator byggd på riktiga svenska städer.
+          Varje byggnad du ser är en riktig byggnad — hus, affärer, skolor, sjukhus —
+          hämtade från OpenStreetMap. Varje stadsdel bär verklig demografi:
+          befolkning, åldersmix, könsfördelning, hushållsstruktur, inkomstnivåer
+          och utbildningsnivå, allt hämtat från Statistiska centralbyrån (SCB).
+          När viruset börjar spridas, sprids det över en verklig plats med verklig
+          socioekonomisk struktur.</p>
+
+        <h3>🏙️ Vad du ser</h3>
+        <p>Varje färgad byggnad är en riktig struktur. Grönt betyder frisk,
+          gult betyder exponerad, rött betyder smittsam, blått betyder
+          tillfrisknad. Växla mellan zoner, infektion, befolkning, inkomst eller
+          dödsfall i Förklaringen. Håll muspekaren över en byggnad för att se
+          dess SEIR-fack, åldersfördelning, könsuppdelning, uppskattade hushåll,
+          inkomstnivå och stadsdelsnamn.</p>
+
+        <h3>🦠 Hur det fungerar</h3>
+        <p>Människor bor i hem och går ut till affärer, skolor, arbetsplatser
+          och parker. När en smittsam person delar byggnad med mottagliga sprids
+          viruset. Ju närmare två byggnader är, desto mer blandas deras
+          invånare. Rusningstid och skoltimmar ökar kontakterna; nätterna minskar
+          dem. Enkla regler, verklig geografi.</p>
+
+        <h3>👥 Syntetisk befolkning</h3>
+        <p>Verklig demografisk data från SCB finns tillgänglig på stadsdelsnivå
+          (DeSO-områden med ~1 000–3 000 personer). EpiCity fördelar dessa
+          områdesstatistik till enskilda bostadsbyggnader med en syntetisk
+          befolkningsmetod som bevarar de ursprungliga totalerna medan varje
+          byggnad får en unik, realistisk demografisk profil.</p>
+
+        <h3>🌲 Naturlager</h3>
+        <p>Aktivera Natur-lagret för att visa sjöar, älvar och skogar från OSM.
+          3D-träd sprids över skogspolygoner med artspecifika modeller (gran,
+          tall, björk, ek).</p>
+
+        <h3>🏘 Stadsdelsområden</h3>
+        <p>Aktivera Områden-lagret för att visa SCB:s RegSO-gränser med
+          stadsdelsnamn. Håll muspekaren över ett område för att se en
+          sammanfattning av dess demografi.</p>
+
+        <h3>🎛 Scenarioförval</h3>
+        <p>Inställningspanelen innehåller tre snabbväxlingsförval — Mild influensa,
+          Måttlig (standard) och Svår pandemi.</p>
+
+        <h3>🚌 Kollektivtrafik &amp; epidemin</h3>
+        <p>Verkliga buss-, spårvagns-, tåg-, färje- och flyglinjer förbinder
+          hållplatser över varje stad. Varje planerad resa plockar upp
+          passagerare nära avgångshållplatsen, utsätter dem för smitta och
+          släpper av dem vid destinationen.</p>
+
+        <h3>🗺 Metapopulation med flera städer</h3>
+        <p>Den fokuserade staden är kopplad till alla 290 svenska kommuner via
+          SCB:s pendlingsdata.</p>
+
+        <h3>🧰 Vad du kan göra</h3>
+        <ul>
+          <li>🔒 Nedstängning · 😷 Munskyddskrav · ↔️ Social distansering</li>
+          <li>💉 Vaccination · 🏫 Stäng skolor · 🔬 Testa &amp; isolera</li>
+          <li>🚌 Munskydd i trafik · ✈️ Stoppa flyg · 🌡️ Stationskontroll</li>
+        </ul>
+
+        <h3>📊 Datakällor</h3>
+        <p><b>SCB:</b> befolkning, ålder, kön, hushåll, inkomst, utbildning,
+          sysselsättning, pendlingsflöden — via PxWeb API och GeoServer WFS.
+          <b>OpenStreetMap:</b> byggnader, vägar, intressepunkter, kollektivtrafik,
+          natur. <b>All data laddas ner och sparas på din dator — inga API-anrop,
+          ingen data lämnar din maskin medan simuleringen körs.</b></p>
+
+        <div class="modal-footer">Utvecklad av Claudio Linhares, Linnéuniversitetet, 2026.</div>
+        </div>
+
+        <div data-lang="en">
+        <h3>🌍 What is EpiCity?</h3>
+        <p>EpiCity is a spatial epidemic simulator built on real Swedish cities.
+          Every building you see is a real building — houses, shops, schools,
+          hospitals — pulled from OpenStreetMap. Every neighbourhood carries
+          real demographics: population, age mix, gender distribution,
+          household structure, income levels, and educational attainment, all
+          sourced from Statistics Sweden (SCB). When the virus starts spreading,
+          it spreads across a real place with real socioeconomic texture.</p>
+
+        <h3>🏙️ What you're looking at</h3>
+        <p>Each colored building is a real structure. Green means healthy,
+          yellow means exposed, red means infectious, blue means recovered.
+          Switch between zones, infection, population, income, or deaths in the
+          Visualization panel. Hover any building to see its SEIR compartments,
+          age breakdown, gender split, estimated households, income level, and
+          neighbourhood name.</p>
+
+        <h3>🦠 How it works</h3>
+        <p>People live in homes and go out to shops, schools, workplaces, and
+          parks. When an infectious person shares a building with susceptible
+          ones, the virus spreads. The closer two buildings are, the more their
+          residents mix. Rush hour and school hours push contacts up; nights
+          push them down. Simple rules, real geography.</p>
+
+        <h3>👥 Synthetic population</h3>
+        <p>SCB demographics are available at neighbourhood level (DeSO areas,
+          ~1,000–3,000 people). EpiCity disaggregates them to individual
+          residential buildings while preserving area-level totals — every
+          building has its own income, gender split, and household mix.</p>
+
+        <h3>🌲 Nature layer</h3>
+        <p>Toggle the Nature layer to reveal lakes, rivers, and forests from
+          OSM. 3D trees are scattered across forest polygons with species-specific
+          models (spruce, pine, birch, oak).</p>
+
+        <h3>🏘 Neighborhood areas</h3>
+        <p>Toggle the Areas layer to display SCB RegSO statistical area
+          boundaries. Hover any area to see a summary of its demographics:
+          population, age breakdown, gender split, average income, and
+          household count.</p>
+
+        <h3>🎛 Scenario presets</h3>
+        <p>The Settings popover includes three quick-switch presets — Mild Flu,
+          Moderate (default), and Severe Pandemic — that set all model
+          parameters at once.</p>
+
+        <h3>🚌 Public transport &amp; the epidemic</h3>
+        <p>Real bus, tram, train, ferry and flight routes connect stops across
+          each city. Every scheduled trip picks up passengers near the origin
+          stop, exposes them to infection inside the vehicle, and drops them
+          at the destination — carrying the virus to new neighbourhoods.</p>
+
+        <h3>🗺 Multi-city metapopulation</h3>
+        <p>The focused city is coupled to all 290 Swedish kommuner via SCB
+          commuter-flow data.</p>
+
+        <h3>🧰 What you can do</h3>
+        <ul>
+          <li>🔒 Lockdown · 😷 Mask Mandate · ↔️ Social Distancing</li>
+          <li>💉 Vaccination · 🏫 Close Schools · 🔬 Test &amp; Isolate</li>
+          <li>🚌 Transit Masks · ✈️ Suspend Flights · 🌡️ Station Screening</li>
+        </ul>
+
+        <h3>📊 Data sources</h3>
+        <p><b>SCB</b> (PxWeb + WFS): population, age, gender, households,
+          income, education, employment, commuter flows, DeSO 2025 polygons.
+          <b>OSM:</b> buildings, roads, POIs, transport routes, natural features.
+          <b>Everything is downloaded once and cached locally — no live APIs,
+          no data leaves your machine while the simulation runs.</b></p>
+
+        <div class="modal-footer">Built by Claudio Linhares, Linnaeus University, 2026.</div>
+        </div>
+      </section>
+
+      <section class="tab-pane" data-tab="expert" role="tabpanel">
+        <div data-lang="en">
+        <h3>🧪 Model</h3>
+        <p>SEIRS with waning immunity, per-building compartments, age-stratified
+          into <code>{child, adult, elder}</code>. Each building <code>i</code>
+          carries a state vector
+          <code>(S<sub>i,g</sub>, E<sub>i,g</sub>, I<sub>i,g</sub>, R<sub>i,g</sub>, D<sub>i,g</sub>)</code>.</p>
+
+        <h3>🔢 Force of infection</h3>
+<pre>λ_g(i) = β_eff(i) · Σ_g' C[g, g'] · ( f · I_local_g'(i)
+                                     + (1 − f) · I_neigh_g'(i) )</pre>
+        <p>where <code>f = local_frac</code> (default <code>0.55</code>),
+          <code>β_eff(i) = β · Z_zone(i) · s_school</code>, and neighbour
+          mixing uses a Gaussian kernel <code>w(d) = exp(−d²/2σ²) · A_zone</code>
+          for <code>d ≤ 400 m</code>, <code>σ = 150 m</code>.</p>
+
+        <h3>🤝 Contact matrix C[g, g']</h3>
+        <table>
+          <thead><tr><th></th><th>child</th><th>adult</th><th>elder</th></tr></thead>
+          <tbody>
+            <tr><th>child</th><td>1.6</td><td>0.9</td><td>0.3</td></tr>
+            <tr><th>adult</th><td>0.5</td><td>1.0</td><td>0.4</td></tr>
+            <tr><th>elder</th><td>0.2</td><td>0.5</td><td>0.8</td></tr>
+          </tbody>
+        </table>
+
+        <h3>🔁 Transitions (per day, per group g)</h3>
+<pre>S_g → E_g  at rate  λ_g · S_g
+E_g → I_g  at rate  σ · E_g
+I_g → R_g  at rate  γ · (1 − μ_g) · I_g
+I_g → D_g  at rate  γ · μ_g · I_g
+R_g → S_g  at rate  (1 / τ) · R_g</pre>
+        <p><code>μ_g = μ_base · m_g</code> with <code>m_g ∈ {child: 0.1, adult: 1.0, elder: 6.0}</code>.</p>
+
+        <h3>⚙️ Default parameters</h3>
+        <table>
+          <thead><tr><th>Symbol</th><th>Default</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>β</code></td><td>0.32</td><td>Transmission rate per contact</td></tr>
+            <tr><td><code>σ</code></td><td>0.20</td><td>E → I progression (1/5 d)</td></tr>
+            <tr><td><code>γ</code></td><td>0.10</td><td>I → R recovery (1/10 d)</td></tr>
+            <tr><td><code>μ</code></td><td>0.008</td><td>Base case-fatality rate</td></tr>
+            <tr><td><code>τ</code></td><td>90 d</td><td>Waning immunity timescale</td></tr>
+          </tbody>
+        </table>
+
+        <h3>🏥 Hospital overload</h3>
+        <p>Trigger: <code>total_I / total_N &gt; 0.05</code> (city-wide).
+          While active, <code>μ</code> is replaced with <code>μ_overloaded = 0.04</code>
+          across all infectious compartments until the ratio drops back.</p>
+
+        <h3>🎲 Stochastic dynamics</h3>
+        <p>Each flow with deterministic mean <code>m</code> is sampled as
+          <code>m + N(0, √m)</code> and clamped to <code>[0, cap]</code> —
+          Euler–Maruyama on the diffusion approximation. Reproducible via the
+          RNG seed in Settings.</p>
+
+        <h3>🚌 Per-mode β<sub>transport</sub> (per hour)</h3>
+        <table>
+          <thead><tr><th>Mode</th><th>β</th><th>Rationale</th></tr></thead>
+          <tbody>
+            <tr><td>Bus</td><td>0.45</td><td>Crowded, poor ventilation, standing</td></tr>
+            <tr><td>Tram</td><td>0.35</td><td>Somewhat less dense</td></tr>
+            <tr><td>Train</td><td>0.20</td><td>Seated, better airflow</td></tr>
+            <tr><td>Intercity train</td><td>0.18</td><td>Reserved seating</td></tr>
+            <tr><td>Flight</td><td>0.10</td><td>HEPA filtration</td></tr>
+            <tr><td>Ferry</td><td>0.15</td><td>Open-deck, high natural ventilation</td></tr>
+          </tbody>
+        </table>
+
+        <h3>📈 R_eff</h3>
+        <p>Reported as <code>(β / γ) · (S / N)</code>, using the current
+          effective <code>β</code> (post-intervention, post-clock) and the
+          city-wide susceptible fraction.</p>
+
+        <div class="modal-footer">Built by Claudio Linhares, Linnaeus University, 2026.</div>
+        </div>
+        <div data-lang="sv">
+        <h3>🧪 Modell</h3>
+        <p>SEIRS med avtagande immunitet, per-byggnads-fack, åldersstratifierad
+          i <code>{barn, vuxen, äldre}</code>. Varje byggnad <code>i</code>
+          bär en tillståndsvektor
+          <code>(S<sub>i,g</sub>, E<sub>i,g</sub>, I<sub>i,g</sub>, R<sub>i,g</sub>, D<sub>i,g</sub>)</code>.</p>
+
+        <h3>🔢 Smittkraft</h3>
+<pre>λ_g(i) = β_eff(i) · Σ_g' C[g, g'] · ( f · I_lokal_g'(i)
+                                     + (1 − f) · I_granne_g'(i) )</pre>
+        <p>där <code>f = lokal_andel</code> (standard <code>0,55</code>),
+          <code>β_eff(i) = β · Z_zon(i) · s_skola</code>, och grannblandning
+          använder en Gaussisk kärna <code>w(d) = exp(−d²/2σ²) · A_zon</code>
+          för <code>d ≤ 400 m</code>, <code>σ = 150 m</code>.</p>
+
+        <h3>🤝 Kontaktmatris C[g, g']</h3>
+        <table>
+          <thead><tr><th></th><th>barn</th><th>vuxen</th><th>äldre</th></tr></thead>
+          <tbody>
+            <tr><th>barn</th><td>1,6</td><td>0,9</td><td>0,3</td></tr>
+            <tr><th>vuxen</th><td>0,5</td><td>1,0</td><td>0,4</td></tr>
+            <tr><th>äldre</th><td>0,2</td><td>0,5</td><td>0,8</td></tr>
+          </tbody>
+        </table>
+
+        <h3>🔁 Övergångar (per dag, per grupp g)</h3>
+<pre>S_g → E_g  med hastighet  λ_g · S_g
+E_g → I_g  med hastighet  σ · E_g
+I_g → R_g  med hastighet  γ · (1 − μ_g) · I_g
+I_g → D_g  med hastighet  γ · μ_g · I_g
+R_g → S_g  med hastighet  (1 / τ) · R_g</pre>
+        <p><code>μ_g = μ_bas · m_g</code> med <code>m_g ∈ {barn: 0,1, vuxen: 1,0, äldre: 6,0}</code>.</p>
+
+        <h3>⚙️ Standardparametrar</h3>
+        <table>
+          <thead><tr><th>Symbol</th><th>Standard</th><th>Betydelse</th></tr></thead>
+          <tbody>
+            <tr><td><code>β</code></td><td>0,32</td><td>Smitthastighet per kontakt</td></tr>
+            <tr><td><code>σ</code></td><td>0,20</td><td>E → I progression (1/5 d)</td></tr>
+            <tr><td><code>γ</code></td><td>0,10</td><td>I → R tillfrisknande (1/10 d)</td></tr>
+            <tr><td><code>μ</code></td><td>0,008</td><td>Grundläggande dödlighet</td></tr>
+            <tr><td><code>τ</code></td><td>90 d</td><td>Tidsskala för immunitetsavtagande</td></tr>
+          </tbody>
+        </table>
+
+        <h3>🏥 Sjukhusöverbelastning</h3>
+        <p>Utlösare: <code>total_I / total_N &gt; 0,05</code> (stadsmässigt).
+          Medan aktiv ersätts <code>μ</code> med <code>μ_överbelastad = 0,04</code>
+          i alla smittsamma fack tills andelen sjunker tillbaka.</p>
+
+        <h3>🎲 Stokastisk dynamik</h3>
+        <p>Varje flöde med deterministiskt medelvärde <code>m</code> samplas
+          som <code>m + N(0, √m)</code> och begränsas till <code>[0, tak]</code>
+          — Euler–Maruyama på diffusionsapproximationen. Reproducerbar via
+          RNG-fröet i Inställningar.</p>
+
+        <h3>🚌 β<sub>transport</sub> per trafikslag (per timme)</h3>
+        <table>
+          <thead><tr><th>Trafikslag</th><th>β</th><th>Motivering</th></tr></thead>
+          <tbody>
+            <tr><td>Buss</td><td>0,45</td><td>Trångt, dålig ventilation, stående</td></tr>
+            <tr><td>Spårvagn</td><td>0,35</td><td>Något mindre trångt</td></tr>
+            <tr><td>Tåg</td><td>0,20</td><td>Sittplatser, bättre luftflöde</td></tr>
+            <tr><td>Fjärrtåg</td><td>0,18</td><td>Reserverade platser</td></tr>
+            <tr><td>Flyg</td><td>0,10</td><td>HEPA-filtrering</td></tr>
+            <tr><td>Färja</td><td>0,15</td><td>Öppet däck, hög naturlig ventilation</td></tr>
+          </tbody>
+        </table>
+
+        <h3>📈 R<sub>eff</sub></h3>
+        <p>Rapporteras som <code>(β / γ) · (S / N)</code>, med aktuell
+          effektiv <code>β</code> (efter åtgärder, efter klocka) och den
+          stadsmässiga mottagliga andelen.</p>
+
+        <div class="modal-footer">Utvecklad av Claudio Linhares, Linnéuniversitetet, 2026.</div>
+        </div>
+      </section>
+
+      <!-- References tab — populated lazily by ui.js _ensureRefsRendered() -->
+      <section class="tab-pane" data-tab="references" role="tabpanel">
+        <p style="color:#94a3b8;font-size:0.85rem">Loading references…</p>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+</div><!-- #city-view -->
+
+<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="ui.js"></script>
+
+</body>
+</html>

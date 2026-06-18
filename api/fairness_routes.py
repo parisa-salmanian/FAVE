@@ -16,6 +16,7 @@ DEFAULT_SPEED_MPS = {
     "bike": 4.0,   # ~14.4 km/h
     "car": 13.9,   # ~50 km/h
     "pt": 6.0,     # ~21.6 km/h (very rough)
+    "transit": 5.0,  # ~18 km/h effective public-transport (alias of pt)
     "euclid": 1.4,
 }
 

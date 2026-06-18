@@ -102,6 +102,97 @@ back road-distance fairness, the right architecture is to bake distance
 matrices into `frontend/assets/data/cities/<key>/routing/` during city
 addition (using a local OSRM instance), not to reintroduce live calls.
 
+**Baked routing matrices ARE now consumed (added 2026-06-18).** The
+`cities/<key>/routing/<mode>/<cat>.json` files (per building: `m` = network
+metres to nearest 15 POIs, `v` = opportunity values) feed accessibility via
+`frontend/assets/js/lib/routingMatrix.js`. `models/fairness.js` uses real
+network distance (`ifCityNetworkDistanceForMode`, detour factor dropped) for
+walk/cycle/drive instead of haversine. Buildings resolve to a matrix row by
+exact `"lon,lat"` key (6 dp) with a nearest-key snap fallback (≤45 m) — the
+pre-existing bake used a different centroid so exact match is ~81%; the snap
+lifts coverage to ~100%. Categories with active what-if edits keep the
+haversine model (added/removed POIs aren't in the static matrices). `transit`
+mode uses its own network (see above); `USE_TRAVEL_TIME` still gates live OSRM
+only.
+
+## Public transport ("transit") accessibility mode
+
+`transit` is a travel mode alongside walking/cycling/driving in the fairness
+"Mode" dropdown. Unlike the others (which use the speed/factor gravity model in
+`config.js`), transit uses a **baked stop network**, honoring the no-runtime-API
+rule:
+
+- Source data: EpiCity transit data under
+  `frontend/assets/data/cities/<key>/epicity/` (`transport_infra.json` stops,
+  `transport_schedule.json` lines/trips). Ported from EpiCity (see
+  `epicity_engine/`).
+- Bake: `tools/bake_transit_network.py` → `cities/<key>/transit/network.json`
+  (stops + stop→stop in-vehicle time matrix + per-stop boarding wait). It adds
+  walking-transfer edges between stops within 150 m (EpiCity stops aren't
+  deduped by location, so hubs must be linked to enable transfers). Re-bake all
+  7 cities with `python tools/bake_transit_network.py`.
+- Runtime: `frontend/assets/js/lib/transit.js` loads the network and
+  `models/fairness.js` computes transit travel time =
+  access walk → nearest stop + boarding wait + matrix in-vehicle time + egress
+  walk → POI. Unreachable pairs / cities without a baked network fall back to
+  the per-mode speed model. To register a mode, see the maps in `config.js`,
+  the `#fairnessTravelMode` `<select>` in `index.html`, `normalizeTravelMode()`
+  in `fairness.js`, and `DEFAULT_SPEED_MPS` in `api/fairness_routes.py`.
+
+## 2SFCA supply-to-demand accessibility (companion metric)
+
+A **network-accurate Enhanced 2-Step Floating Catchment Area (E2SFCA)** layer,
+added 2026-06-18 as a *companion* to the headline gravity model. The gravity
+model answers "how close are opportunities"; 2SFCA answers "how much supply is
+actually available to me once everyone else competing for it is accounted for"
+(supply-to-demand crowding). Both are network-accurate — no straight-line.
+
+- Bake: `tools/bake_access2sfca.py` (uses OSMnx 1.9.3 — bake-time only, honoring
+  the no-runtime-API rule). Per city/mode it builds a real OSMnx graph
+  (walk/bike/drive), snaps POIs + building centroids to nodes, runs single-source
+  Dijkstra from each POI (POIs are few), and computes two-step E2SFCA with a
+  Gaussian decay `W(d)=exp(-d²/(2σ²))`, `σ=catchment/3`. Demand `P_i` mirrors
+  `epicityDemographics.js`: each DESO's population distributed across its
+  residential buildings (`andamal1`=`Bostad…`) by floor area. Capacity `S_j`
+  from POI `beds`/`capacity` tags else 1 (mostly uniform → relative 2SFCA).
+  Output `cities/<key>/access2sfca/{index.json,<mode>.json}`: `index.json` holds
+  the shared building-coordinate key array; each `<mode>.json` has per category a
+  sparse `a:[[bldgIdx,A_i],...]` plus per-POI crowding `R_j`. Re-bake one city
+  with `python tools/bake_access2sfca.py <city>` (big metros are slow — driving
+  graphs are large). Catchments per category scale by mode (walk×1, cycle×3,
+  drive×8).
+- Runtime: `frontend/assets/js/lib/access2sfca.js` loads index + mode file,
+  joins buildings by `"lon,lat"` coordinate snap (≤45 m — runtime building set is
+  filtered to ~45.7k vs the bake's ~50.3k, so featIdx can't be used). Raw A
+  values scale inversely with each category's total demand, so they're NOT
+  comparable across categories; the consumer normalises **per category**
+  (log1p + robust p10..p95 clamp) to 0..1 provision, then combines by mean for an
+  overall score. `views/inspector.js` `setBuildingSelection` attaches it async
+  (mode follows `#fairnessTravelMode`, transit falls back to walking) and renders
+  "Supply provision (2SFCA · <mode>)" + a per-category breakdown. It does NOT feed
+  the Gini/headline number — purely an inspector companion (priority-zone use is
+  a future step).
+
+## Demographic fairness weighting (EpiCity SCB data)
+
+Per-DESO socioeconomics shape the fairness/Gini model so under-served, high-need
+areas read as more unfair (closer to how planners assess equity):
+
+- Bake: `tools/bake_demographics.py` → `cities/<key>/demographics/deso.geojson`
+  (DESO polygons + pop, income, child_frac, elder_frac, dependency, and a
+  composite `needZ` = 0.65·z(−income) + 0.35·z(dependency)). Source is EpiCity
+  SCB data under `cities/<key>/epicity/` (`deso.json`, `deso_income.json`,
+  `deso_gender.json`). Baked for all 7 cities.
+- Runtime: `frontend/assets/js/models/epicityDemographics.js` loads it, maps each
+  building to its DESO (point-in-polygon, bbox-accelerated), and exposes
+  `epiBuildingNeedMap` (needZ) + `epiBuildingPopMap`. `models/fairness.js` applies
+  `socioWeight = needWeightFromZ(needZ, EPI_SOCIO_STRENGTH)` (default 0.5, on by
+  default) in the benefit product. Effect on Växjö walking: Gini 0.061 → 0.130.
+- NOT yet used for demand: distributing per-DESO population over ALL building
+  types over-weights large non-residential buildings (0.5–5x, distorts Gini).
+  Demand still uses the residential-based map; wiring EpiCity's per-building
+  *synthetic* (residential) population from `city.json` is the proper next step.
+
 ## Local dev (running the app)
 
 Three services, three terminals (or background processes):

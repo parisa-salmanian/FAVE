@@ -37,11 +37,14 @@ const TRAVEL_SPEED_KMH = {
   walking: 5,
   cycling: 15,
   driving: 40,
+  transit: 18,   // effective public-transport speed (in-vehicle avg); the
+                 // real network model (transit/network.json) refines this.
 };
 const FAIRNESS_EFFORT_MULTIPLIER = {
   walking: 1,
   cycling: 0.7,
   driving: 0.45,
+  transit: 0.6,  // less effort than walking/cycling, more than driving
 };
 const FAIRNESS_TRAVEL_MODE_DEFAULT = 'walking';
 
@@ -112,17 +115,34 @@ const IF_CITY_MODE_DISTANCE_FACTOR = {
   walking: 1.0,
   cycling: 1.55,
   driving: 1.85,
+  transit: 1.35,
 };
 const IF_CITY_MODE_DETOUR_FACTOR = {
   walking: 1.0,
   cycling: 1.15,
   driving: 1.3,
+  transit: 1.4,   // access/egress walk + indirect routes
 };
 const IF_CITY_MODE_SPEED_KMH = {
   walking: 5,
   cycling: 15,
   driving: 40,
+  transit: 18,
 };
+// Public-transport runtime model: when a baked transit/network.json exists for
+// the city, transit travel time is computed from the real stop network instead
+// of the speed/factor fallback above. These tune the network model.
+const TRANSIT_ACCESS_WALK_KMH = 5;     // walking speed to/from stops
+const TRANSIT_MAX_ACCESS_M = 1500;     // farther than this from any stop => no transit
+const TRANSIT_NEAREST_STOPS_K = 3;     // candidate stops to consider each end
+
+// EpiCity demographic fairness weighting. The per-DESO composite need index
+// (low income + high age-dependency, baked into cities/<key>/demographics/
+// deso.geojson) up-weights under-served high-need areas in the fairness/Gini
+// model. Strength feeds needWeightFromZ: weight = clamp(exp(strength*z),0.25,4).
+// 0 disables it; 0.5 ~ deprived areas count up to ~2.3x, affluent down to ~0.43x.
+const EPI_SOCIO_STRENGTH = 0.5;        // on by default so demographics affect Gini
+const EPI_DEMOGRAPHICS_ENABLED = true;
 const IF_CITY_REFERENCE_SPEED_KMH = IF_CITY_MODE_SPEED_KMH.walking;
 
 // HEX/MEZO/PARALLEL/WHATIF constants (moved from main.js residual)

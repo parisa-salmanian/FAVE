@@ -1,0 +1,3169 @@
+/* ==========================================================================
+   EpiCity — Merged HUD stylesheet.
+   Single source of truth for all component styling. Mirrors the four states
+   from the merged-HUD design (City Picker, Sim HUD, POI open, mini-rail).
+   ========================================================================== */
+
+/* Windows Chrome ships no regional-indicator emoji font, so 🇸🇪 etc.
+   render as boxed letters "SE". Load Google's Noto Color Emoji and
+   prefer it on spans that contain flag emoji (see .country-flag). */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap');
+
+.country-flag {
+  font-family: 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji',
+               'Twemoji Mozilla', sans-serif;
+  font-size: 0.95em;
+  line-height: 1;
+  font-variant-emoji: emoji;
+  vertical-align: middle;
+}
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* ── Design tokens ───────────────────────────────────────────────────────── */
+:root {
+  --bg:           #0b0f14;
+  --surface-0:    #0f1419;
+  --surface-1:    #161c24;
+  --surface-2:    #1c2430;
+  --surface-3:    #242e3c;
+  --border:       #2a3441;
+  --border-soft:  #1e2733;
+  --text:         #e6edf3;
+  --text-dim:     #9aa7b4;
+  --text-mute:    #6b7785;
+  --accent:       #ff6b4a;
+  --accent-dim:   #c94a2e;
+  --accent-soft:  rgba(255,107,74,.14);
+
+  /* Brand logo source — change this single value to swap the in-app logo
+     (top-bar pill on macro + city views). The favicon link in index.html
+     is a separate file path: change it there too if you want the browser
+     tab icon to follow.
+       Available: icons/icons/01-radar/radar-{dark,light,mono}-{16..512}.svg
+                  icons/icons/04-citygrid/citygrid-{dark,light,mono}-{16..512}.svg
+                  favicon.svg                                       (legacy citygrid 256) */
+  --brand-logo:   url('icons/icons/04-citygrid/citygrid-dark-128.svg');
+
+  --s-s: #3dd68c;
+  --s-e: #f5b841;
+  --s-i: #ff6b4a;
+  --s-r: #5a9fff;
+  --s-d: #8c94a3;
+
+  --radius:    12px;
+  --radius-sm:  8px;
+  --shadow: 0 8px 24px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3);
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* ── Reset ────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%; width: 100%; overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+button {
+  font: inherit; color: inherit; cursor: pointer;
+  background: none; border: none;
+}
+
+/* ── Map / canvas layers ─────────────────────────────────────────────────── */
+#map-container {
+  position: fixed; inset: 0; z-index: 0;
+}
+/* Compare side-by-side: shrink the primary map to the left half and reveal
+   the secondary map on the right half. Both keep their own MapLibre
+   instance so each half has its own basemap, building extrusions, and
+   tile cache — what makes the two views truly independent. */
+#map-container-b {
+  position: fixed; top: 0; bottom: 0; right: 0; left: 50%; z-index: 0;
+}
+body.compare-split #map-container   { right: 50%; }
+body.compare-split #map-container-b { display: block !important; }
+body.compare-split #cmpDivider      { display: block; }
+/* SEIR overlays: one centered over each half. Activated only in split mode.
+   z-index sits ABOVE MapLibre's #map-container (z-index 0) AND the city
+   canvas group, so the overlays catch hover events for the SEIR tooltip
+   instead of letting them fall through to the map. pointer-events:auto
+   is required for the same reason — without it, the cursor never reaches
+   the overlay and the tooltip never fires. */
+.kpi-overlay {
+  position: fixed;
+  top: 64px;
+  z-index: 25;
+  display: none;
+  padding: 8px 12px;
+  background: rgba(15, 17, 22, 0.78);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+}
+body.compare-split .kpi-overlay { display: block; }
+/* Each overlay is pinned INSIDE its own half — A hugs the divider's
+   left side, B hugs the divider's right side — so they're always
+   visibly above the day they describe and never spill into the other
+   half (the previous right-edge anchoring let overlay B leak past
+   the divider on common screen sizes once the strip got wide).
+   Topbar panels (Search 360 px, Stats / Settings 300 px) live on
+   the right edge and use z-index 50 — they overlay our z-25 stripe
+   when open, which is the right ordering. */
+.kpi-overlay#kpiOverlayA {
+  right: calc(50% + 14px);
+  left: auto;
+  transform: none;
+}
+.kpi-overlay#kpiOverlayB {
+  left: calc(50% + 14px);
+  right: auto;
+  transform: none;
+}
+.kpi-overlay .kpi-overlay-head {
+  display: flex; align-items: center; gap: 6px;
+  font: 700 11px var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.kpi-overlay#kpiOverlayA .kpi-overlay-head { color: var(--cmp-a); }
+.kpi-overlay#kpiOverlayB .kpi-overlay-head { color: var(--cmp-b); }
+.kpi-overlay .kpi-overlay-head .cmp-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.kpi-overlay#kpiOverlayA .cmp-dot { background: var(--cmp-a); box-shadow: 0 0 6px rgba(255,107,74,.6); }
+.kpi-overlay#kpiOverlayB .cmp-dot { background: var(--cmp-b); box-shadow: 0 0 6px rgba(77,208,225,.6); }
+.kpi-overlay .kpi-overlay-strip {
+  display: flex; align-items: center; gap: 8px;
+}
+.kpi-overlay .kpi-overlay-strip .kpi {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  font: 600 11px var(--mono);
+  color: var(--text);
+  white-space: nowrap;
+}
+.kpi-overlay .kpi-overlay-strip .kpi .kpi-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+}
+.kpi-overlay .kpi-overlay-strip .kpi .lbl { color: var(--text-dim); }
+/* R-eff and Growth pills inside the per-side overlay reuse the .kpi
+   layout so all six pills (R-eff · S · E · I · R · D · Growth) read as
+   a single row of equal-sized chips. Colour cues match the live pills
+   in the bottom playbar so the user instantly recognises them. */
+.kpi-overlay .kpi.reff   .lbl,
+.kpi-overlay .kpi.growth .lbl { font-weight: 700; }
+.kpi-overlay .kpi.growth.up   .val { color: #f87171; }
+.kpi-overlay .kpi.growth.down .val { color: #34d399; }
+.kpi-overlay .kpi.growth.flat .val { color: var(--text-dim); }
+
+/* Hide the primary topbar KPI strip AND the bottom-bar R-eff / Growth
+   pills in split mode so the only readouts on screen are the two
+   per-side overlays. Restored automatically when the user exits split
+   (the body class is removed in compare.js / ui.js). */
+body.compare-split #kpiStrip { visibility: hidden; }
+body.compare-split #reffPill,
+body.compare-split #growthPill {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* (split-mode hover now uses the single view's #tooltip — no custom popup) */
+#dayNightOverlay {
+  position: fixed; inset: 0; z-index: 2;
+  pointer-events: none;
+  background: rgba(0,0,0,0);
+}
+#snowCanvas {
+  position: fixed; inset: 0; z-index: 3;
+  pointer-events: none;
+  display: none;
+}
+/* Infection-flow wash — semi-transparent dark layer above the map but
+   below the canvas overlay. Damps the basemap colours so the orange
+   spread chain reads cleanly. */
+#infectionFlowWash {
+  position: fixed; inset: 0; z-index: 4;
+  pointer-events: none;
+  display: none;
+  background: rgba(11, 15, 20, .42);
+}
+/* Infection-flow canvas — sits between the wash (z 4) and the HUD
+   panels (z 10+). Hidden by default; toggled by the sidebar layer. */
+#infectionFlowCanvas {
+  position: fixed; inset: 0; z-index: 5;
+  pointer-events: none;
+  display: none;
+}
+
+/* ── Macro / city-view containers ────────────────────────────────────────── */
+#macro-view, #city-view { position: fixed; inset: 0; }
+body.in-macro #city-view { display: none; }
+body:not(.in-macro) #macro-view { display: none; }
+
+/* ── HUD overlay (city-view) ─────────────────────────────────────────────── */
+#overlay {
+  position: fixed; inset: 0; z-index: 10;
+  pointer-events: none;
+}
+#overlay > * { pointer-events: auto; }
+
+/* ==========================================================================
+   Shared primitives — buttons, pills, chips
+   ========================================================================== */
+
+.icon-btn {
+  width: 34px; height: 34px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  transition: background .15s, color .15s, border-color .15s;
+}
+.icon-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--surface-3);
+}
+.icon-btn.on, .icon-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: rgba(255,107,74,.4);
+}
+.i  { width: 16px; height: 16px; display: inline-block; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.i-lg { width: 18px; height: 18px; }
+
+.kbd {
+  font: 500 10.5px var(--mono);
+  color: var(--text-mute);
+  background: var(--surface-2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.brand-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background .15s;
+}
+.brand-pill:hover { background: var(--surface-2); }
+/* Brand-pill logo — sources its asset from --brand-logo (set in :root)
+   so a single CSS variable controls the logo across the macro picker
+   and the city view top-bar. Swap the variable to flip back to citygrid
+   or any other icon set under static/icons/. */
+.brand-pill .logo {
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  background: var(--brand-logo) center/contain no-repeat;
+  flex-shrink: 0;
+}
+.brand-pill .name {
+  font-weight: 700; letter-spacing: -0.01em; font-size: 14px;
+}
+.brand-pill .name em { font-style: normal; color: var(--accent); }
+.brand-pill .sep {
+  width: 1px; height: 14px; background: var(--border);
+}
+.brand-pill .sub {
+  color: var(--text-dim); font-size: 12.5px;
+}
+/* Globe leads the brand pill — slight right margin separates it from
+   the logo, half-step muted background, lights up on hover. */
+.brand-pill .brand-globe {
+  margin-right: 4px;
+  margin-left: -4px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-mute);
+}
+.brand-pill .brand-globe:hover {
+  background: var(--surface-2); color: var(--text);
+}
+
+/* Language switch (segmented pill). Heights match the brand pill / icon
+   actions so the entire top bar is one tidy 36-px row. */
+.lang-switch {
+  display: inline-flex; align-items: center;
+  height: 36px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px;
+  pointer-events: auto;
+}
+.lang-switch button {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  font: 600 11.5px 'Inter', sans-serif;
+  color: var(--text-mute);
+  border-radius: 999px;
+  transition: background .15s, color .15s;
+}
+.lang-switch button:hover { color: var(--text-dim); }
+.lang-switch button.on {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.lang-switch .flag {
+  width: 16px; height: 11px; border-radius: 2px;
+  display: inline-block;
+  position: relative;
+  overflow: hidden;
+}
+/* Sweden: blue field with a yellow Nordic cross. */
+.lang-switch .flag.sv {
+  background: #006AA7;
+}
+.lang-switch .flag.sv::before {
+  /* horizontal arm of the cross */
+  content: ''; position: absolute;
+  left: 0; right: 0; top: 41%; height: 18%;
+  background: #FECC02;
+}
+.lang-switch .flag.sv::after {
+  /* vertical arm, offset toward the hoist like the real flag */
+  content: ''; position: absolute;
+  top: 0; bottom: 0; left: 28%; width: 18%;
+  background: #FECC02;
+}
+/* USA — Stars and Stripes. Thirteen alternating red/white stripes with
+   a blue canton at the hoist; stars suggested by light noise dots. */
+.lang-switch .flag.en {
+  background:
+    linear-gradient(#fff 0 0) 0 0/100% 100%,
+    repeating-linear-gradient(to bottom,
+      #B22234 0, #B22234 calc(100%/13),
+      #fff   calc(100%/13), #fff calc(2 * 100%/13));
+}
+.lang-switch .flag.en::before {
+  /* Blue canton — top-left, ~40% × ~54% of the flag (matches 7 stripes). */
+  content: ''; position: absolute;
+  top: 0; left: 0;
+  width: 42%; height: calc(7 / 13 * 100%);
+  background: #3C3B6E;
+}
+.lang-switch .flag.en::after {
+  /* Suggest 50 stars with a subtle radial-gradient dot pattern. */
+  content: ''; position: absolute;
+  top: 0; left: 0;
+  width: 42%; height: calc(7 / 13 * 100%);
+  background-image:
+    radial-gradient(circle, #fff .35px, transparent .55px),
+    radial-gradient(circle, #fff .35px, transparent .55px);
+  background-size: 22% 22%, 22% 22%;
+  background-position: 0 0, 11% 11%;
+}
+
+/* ==========================================================================
+   STATE 01 · City Picker (macro view)
+   ========================================================================== */
+
+#macro-stage {
+  position: absolute; inset: 0;
+  background: var(--bg);
+}
+#macro-stage canvas { background: var(--bg); }
+
+#macro-view {
+  background: var(--bg);
+  display: block;
+  pointer-events: auto;
+}
+
+/* Top bar in the city picker */
+#macro-header {
+  position: absolute; top: 16px; left: 16px; right: 16px;
+  z-index: 20;
+  display: flex; align-items: center; gap: 10px;
+  pointer-events: none;
+}
+#macro-header > * { pointer-events: auto; }
+#macro-header .header-spacer { flex: 1 1 auto; pointer-events: none; }
+#macro-header .pill-info {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+#macro-header .pill-info .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+#macro-header .macro-subtitle {
+  font-size: 12.5px; color: var(--text-mute);
+  margin-left: 4px;
+}
+#macro-header h1 { display: none; }
+#macro-header .app-logo { display: none; }
+
+/* Welcome side panel (left) */
+.intro-sidepanel {
+  position: absolute;
+  top: 78px; left: 16px;
+  width: 320px;
+  max-height: calc(100vh - 78px - 16px);
+  overflow-y: auto;
+  z-index: 18;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px 22px 18px;
+  box-shadow: var(--shadow);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.intro-sidepanel::-webkit-scrollbar { width: 6px; }
+.intro-sidepanel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.intro-sidepanel h1 {
+  font-size: 22px; font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.18;
+  margin-bottom: 8px;
+}
+.intro-sidepanel .sub {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 18px;
+}
+.intro-sidepanel .step {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.intro-sidepanel .step:first-of-type { border-top: none; }
+.intro-sidepanel .step .n {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-dim);
+  font: 600 11px var(--mono);
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.intro-sidepanel .step .t { font-size: 12.5px; font-weight: 600; }
+.intro-sidepanel .step .d { font-size: 11.5px; color: var(--text-mute); }
+
+/* Search panel — anchored to the right of the macro view (replaces the
+   old "selected city" card). Stays out of the way of the welcome panel
+   on the left and the Sweden landmass in the middle. */
+.intro-search {
+  position: absolute;
+  top: 78px;
+  right: 16px;
+  width: 340px;
+  z-index: 19;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.intro-search .row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+}
+.intro-search input {
+  flex: 1;
+  background: none; border: none; outline: none;
+  font: 400 14px 'Inter', sans-serif;
+  color: var(--text);
+}
+.intro-search input::placeholder { color: var(--text-mute); }
+.intro-search .divider {
+  height: 1px; background: var(--border-soft);
+}
+.intro-search .suggest-head {
+  font: 500 10.5px 'Inter', sans-serif;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  padding: 10px 14px 4px;
+}
+.intro-search .sug {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background .12s;
+}
+.intro-search .sug:hover { background: var(--surface-2); }
+.intro-search .sug:last-child { padding-bottom: 12px; }
+.intro-search .avatar {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  display: inline-flex; align-items: center; justify-content: center;
+  font: 600 10.5px var(--mono);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.intro-search .avatar.hot {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.intro-search .meta { flex: 1; min-width: 0; }
+.intro-search .city-name { font-size: 13px; font-weight: 600; }
+.intro-search .city-sub  { font-size: 11px; color: var(--text-mute); }
+.intro-search .pop {
+  font: 500 11px var(--mono);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/* Selected city card — removed from layout; styles kept for any
+   downstream code that still references the class. */
+.city-card { display: none !important; }
+.city-card-DEPRECATED {
+  position: absolute;
+  top: 78px; right: 16px;
+  width: 300px;
+  z-index: 18;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+  box-shadow: var(--shadow);
+  display: none;
+}
+.city-card.on { display: block; }
+.city-card .eyebrow {
+  font: 500 10.5px 'Inter', sans-serif;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  margin-bottom: 8px;
+}
+.city-card h2 {
+  font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
+  margin-bottom: 2px;
+}
+.city-card .country {
+  font-size: 12px; color: var(--text-mute);
+  margin-bottom: 14px;
+}
+.city-card .city-stats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  margin-bottom: 16px;
+}
+.city-card .sc {
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+.city-card .sc .k {
+  font: 500 10.5px 'Inter', sans-serif;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-bottom: 2px;
+}
+.city-card .sc .v { font: 600 14px var(--mono); color: var(--text); }
+.city-card .cta {
+  width: 100%;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 14px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 13px;
+  transition: background .15s, transform .1s;
+}
+.city-card .cta:hover { background: var(--accent-dim); }
+.city-card .cta:active { transform: scale(0.98); }
+.city-card .meta-row {
+  display: flex; justify-content: space-between;
+  font-size: 11px; color: var(--text-mute);
+  margin-top: 10px;
+}
+
+/* Intro footer chips */
+.intro-legend {
+  position: absolute;
+  bottom: 16px; left: 16px;
+  z-index: 18;
+  display: flex; gap: 14px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.intro-legend .item { display: inline-flex; align-items: center; gap: 6px; }
+.intro-legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.intro-counter {
+  position: absolute;
+  bottom: 16px; right: 16px;
+  z-index: 18;
+  display: flex; gap: 14px;
+  font: 500 11.5px var(--mono);
+  color: var(--text-mute);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 14px;
+}
+.intro-counter b { color: var(--text-dim); font-weight: 600; }
+
+/* ==========================================================================
+   STATE 02 · Simulation HUD — top header (KPI strip)
+   ========================================================================== */
+
+#topbar {
+  position: fixed; top: 12px; left: 12px; right: 12px;
+  /* #topbar contains the Live Statistics + Settings dropdowns, both of
+     which need to overlay the Stability HUD (which is at z-index 25
+     inside #overlay). #topbar establishes its own stacking context, so
+     its inline z-index inputs are capped at this value — must be above
+     #gameHud for the stats panel to sit on top. */
+  z-index: 35;
+  display: flex; align-items: center; gap: 8px;
+  pointer-events: none;
+}
+#topbar > * { pointer-events: auto; }
+#topbar > .spacer { flex: 1 1 0; pointer-events: none; }
+
+#kpiStrip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.3);
+}
+.kpi {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 13px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.kpi .lbl {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--text-mute);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.kpi .kpi-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  display: inline-block;
+}
+.kpi .val {
+  font: 700 15px var(--mono);
+  color: var(--text);
+  min-width: 26px; text-align: right;
+  line-height: 1;
+}
+.kpi .trend {
+  display: inline-block;
+  width: 10px; height: 10px;
+  font-size: 10px; line-height: 10px;
+  color: var(--text-mute);
+  transition: color 0.25s;
+}
+.kpi .trend.up   { color: var(--accent); }
+.kpi .trend.down { color: var(--s-s); }
+.kpi .trend.up::before   {
+  content: '\25B2';
+  display: inline-block;
+  animation: ghud-trend-up 0.65s ease-in-out infinite alternate;
+}
+.kpi .trend.down::before {
+  content: '\25BC';
+  display: inline-block;
+  animation: ghud-trend-down 0.65s ease-in-out infinite alternate;
+}
+
+/* Pick patient zero — its own brand-style pill (germ icon + label),
+   sized identically to the EpiCity brand pill on the left so they read
+   as siblings on the top bar. Three states: idle / waiting / set. */
+.brand-pill.brand-pill-action {
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+  color: var(--text-dim);
+}
+.brand-pill.brand-pill-action:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.brand-pill .logo-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  font-size: 14px;
+  color: inherit;
+}
+.brand-pill .logo-ico .i { width: 16px; height: 16px; }
+.brand-pill.brand-pill-action.waiting {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  animation: kpi-pulse 1.4s ease-in-out infinite;
+}
+.brand-pill.brand-pill-action.set {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.kpi.alert {
+  background: rgba(255,107,74,.18);
+  outline: 1px solid var(--accent);
+  animation: kpi-pulse 1.6s ease-in-out infinite;
+}
+@keyframes kpi-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,107,74,.0); }
+  50%      { box-shadow: 0 0 12px 0 rgba(255,107,74,.5); }
+}
+
+#cityNameBadge {
+  display: inline-flex; align-items: center; padding: 6px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font: 600 12.5px 'Inter', sans-serif;
+  color: var(--text-dim);
+}
+#cityNameBadge:empty { display: none; }
+
+/* Top-right action cluster */
+#topActions {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 36px;
+  padding: 4px 6px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+/* Centered KPI + legend stack lives in the middle of the topbar. */
+#topbarCenter {
+  display: flex; flex-direction: column;
+  align-items: center; gap: 4px;
+  pointer-events: auto;
+}
+/* Hospital-overload banner removed from the HUD per UX call — kept the
+   selector so legacy JS toggling .hidden on it stays harmless. */
+.alert-banner { display: none !important; }
+.alert-banner.hidden { display: none; }
+
+/* MapLibre popup used by the Administrative areas overlay. Re-skinned
+   to the dark surface tokens so it doesn't flash white on hover. */
+.maplibregl-popup.nbh-popup .maplibregl-popup-content {
+  background: var(--surface-1);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font: 400 12px 'Inter', sans-serif;
+  box-shadow: var(--shadow);
+}
+.maplibregl-popup.nbh-popup .maplibregl-popup-tip {
+  border-top-color: var(--surface-1);
+  border-bottom-color: var(--surface-1);
+}
+.maplibregl-popup.nbh-popup .maplibregl-popup-close-button {
+  color: var(--text-mute);
+  font-size: 18px;
+  padding: 2px 6px;
+}
+.maplibregl-popup.nbh-popup .maplibregl-popup-close-button:hover {
+  color: var(--text);
+  background: var(--surface-2);
+  border-radius: 4px;
+}
+.maplibregl-popup.nbh-popup b,
+.maplibregl-popup.nbh-popup strong { color: var(--text); }
+.maplibregl-popup.nbh-popup table { border-collapse: collapse; }
+.maplibregl-popup.nbh-popup table td { padding: 1px 4px; color: var(--text-dim); }
+
+#topActions .icon-btn {
+  width: 28px; height: 28px;
+  background: transparent;
+  border: none;
+}
+#topActions .icon-btn:hover {
+  background: var(--surface-2);
+}
+.icon-btn-sm, #topActions .icon-btn-sm {
+  width: 20px; height: 20px;
+}
+.icon-btn-sm .i { width: 10px; height: 10px; }
+
+/* ==========================================================================
+   Left sidebar — single element that animates between mini (icons only)
+   and full (icons + labels + switches). Mini is the resting state;
+   hovering the sidebar expands it in place. Same DOM, no separate panel.
+   ========================================================================== */
+
+#sidebar {
+  position: fixed;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  display: flex; align-items: flex-start;
+  pointer-events: auto;
+  max-height: calc(100vh - 180px);   /* leave room for topbar + playbar */
+}
+
+#sidebarPanel {
+  width: 56px;
+  max-height: calc(100vh - 180px);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  transition: width .22s cubic-bezier(.4, 0, .2, 1);
+}
+#sidebar:hover #sidebarPanel,
+#sidebar.open #sidebarPanel {
+  width: 290px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+#sidebarPanel::-webkit-scrollbar { width: 6px; }
+#sidebarPanel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Collapse-mode rules — strip every label, control, header, and the
+   chart/viz bodies, leaving a clean column of just the layer icons
+   and the interventions chip. */
+#sidebar.mini:not(:hover):not(.open) .sp-section-h,
+#sidebar.mini:not(:hover):not(.open) .layer-row .lbl,
+#sidebar.mini:not(:hover):not(.open) .layer-row .sw,
+#sidebar.mini:not(:hover):not(.open) .layer-row .cbadge,
+#sidebar.mini:not(:hover):not(.open) .sub-rows,
+#sidebar.mini:not(:hover):not(.open) #legendBody,
+#sidebar.mini:not(:hover):not(.open) .chart-legend,
+#sidebar.mini:not(:hover):not(.open) #chartCanvas,
+#sidebar.mini:not(:hover):not(.open) .iv-row,
+#sidebar.mini:not(:hover):not(.open) .ivCountBadge,
+#sidebar.mini:not(:hover):not(.open) #spatialPalette {
+  display: none !important;
+}
+/* Interventions collapses to one chip with a count badge — shown only
+   in mini mode. The chip turns accent the moment any intervention is on. */
+.iv-mini { display: none; }
+#sidebar.mini:not(:hover):not(.open) .iv-mini {
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+  width: 44px; height: 44px;
+  margin: 6px auto;
+  border-radius: 8px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+#sidebar.mini:not(:hover):not(.open) .iv-mini .ico .i {
+  width: 22px; height: 22px;
+}
+#sidebar.mini:not(:hover):not(.open) .iv-mini:hover { background: var(--surface-2); color: var(--text); }
+.iv-mini.on { color: var(--accent); }
+.iv-mini .iv-mini-count {
+  position: absolute; top: -4px; right: -4px;
+  min-width: 18px; height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-dim);
+  font: 700 9px var(--mono);
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--surface-1);
+}
+.iv-mini.on .iv-mini-count {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--surface-1);
+}
+/* Center + enlarge the row icons when collapsed. The mini state drops
+   labels & switches, so the icons get to be properly sized buttons. */
+#sidebar.mini:not(:hover):not(.open) .layer-row {
+  justify-content: center;
+  padding: 9px 0;
+}
+#sidebar.mini:not(:hover):not(.open) .sp-section {
+  padding: 4px 4px;
+  border-bottom: none;
+}
+#sidebar.mini:not(:hover):not(.open) .layer-row .ico {
+  width: 30px; height: 30px;
+}
+#sidebar.mini:not(:hover):not(.open) .layer-row .ico .i {
+  width: 22px; height: 22px;
+  stroke-width: 1.6;
+}
+/* In expanded mode, hide the mini-summary chip. */
+#sidebar:hover .iv-mini, #sidebar.open .iv-mini { display: none; }
+
+.sp-section {
+  padding: 10px 12px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.sp-section:last-child { border-bottom: none; }
+.sp-section-h {
+  display: flex; align-items: center; gap: 8px;
+  font: 600 10.5px 'Inter', sans-serif;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: 6px;
+}
+
+.ivCountBadge {
+  font: 700 10.5px var(--mono);
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-left: auto;
+}
+
+/* Layer rows (Map layers, includes Transport/POI handles) */
+.layer-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  transition: background .12s, color .12s;
+}
+.layer-row:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.layer-row .ico {
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-mute);
+  flex-shrink: 0;
+}
+.layer-row .lbl { flex: 1; }
+.layer-row .cbadge {
+  font: 500 10.5px var(--mono);
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 1px 7px;
+  border-radius: 999px;
+  margin-right: 4px;
+}
+.layer-row.on, .layer-row.active { color: var(--text); }
+.layer-row.on .ico, .layer-row.active .ico { color: var(--accent); }
+
+/* Sub-row (Transport sub-checkboxes) */
+.sub-rows {
+  margin: 4px 0 4px 30px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-soft);
+  display: none;
+}
+.layer-row.expanded + .sub-rows { display: block; }
+.sub-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 4px;
+  font-size: 12px; color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.sub-row:hover { background: var(--surface-2); color: var(--text); }
+.sub-row .hl-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block;
+}
+.sub-row input[type="checkbox"] {
+  appearance: none; width: 14px; height: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: 3px;
+  position: relative;
+  cursor: pointer;
+}
+.sub-row input[type="checkbox"]:checked {
+  background: var(--accent); border-color: var(--accent);
+}
+.sub-row input[type="checkbox"]:checked::after {
+  content: '✓'; position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 10px; font-weight: 700;
+}
+
+/* Switch (the rounded toggle on the right) */
+.sw {
+  width: 28px; height: 16px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  position: relative;
+  transition: background .15s;
+  flex-shrink: 0;
+}
+.sw::after {
+  content: ''; position: absolute;
+  top: 2px; left: 2px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--text-mute);
+  transition: left .15s, background .15s;
+}
+.layer-row.on .sw, .layer-row.active .sw {
+  background: var(--accent-soft);
+}
+.layer-row.on .sw::after, .layer-row.active .sw::after {
+  left: 14px;
+  background: var(--accent);
+}
+
+/* Intervention rows */
+.iv-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .12s;
+}
+.iv-row:hover { background: var(--surface-2); }
+.iv-row .ico {
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.iv-row .body { flex: 1; min-width: 0; }
+.iv-row .body .t { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.iv-row .body .s { font-size: 11px; color: var(--text-mute); }
+.iv-row.on, .iv-row.active { background: rgba(255,107,74,.05); }
+.iv-row.on .ico, .iv-row.active .ico { background: var(--accent-soft); color: var(--accent); }
+/* Slider mirrors the layer-row switch — orange filled when intervention
+   is active, grey when off. */
+.iv-row .sw { margin-left: auto; }
+.iv-row.on .sw, .iv-row.active .sw {
+  background: var(--accent-soft);
+}
+.iv-row.on .sw::after, .iv-row.active .sw::after {
+  left: 14px;
+  background: var(--accent);
+}
+
+/* ── Mini-rail (always visible) ─────────────────────────────────────────── */
+#miniRail {
+  display: flex;
+  flex-direction: column; gap: 4px;
+  padding: 8px 4px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  flex-shrink: 0;
+}
+.mr-btn {
+  position: relative;
+  width: 44px; height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  color: var(--text-dim);
+  transition: background .12s, color .12s;
+}
+.mr-btn:hover { background: var(--surface-2); color: var(--text); }
+.mr-btn.on, .mr-btn.active { background: var(--accent-soft); color: var(--accent); }
+.mr-btn .mr-ico { display: inline-flex; }
+.mr-btn .mr-lbl { display: none; }
+.mr-btn .mr-count {
+  position: absolute; top: 4px; right: 4px;
+  font: 600 9px var(--mono);
+  background: var(--accent);
+  color: #fff;
+  min-width: 14px; height: 14px;
+  border-radius: 999px;
+  padding: 0 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.mr-btn .mr-dot {
+  position: absolute; bottom: 6px; right: 6px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+.mr-btn .mr-tip {
+  position: absolute;
+  left: calc(100% + 8px); top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s;
+  z-index: 30;
+}
+.mr-btn:hover .mr-tip { opacity: 1; }
+.mr-sep {
+  height: 1px;
+  background: var(--border-soft);
+  margin: 4px 6px;
+}
+
+/* ==========================================================================
+   Bottom playbar
+   ========================================================================== */
+
+/* Two-row grid: row 1 holds R-eff · play · growth (all the same height
+   and width as the play pill); row 2 holds the timeline spanning all
+   three columns. */
+#playbar {
+  position: fixed;
+  bottom: 16px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto minmax(120px, 1fr);
+  grid-template-rows: auto auto;
+  gap: 6px;
+  pointer-events: auto;
+}
+#playbar > #reffPill   { grid-column: 1; grid-row: 1; align-self: stretch; }
+#playbar > .play-pill  { grid-column: 2; grid-row: 1; }
+#playbar > #growthPill { grid-column: 3; grid-row: 1; align-self: stretch; }
+#playbar > #timelinePanel { grid-column: 1 / -1; grid-row: 2; }
+.playbar-center { display: contents; }
+
+.reff-pill {
+  display: inline-flex; flex-direction: row;
+  align-items: center; justify-content: center; gap: 6px;
+  padding: 4px 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  text-align: left;
+  min-width: 0;
+}
+.reff-pill .gg { display: inline-flex; }
+.reff-pill .lbl {
+  font: 600 8.5px 'Inter', sans-serif;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  line-height: 1.1;
+}
+.reff-pill .val {
+  font: 700 11.5px var(--mono);
+  color: var(--text);
+  line-height: 1;
+}
+.reff-pill.danger .val  { color: var(--accent); }
+.reff-pill.warn .val    { color: var(--s-e); }
+.reff-pill.safe .val    { color: var(--s-s); }
+
+.time-pill {
+  width: 100%;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  box-shadow: var(--shadow);
+}
+.time-pill .top {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  position: relative;       /* anchor for the centred season pill */
+}
+.time-pill .day  { font: 600 13px var(--mono); color: var(--text); }
+/* Weekend tint on the Day N · Sat/Sun chip — subtle accent so the user
+   knows the social-mixing model just shifted. */
+.time-pill .day.is-weekend { color: var(--s-e); }
+.time-pill .clock { font: 500 12px var(--mono); color: var(--text-dim); }
+.time-pill .tag  {
+  margin-left: auto;        /* keeps the day-phase tag + todBar pushed to
+                               the right; the season pill is absolutely
+                               positioned so it doesn't fight for space. */
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; color: var(--text-mute);
+}
+/* Season pill — anchored to the absolute centre of the timeline header
+   (NOT the centre of remaining flex space) so it stays pinned even as
+   the day counter / clock / phase widths grow. translate(-50%) keeps the
+   pill centred on the midline regardless of its own width. */
+.time-pill .season-pill {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  white-space: nowrap;
+  pointer-events: auto;
+  transition: color 0.25s, border-color 0.25s, background 0.25s;
+}
+.time-pill .season-ico { font-size: 12px; line-height: 1; }
+.time-pill .season-lbl { font-weight: 600; letter-spacing: 0.02em; }
+/* Season-specific tints (cool blue → green → amber → orange) */
+.time-pill .season-pill[data-season="winter"] {
+  color: #93c5fd; border-color: rgba(147,197,253,0.30); background: rgba(30,58,95,0.45);
+}
+.time-pill .season-pill[data-season="spring"] {
+  color: #86efac; border-color: rgba(134,239,172,0.30); background: rgba(31,63,47,0.45);
+}
+.time-pill .season-pill[data-season="summer"] {
+  color: #fde68a; border-color: rgba(253,230,138,0.30); background: rgba(63,55,31,0.45);
+}
+.time-pill .season-pill[data-season="autumn"] {
+  color: #fdba74; border-color: rgba(253,186,116,0.30); background: rgba(63,42,31,0.45);
+}
+
+/* Climate pills — temperature + today's weather. The wrapper is absolutely
+   pinned to the centre of the bottom row so the pills stay put even as
+   the surrounding Day X / Run widths change. The .top container is already
+   position: relative (set up for the season pill anchor), so the same
+   coordinate system is reused here. */
+/* Bottom row uses a 3-column grid so the climate pills get a real centre
+   slot instead of competing for absolute-centre space with the buttons on
+   the right. Left and right columns size to their content; the centre
+   column claims any remaining space and centres its inline flex content. */
+.time-pill .time-pill-bottom {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+.time-pill .climate-center {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 0;
+  pointer-events: auto;
+}
+/* Hide the legacy spacer span — grid replaces what it used to do. */
+.time-pill .time-pill-bottom .spacer { display: none; }
+.time-pill .tl-right {
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+.time-pill .cs-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 1px 7px; border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+.time-pill .cs-ico { font-size: 12px; line-height: 1; }
+.time-pill .cs-val { font: 600 11px var(--mono); color: var(--text-dim); letter-spacing: 0.02em; }
+/* Temperature tints — cold blue, mild text, hot orange */
+.time-pill .cs-pill[data-temp="cold"] { color: #93c5fd; border-color: rgba(147,197,253,0.30); }
+.time-pill .cs-pill[data-temp="mild"] { color: var(--text-dim); }
+.time-pill .cs-pill[data-temp="warm"] { color: #fbbf24; border-color: rgba(251,191,36,0.30); }
+.time-pill .cs-pill[data-temp="hot"]  { color: #fb923c; border-color: rgba(251,146,60,0.30); }
+/* Weather tints */
+.time-pill .cs-pill[data-wx="snow"]   { color: #bae6fd; border-color: rgba(186,230,253,0.30); background: rgba(30,58,95,0.45); }
+.time-pill .cs-pill[data-wx="rain"]   { color: #93c5fd; border-color: rgba(147,197,253,0.30); background: rgba(30,46,77,0.45); }
+.time-pill .cs-pill[data-wx="cloudy"] { color: #cbd5e1; border-color: rgba(203,213,225,0.30); }
+.time-pill .cs-pill[data-wx="clear"]  { color: #fde68a; border-color: rgba(253,230,138,0.30); background: rgba(63,55,31,0.40); }
+.time-pill .tod {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px;
+  color: var(--text-mute);
+}
+.time-pill .todbar-wrap {
+  width: 60px; height: 4px;
+  background: var(--surface-3);
+  border-radius: 2px; overflow: hidden;
+}
+.time-pill #todBar {
+  height: 100%;
+  background: linear-gradient(to right, var(--s-e), var(--accent));
+  width: 0%;
+  transition: width .3s linear;
+}
+.time-pill .track {
+  position: relative;
+  height: 18px;
+  background: var(--surface-2);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.time-pill .track svg {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+/* Tiny lift above the track so the curve crests above the red bar but
+   still appears anchored to it — matches the reference screenshot. */
+.time-pill .track svg .curve-stroke {
+  fill: none;
+  stroke: rgba(255,107,74,.8);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.time-pill .track svg .curve-fill {
+  fill: rgba(255,107,74,.18);
+  stroke: none;
+}
+.time-pill .track .scrubber-input {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
+}
+.time-pill .track .fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: rgba(255,107,74,.18);
+  pointer-events: none;
+  z-index: 1;
+}
+.time-pill .track .knob {
+  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  width: 11px; height: 11px;
+  background: var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 6px rgba(255,107,74,.6);
+  pointer-events: none;
+  z-index: 1;
+}
+.time-pill .replay {
+  margin-left: 10px;
+  padding: 4px 10px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.time-pill .replay.active {
+  background: var(--accent-soft); color: var(--accent); border-color: var(--accent);
+}
+.time-pill .replay:hover:not(:disabled) { color: var(--text); }
+.time-pill .replay:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+  color: var(--text-mute);
+}
+
+/* ── Compare-two-days popover ──────────────────────────────────────────── */
+/* Day-A keeps the existing accent-orange; Day-B uses cyan so the two day
+   handles are immediately distinguishable. The popover floats above the
+   timeline panel — it's its own self-contained UI rather than crowding
+   the live scrubber. */
+:root {
+  --cmp-a: var(--accent);          /* orange-red, matches existing scrubber */
+  --cmp-b: #4dd0e1;                /* cyan */
+  --cmp-a-soft: rgba(255,107,74,.18);
+  --cmp-b-soft: rgba(77,208,225,.20);
+}
+
+.cmp-toggle.active {
+  background: rgba(77,208,225,.15);
+  color: var(--cmp-b);
+  border-color: rgba(77,208,225,.45);
+}
+
+/* Vertical divider drawn on top of the canvas in side-by-side mode. The
+   line itself is 2px wide; a slightly wider semi-transparent guide on
+   either side makes it readable against any basemap colour. Labels at
+   the top mark each half so the user knows which day coloured what. */
+#cmpDivider {
+  position: absolute;
+  top: 0; bottom: 0; left: 50%;
+  width: 2px;
+  margin-left: -1px;
+  background: linear-gradient(to bottom,
+    rgba(255,255,255,.85) 0%,
+    rgba(255,255,255,.55) 60%,
+    rgba(255,255,255,.85) 100%);
+  box-shadow: 0 0 14px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.45);
+  pointer-events: none;
+  z-index: 5;
+  display: none;
+}
+#cmpDivider.visible { display: block; }
+#cmpDivider .cmp-divider-label {
+  position: absolute;
+  top: 16px;
+  padding: 4px 12px;
+  font: 700 12px var(--mono);
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  background: rgba(0,0,0,.78);
+  backdrop-filter: blur(4px);
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+#cmpDivider .cmp-divider-label.left  { right: 14px; color: var(--cmp-a); border: 1px solid rgba(255,107,74,.6); box-shadow: 0 0 12px rgba(255,107,74,.35); }
+#cmpDivider .cmp-divider-label.right { left:  14px; color: var(--cmp-b); border: 1px solid rgba(77,208,225,.6); box-shadow: 0 0 12px rgba(77,208,225,.35); }
+
+/* The popover sits directly above the timeline panel and is centred
+   on its X-axis so it lines up with the day scrubber it controls.
+   .time-pill gets `position: relative` so the popover's absolute
+   coordinates resolve against it. */
+.time-pill { position: relative; }
+.compare-panel {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  width: 360px;
+  transform: translateX(-50%);
+  padding: 12px 14px 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.45), 0 0 0 1px rgba(77,208,225,.18);
+  z-index: 30;
+  animation: cmp-pop-in .18s ease-out;
+}
+@keyframes cmp-pop-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+.compare-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.compare-title {
+  font: 600 12px var(--mono);
+  letter-spacing: 0.04em;
+  color: var(--text);
+  text-transform: uppercase;
+}
+.compare-close {
+  width: 24px; height: 24px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 600 14px var(--mono);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.compare-close:hover { color: var(--text); background: var(--surface-2); }
+
+.compare-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.compare-mode-tab {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.compare-mode-tab:hover { color: var(--text); }
+.compare-mode-tab.active {
+  background: rgba(77,208,225,.12);
+  color: var(--cmp-b);
+  border-color: rgba(77,208,225,.45);
+}
+.compare-mode-tab .cmp-tab-ico { font-size: 14px; line-height: 1; }
+
+.compare-day-row {
+  display: grid;
+  grid-template-columns: 64px 1fr 56px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.compare-day-label {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: 600 11px var(--mono);
+  letter-spacing: 0.02em;
+}
+.compare-day-label .cmp-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.compare-day-label.cmp-a { color: var(--cmp-a); }
+.compare-day-label.cmp-a .cmp-dot {
+  background: var(--cmp-a);
+  box-shadow: 0 0 6px rgba(255,107,74,.6);
+}
+.compare-day-label.cmp-b { color: var(--cmp-b); }
+.compare-day-label.cmp-b .cmp-dot {
+  background: var(--cmp-b);
+  box-shadow: 0 0 6px rgba(77,208,225,.6);
+}
+.compare-day-num {
+  text-align: right;
+  font: 600 12px var(--mono);
+  color: var(--text);
+}
+.compare-day-num.cmp-a { color: var(--cmp-a); }
+.compare-day-num.cmp-b { color: var(--cmp-b); }
+
+/* Native range inputs styled to match the orange-vs-cyan accent. */
+.compare-day-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: var(--surface-2);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+.compare-day-slider.cmp-a { background: linear-gradient(to right, var(--cmp-a-soft), var(--surface-2)); }
+.compare-day-slider.cmp-b { background: linear-gradient(to right, var(--cmp-b-soft), var(--surface-2)); }
+.compare-day-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--cmp-a);
+  border: 2px solid var(--surface-1);
+  box-shadow: 0 0 6px rgba(0,0,0,.4);
+  cursor: grab;
+}
+.compare-day-slider.cmp-b::-webkit-slider-thumb { background: var(--cmp-b); }
+.compare-day-slider::-webkit-slider-thumb:active { cursor: grabbing; }
+.compare-day-slider::-moz-range-thumb {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--cmp-a);
+  border: 2px solid var(--surface-1);
+  box-shadow: 0 0 6px rgba(0,0,0,.4);
+  cursor: grab;
+}
+.compare-day-slider.cmp-b::-moz-range-thumb { background: var(--cmp-b); }
+
+.compare-legend {
+  display: none;
+  align-items: center; justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px 0;
+  font: 600 10px var(--mono);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.compare-legend.visible { display: flex; }
+.compare-legend .ramp {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(to right,
+    #4ea3ff 0%, #88b8ff 35%, rgba(180,180,180,.55) 50%, #ff9b6e 65%, #ff5236 100%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+}
+
+.play-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+}
+.play-pill .icon-btn {
+  width: 32px; height: 32px;
+  background: transparent; border: none;
+  color: var(--text-dim);
+}
+.play-pill .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.play-pill .go {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .15s, transform .1s;
+}
+.play-pill .go:hover { background: var(--accent-dim); }
+.play-pill .go:active { transform: scale(0.95); }
+.play-pill .speed {
+  display: inline-flex; gap: 2px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 3px;
+  margin-left: 4px;
+}
+.play-pill .speed button {
+  padding: 4px 10px;
+  font: 600 11px var(--mono);
+  color: var(--text-mute);
+  border-radius: 999px;
+  transition: background .12s, color .12s;
+}
+.play-pill .speed button:hover { color: var(--text-dim); }
+.play-pill .speed button.on, .play-pill .speed button.active {
+  background: var(--surface-3); color: var(--text);
+}
+
+/* ==========================================================================
+   Legend pill (bottom-right) — color gradient indicator
+   ========================================================================== */
+
+/* Infection-intensity legend — anchored bottom-right like a map legend.
+   Three lines: title, gradient bar, range labels. */
+#legendPill {
+  position: fixed;
+  left: 12px;                /* aligned with the vertical sidebar's left edge */
+  bottom: 28px;              /* aligned with the timeline row of the playbar */
+  z-index: 12;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  font-size: 10.5px;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  pointer-events: auto;
+  min-width: 130px;
+}
+#legendPill .grad {
+  width: 100%; height: 7px;
+  border-radius: 3px;
+  background: linear-gradient(to right, #fee5d9, #fcae91, #fb6a4a, #de2d26, #a50f15);
+}
+#legendPill .end {
+  font: 500 10px var(--mono);
+  color: var(--text-mute);
+  align-self: flex-end;
+  text-transform: none;
+}
+#legendPill.hidden { display: none; }
+
+/* ==========================================================================
+   Visualization sidebar section (color/height/scale + zone swatches)
+   ========================================================================== */
+
+#vizBody { padding: 4px; }
+.viz-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.viz-row-label {
+  flex: 0 0 70px;
+  font-size: 11.5px;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.viz-select {
+  flex: 1;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.viz-select:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+.viz-row input[type="checkbox"] {
+  appearance: none;
+  width: 14px; height: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: 3px; position: relative; cursor: pointer;
+}
+.viz-row input[type="checkbox"]:checked {
+  background: var(--accent); border-color: var(--accent);
+}
+.viz-row input[type="checkbox"]:checked::after {
+  content: '✓'; position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 10px; font-weight: 700;
+}
+.viz-row.viz-row-toggles { gap: 18px; padding-top: 4px; }
+.viz-row .viz-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--text-dim);
+  cursor: pointer;
+}
+
+.legend-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+  padding: 6px 4px;
+}
+.legend-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--text-dim);
+}
+.legend-dot {
+  width: 10px; height: 10px;
+  border-radius: 2px;
+}
+.legend-grad-bar {
+  margin-top: 8px; padding: 4px;
+}
+
+/* ==========================================================================
+   Epidemic curve chart
+   ========================================================================== */
+
+#chartPanel .sec-body { padding: 6px 8px 12px; }
+#chartCanvas {
+  width: 100%; height: 140px;
+  display: block;
+  border-radius: 6px;
+  background: var(--surface-0);
+}
+.chart-legend {
+  display: flex; flex-wrap: wrap; gap: 8px 12px;
+  padding: 6px 4px 0;
+  font-size: 11px; color: var(--text-dim);
+}
+.chart-legend .cl-item {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  transition: background .12s, opacity .12s;
+}
+.chart-legend .cl-item:hover { background: var(--surface-2); }
+.chart-legend .cl-item.off  { opacity: .35; }
+.chart-legend .cl-line {
+  width: 10px; height: 2px; display: inline-block;
+}
+.chart-legend .cl-item-all {
+  font-weight: 600; color: var(--text-dim);
+}
+.chart-legend .cl-item-all .cl-dot {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 2px;
+  background: linear-gradient(45deg, var(--s-s), var(--s-e), var(--s-i), var(--s-r), var(--s-d));
+}
+
+/* ==========================================================================
+   POI popover (state 03)
+   ========================================================================== */
+
+.poi-pop {
+  position: fixed;
+  left: 320px; top: 60px;
+  width: 380px;
+  max-height: calc(100vh - 200px);
+  z-index: 25;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* Transport popover lines up with the Transport row in the sidebar
+   (which sits below the first batch of layer toggles). */
+.poi-pop#transportPop { top: 230px; }
+/* Infection-flow popover sits next to the Flow row (4th layer toggle). */
+.poi-pop#flowPop { top: 150px; width: 320px; }
+.poi-pop.open { display: flex; }
+
+/* Flow popover body — five rows of compact label+control. Reuses the
+   .poi-pop chrome above; only the row layout is custom because the
+   controls are <select>s/toggles rather than the long scrollable POI
+   list. */
+.flow-pop-body {
+  padding: 6px 12px 10px;
+  display: flex;
+  flex-direction: column;
+}
+.flow-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.flow-row:last-child { border-bottom: none; }
+.flow-label {
+  font: 500 12.5px 'Inter', sans-serif;
+  color: var(--text);
+}
+.flow-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: 500 12px 'Inter', sans-serif;
+  padding: 5px 26px 5px 10px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%2399a' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  cursor: pointer;
+  outline: none;
+}
+.flow-select:hover { border-color: var(--accent); }
+.flow-select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+/* Tiny iOS-style toggle reused only by the Arrowhead row. */
+.flow-toggle { position: relative; display: inline-flex; cursor: pointer; }
+.flow-toggle input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+.flow-toggle-track {
+  width: 34px; height: 18px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  position: relative;
+  transition: background .15s, border-color .15s;
+}
+.flow-toggle-thumb {
+  position: absolute;
+  top: 1px; left: 1px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--text-mute);
+  transition: transform .15s, background .15s;
+}
+.flow-toggle input:checked + .flow-toggle-track {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.flow-toggle input:checked + .flow-toggle-track .flow-toggle-thumb {
+  transform: translateX(16px);
+  background: var(--accent);
+}
+.poi-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.poi-head h3 {
+  font-size: 14px; font-weight: 600;
+  flex: 1;
+}
+.poi-head .count-pill {
+  font: 500 11px var(--mono);
+  color: var(--accent);
+  padding: 2px 8px;
+  background: var(--accent-soft);
+  border-radius: 999px;
+}
+.poi-head .close {
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-mute);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.poi-head .close:hover { background: var(--surface-2); color: var(--text); }
+.poi-search {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.poi-search .wrap {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+.poi-search input {
+  flex: 1;
+  background: none; border: none; outline: none;
+  font: 400 12.5px 'Inter', sans-serif;
+  color: var(--text);
+}
+.poi-search input::placeholder { color: var(--text-mute); }
+
+.poi-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.poi-list::-webkit-scrollbar { width: 6px; }
+.poi-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.poi-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .12s;
+  /* Click-spam-toggling no longer paints a text selection across the
+     row label / count / search-bar placeholder. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.poi-pop, .poi-pop * { user-select: none; -webkit-user-select: none; }
+.poi-pop input { user-select: text; -webkit-user-select: text; }
+.poi-row:hover { background: var(--surface-2); }
+/* Info-only rows (e.g. airplanes) — no click, no hover bg, and the
+   checkbox slot is invisible so the row reads as a stat card. */
+.poi-row.no-toggle { cursor: default; }
+.poi-row.no-toggle:hover { background: transparent; }
+.poi-row.no-toggle .cb { visibility: hidden; }
+.poi-row .chev {
+  width: 16px; height: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-mute);
+  transition: transform .15s;
+}
+.poi-row.leaf .chev { visibility: hidden; }
+.poi-row.open > .chev { transform: rotate(90deg); }
+.poi-row .cb {
+  width: 16px; height: 16px;
+  border: 1.5px solid var(--border);
+  background: var(--surface-2);
+  border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.poi-row.checked .cb {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.poi-row.partial .cb {
+  background: var(--accent);
+  border-color: var(--accent);
+  position: relative;
+}
+.poi-row.partial .cb::after {
+  content: ''; width: 8px; height: 2px;
+  background: #fff;
+  border-radius: 1px;
+}
+.poi-row .bubble {
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+}
+.poi-row .lbl {
+  flex: 1; font-size: 12.5px;
+  color: var(--text);
+}
+.poi-row .nav {
+  display: inline-flex; align-items: center; gap: 4px;
+  flex-shrink: 0;
+}
+.poi-row .nav button {
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-mute);
+  border-radius: 3px;
+}
+.poi-row .nav button:hover { background: var(--surface-3); color: var(--text); }
+.poi-row .nav .count {
+  font: 500 10.5px var(--mono);
+  color: var(--text-mute);
+  min-width: 36px;
+  text-align: center;
+}
+
+.poi-children {
+  margin-left: 24px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-soft);
+}
+
+.poi-footer {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-soft);
+}
+.poi-footer .foot-left {
+  flex: 1;
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11.5px; color: var(--text-dim);
+  cursor: pointer;
+}
+.poi-footer .mini-toggle {
+  width: 14px; height: 14px;
+  background: var(--accent);
+  border-radius: 3px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+/* Tri-state Show-all toggle: empty (none on), dash (some on), check (all on). */
+.poi-footer .tri-toggle {
+  position: relative;
+  width: 14px; height: 14px;
+  border-radius: 3px;
+  border: 1.5px solid var(--border);
+  background: var(--surface-2);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .12s, border-color .12s;
+}
+.poi-footer .tri-toggle.partial,
+.poi-footer .tri-toggle.full {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.poi-footer .tri-toggle.partial::before {
+  content: '';
+  width: 8px; height: 2px;
+  background: #fff;
+  border-radius: 1px;
+}
+.poi-footer .tri-toggle.full::before {
+  content: '✓';
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+.poi-footer .ghost {
+  padding: 6px 12px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.poi-footer .ghost:hover { background: var(--surface-3); color: var(--text); }
+.poi-footer .apply {
+  padding: 6px 14px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.poi-footer .apply:hover { background: var(--accent-dim); }
+
+/* ==========================================================================
+   Settings popover (gear icon)
+   ========================================================================== */
+
+#settingsPop, #aboutInline, #infoTipPop {
+  position: fixed;
+  top: 60px;
+  z-index: 26;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: none;
+  pointer-events: auto;
+}
+#settingsPop.open, #infoTipPop.open { display: block; }
+
+#settingsPop {
+  right: 12px;
+  width: 320px;
+  padding: 12px 14px 14px;
+}
+#settingsPop .sp-title {
+  font: 600 10.5px 'Inter', sans-serif;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: 10px;
+}
+
+/* Sliders: label · slider · value, all on one row, value clamped so it
+   never overflows the popover. */
+.sp-row {
+  display: grid;
+  grid-template-columns: 88px 1fr 56px;
+  align-items: center;
+  column-gap: 10px;
+  padding: 5px 0;
+}
+.sp-label {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sp-slider {
+  appearance: none;
+  height: 4px;
+  background: var(--surface-3);
+  border-radius: 2px;
+  outline: none;
+  width: 100%;
+  min-width: 0;
+}
+.sp-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px; height: 14px;
+  background: var(--accent);
+  border-radius: 50%; cursor: pointer;
+  border: 2px solid var(--surface-1);
+}
+.sp-slider::-moz-range-thumb {
+  width: 14px; height: 14px;
+  background: var(--accent);
+  border-radius: 50%; cursor: pointer;
+  border: 2px solid var(--surface-1);
+}
+.sp-val {
+  text-align: right;
+  font: 600 11.5px var(--mono);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Simulation-mode block — tight vertical rhythm, no inline-style gaps. */
+.sp-mode {
+  padding-bottom: 10px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.sp-mode .sp-section-h {
+  font: 600 10.5px 'Inter', sans-serif;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin: 2px 0 8px;
+}
+.sp-mode-row {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  flex-wrap: wrap;
+}
+.sp-mode-row label {
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer;
+}
+.sp-mode-row input[type="checkbox"],
+.sp-mode-row input[type="radio"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.sp-mode-row .sp-mode-lbl {
+  color: var(--text-mute);
+  margin-left: auto;
+}
+.sp-mode-row #sp-seed {
+  width: 80px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font: 500 11px var(--mono);
+  min-width: 0;
+}
+.sp-mode-row #sp-rand-seed {
+  padding: 3px 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.sp-mode-row #sp-rand-seed:hover {
+  background: var(--surface-3); color: var(--text);
+}
+.sp-mode-hint {
+  font-size: 10.5px;
+  color: var(--text-mute);
+  line-height: 1.45;
+  margin-top: 4px;
+}
+.sp-pick-hint {
+  color: var(--accent);
+  margin-top: 6px;
+}
+
+/* ==========================================================================
+   About modal (kept similar shape, retokenized)
+   ========================================================================== */
+
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.7);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: none;
+  align-items: center; justify-content: center;
+  pointer-events: auto;
+}
+.modal-backdrop.open { display: flex; }
+.modal-card {
+  width: min(720px, 92vw);
+  max-height: 85vh;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,.6);
+  overflow: hidden;
+  position: relative;
+}
+.modal-close {
+  position: absolute; top: 10px; right: 14px;
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 22px; color: var(--text-mute);
+  border-radius: 6px;
+}
+.modal-close:hover { background: var(--surface-2); color: var(--text); }
+.modal-tabs {
+  display: flex; gap: 0;
+  padding: 14px 18px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.tab-btn {
+  padding: 10px 16px;
+  font-size: 13px; font-weight: 600;
+  color: var(--text-mute);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color .15s, border-color .15s;
+}
+.tab-btn:hover { color: var(--text-dim); }
+.tab-btn.active { color: var(--accent); border-color: var(--accent); }
+.modal-body {
+  padding: 18px 22px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.modal-body::-webkit-scrollbar { width: 8px; }
+.modal-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.tab-pane { display: none; line-height: 1.55; }
+.tab-pane.active { display: block; }
+.tab-pane h3 {
+  font-size: 15px; font-weight: 700;
+  color: var(--text); margin: 16px 0 6px;
+}
+.tab-pane h3:first-child { margin-top: 0; }
+.tab-pane p, .tab-pane li { color: var(--text-dim); font-size: 13px; }
+.tab-pane ul { padding-left: 18px; margin: 6px 0; }
+.tab-pane code {
+  font: 500 12px var(--mono);
+  background: var(--surface-2);
+  padding: 1px 5px; border-radius: 3px; color: var(--accent);
+}
+.modal-footer {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 11.5px; color: var(--text-mute);
+  font-style: italic;
+}
+
+/* ==========================================================================
+   Tooltips (building / transport / SEIR-info)
+   ========================================================================== */
+
+#tooltip, #transportTip {
+  position: fixed;
+  z-index: 50;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  display: none;
+  max-width: 280px;
+}
+#tooltip.on, #transportTip.on { display: block; }
+#tooltip b, #transportTip b { color: var(--text); }
+
+#popInfoTip, .pop-info-tooltip {
+  position: fixed;
+  z-index: 50;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+  box-shadow: var(--shadow);
+  display: none;
+  max-width: 320px;
+  line-height: 1.55;
+  /* Tooltip is purely informative — never let it eat pointer events
+     (otherwise it captures the cursor and mouseleave fires on the
+     trigger, causing a hide/show flicker loop). */
+  pointer-events: none;
+}
+#popInfoTip.on, .pop-info-tooltip.on { display: block; }
+#popInfoTip b { color: var(--text); }
+
+/* ==========================================================================
+   Loading overlay
+   ========================================================================== */
+
+#loadingOverlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(11,15,20,.96);
+  display: none;
+  flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px;
+  pointer-events: auto;
+}
+#loadingOverlay.on,
+#loadingOverlay.show,
+#loadingOverlay.show-flying { display: flex; }
+#loadingOverlay.show-flying { background: rgba(11,15,20,.55); }
+#cityNameBadge.visible { display: inline-flex; }
+.loading-spinner {
+  width: 48px; height: 48px;
+  border: 3px solid var(--surface-3);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: loading-spin 1s linear infinite;
+}
+@keyframes loading-spin { to { transform: rotate(360deg); } }
+.loading-title {
+  font-size: 16px; font-weight: 600;
+  color: var(--text);
+}
+.loading-sub {
+  font-size: 12.5px; color: var(--text-mute);
+}
+
+/* ==========================================================================
+   Macro markers (SVG donuts on Sweden map) — restyled to new tokens
+   ========================================================================== */
+
+.macro-marker, .macro-city-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: filter .15s, transform .15s;
+}
+.macro-marker:hover, .macro-city-marker.clickable:hover { filter: brightness(1.2); transform: translate(-50%, -50%) scale(1.08); }
+.macro-marker.locked, .macro-city-marker.locked { filter: grayscale(.6) opacity(.5); cursor: not-allowed; }
+.macro-city-label {
+  position: absolute;
+  left: 50%; top: 100%;
+  transform: translateX(-50%);
+  font: 600 11px 'Inter', sans-serif;
+  color: var(--text);
+  white-space: nowrap;
+  text-shadow: 0 1px 4px rgba(0,0,0,.8);
+  pointer-events: none;
+  margin-top: 4px;
+}
+
+.macro-hover-card {
+  position: absolute;
+  z-index: 25;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  width: 230px;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(12px, -50%) scale(0.96);
+  transform-origin: top left;
+  transition: opacity .12s ease, transform .12s ease;
+}
+.macro-hover-card.show, .macro-hover-card.on {
+  opacity: 1;
+  transform: translate(12px, -50%) scale(1);
+}
+.macro-hover-card .hc-title {
+  font-size: 15px; font-weight: 700; color: var(--accent);
+  margin-bottom: 8px;
+}
+.macro-hover-card .hc-row {
+  display: flex; justify-content: space-between;
+  font-size: 11.5px; color: var(--text-dim);
+  padding: 2px 0;
+}
+.macro-hover-card .hc-label { color: var(--text-mute); }
+.macro-hover-card .hc-value { color: var(--text); font-family: var(--mono); font-weight: 600; }
+.macro-hover-card .hc-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+.macro-hover-card .hc-section-title {
+  display: flex; align-items: center; gap: 6px;
+  font: 600 10.5px 'Inter', sans-serif;
+  color: var(--text-mute);
+  text-transform: uppercase; letter-spacing: .08em;
+  margin-bottom: 4px;
+}
+.macro-hover-card .hc-section-title svg { width: 14px; height: 14px; }
+.macro-hover-card .hc-S { color: var(--s-s); }
+.macro-hover-card .hc-E { color: var(--s-e); }
+.macro-hover-card .hc-I { color: var(--s-i); }
+.macro-hover-card .hc-R { color: var(--s-r); }
+.macro-hover-card .hc-D { color: var(--s-d); }
+.macro-hover-card .hc-cta {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 6px;
+  font-size: 11.5px; font-weight: 600;
+  text-align: center;
+}
+
+/* ── Building search popover (city view) ─────────────────────────────────── */
+.search-pop {
+  position: fixed;
+  top: 70px; right: 16px;
+  width: 360px;
+  z-index: 26;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  pointer-events: auto;
+}
+.search-pop.hidden { display: none; }
+.search-pop-input {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.search-pop-input input {
+  flex: 1;
+  background: none; border: none; outline: none;
+  font: 400 13px 'Inter', sans-serif;
+  color: var(--text);
+}
+.search-pop-input input::placeholder { color: var(--text-mute); }
+.search-pop-list {
+  max-height: 280px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.search-pop-list::-webkit-scrollbar { width: 6px; }
+.search-pop-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.search-pop-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-soft);
+  transition: background .12s;
+}
+.search-pop-row:last-child { border-bottom: none; }
+.search-pop-row:hover { background: var(--surface-2); }
+.search-pop-row .bubble {
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.search-pop-row .meta { flex: 1; min-width: 0; }
+.search-pop-row .name {
+  font-size: 12.5px; color: var(--text); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.search-pop-row .sub {
+  font-size: 11px; color: var(--text-mute);
+}
+.search-pop-empty {
+  padding: 14px;
+  font-size: 12px; color: var(--text-mute);
+  text-align: center;
+}
+
+/* ── Growth pill: vertical stack with R-eff in the playbar ───────────────── */
+.metrics-stack {
+  display: flex; flex-direction: column; gap: 4px;
+}
+#growthPill .val.up   { color: var(--accent); }
+#growthPill .val.down { color: var(--s-s); }
+#growthPill .val.flat { color: var(--text-mute); }
+
+/* ==========================================================================
+   Global helper utilities
+   ========================================================================== */
+
+.hidden { display: none !important; }
+.flag-en, .flag-sv { display: none; }
+[data-lang="en"] { display: var(--lang-en, block); }
+[data-lang="sv"] { display: var(--lang-sv, none); }
+html[lang="sv"] { --lang-en: none; --lang-sv: block; }
+html[lang="en"] { --lang-en: block; --lang-sv: none; }
+
+/* ==========================================================================
+   Game mode — picker (macro view) + HUD (city view) + gating
+   ========================================================================== */
+
+/* ── Macro mode picker ─────────────────────────────────────────────────── */
+.gm-block {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.gm-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-mute, #94a3b8);
+  margin-bottom: 8px;
+}
+.gm-mode-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.gm-mode-card {
+  text-align: left;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: inherit;
+  cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+.gm-mode-card:hover { background: rgba(255,255,255,0.06); }
+.gm-mode-card.on {
+  border-color: var(--accent, #f87171);
+  background: rgba(248,113,113,0.08);
+}
+.gm-mode-ico  { font-size: 1.4rem; line-height: 1; }
+.gm-mode-name { font-size: 0.95rem; font-weight: 700; }
+.gm-mode-sub  { font-size: 0.72rem; color: var(--text-mute, #94a3b8); line-height: 1.35; }
+
+.gm-diff-row {
+  margin-top: 10px;
+  padding: 10px;
+  background: rgba(248,113,113,0.05);
+  border: 1px solid rgba(248,113,113,0.18);
+  border-radius: 10px;
+}
+.gm-diff-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-mute, #94a3b8);
+  margin-bottom: 6px;
+}
+.gm-diff-pips {
+  display: flex; gap: 6px;
+}
+.gm-diff-pip {
+  flex: 1;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: inherit;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.gm-diff-pip.on {
+  background: var(--accent, #f87171);
+  border-color: var(--accent, #f87171);
+  color: #0b0f1a;
+}
+.gm-diff-desc {
+  margin-top: 8px;
+  font-size: 0.72rem;
+  color: var(--text-mute, #94a3b8);
+  line-height: 1.4;
+}
+
+/* ── City-view HUD ──────────────────────────────────────────────────────── */
+#gameHud {
+  position: fixed;
+  /* Bottom-right, vertically aligned with the playbar/timeline. Compact
+     2x2 bars + chips so it fits next to the centered playbar. The
+     z-index sits below the stats panel (50) so opening Live Statistics
+     overlays the stability bar cleanly when both are visible.
+     Background/border/radius/shadow match the timeline (.time-pill) and
+     Live Statistics card (.modal-card) so the HUDs read as one family. */
+  bottom: 28px;
+  right: 16px;
+  z-index: 25;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+  pointer-events: auto;
+  font-family: inherit;
+  width: 320px;
+  max-width: calc(100vw - 110px);
+  box-shadow: var(--shadow);
+}
+/* Compact 2-column layout when the HUD is in the playbar corner */
+#gameHud .ghud-bars { grid-template-columns: 1fr 1fr; }
+body:not(.game-mode) #gameHud { display: none !important; }
+
+.ghud-row { display: flex; gap: 10px; align-items: center; }
+.ghud-bars {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.ghud-bar { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ghud-bar-h {
+  display: flex; gap: 6px; align-items: center;
+  font-size: 0.72rem;
+  color: var(--text-mute, #94a3b8);
+}
+.ghud-bar-ico { font-size: 0.95rem; }
+.ghud-bar-lbl { flex: 1; }
+.ghud-bar-val { font-weight: 700; color: var(--text-dim, #cbd5e1); }
+.ghud-bar-track {
+  height: 6px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.ghud-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: #22c55e;
+  transition: width 0.4s cubic-bezier(.2,.7,.3,1), background 0.3s;
+  border-radius: 3px;
+}
+.ghud-bar[data-level="warn"] .ghud-bar-fill { background: #f59e0b; }
+.ghud-bar[data-level="bad"]  .ghud-bar-fill { background: #ef4444; }
+/* Healthcare load: high is bad, so the colour ramp is inverted by the JS */
+
+.ghud-stats {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  padding-top: 8px;
+}
+.ghud-chip {
+  display: inline-flex; gap: 5px; align-items: center;
+  font-size: 0.78rem;
+  color: var(--text-dim, #cbd5e1);
+  background: rgba(255,255,255,0.04);
+  border-radius: 8px;
+  padding: 4px 10px;
+}
+.ghud-chip-lbl { color: var(--text-mute, #94a3b8); font-size: 0.7rem; }
+.ghud-chip-val { font-weight: 700; }
+.ghud-chip-score .ghud-chip-val { color: var(--accent, #f87171); }
+
+/* ── End-of-scenario modal ──────────────────────────────────────────────── */
+.gend-card {
+  max-width: 460px;
+  text-align: center;
+  padding: 28px 32px 24px !important;
+}
+.gend-rating {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 96px; height: 96px;
+  border-radius: 50%;
+  font-size: 3rem; font-weight: 800;
+  margin: 0 auto 16px;
+  background: rgba(255,255,255,0.05);
+  border: 3px solid currentColor;
+}
+.gend-rating-s { color: #22d3ee; }
+.gend-rating-a { color: #22c55e; }
+.gend-rating-b { color: #84cc16; }
+.gend-rating-c { color: #f59e0b; }
+.gend-rating-d { color: #f97316; }
+.gend-rating-f { color: #ef4444; }
+.gend-headline {
+  font-size: 0.85rem;
+  color: var(--text-mute, #94a3b8);
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+.gend-score-big {
+  font-size: 2.4rem;
+  font-weight: 700;
+  color: var(--accent, #f87171);
+  margin-bottom: 18px;
+}
+.gend-score-unit {
+  font-size: 0.85rem;
+  color: var(--text-mute, #94a3b8);
+  font-weight: 400;
+  margin-left: 6px;
+}
+.gend-tbl {
+  width: 100%;
+  font-size: 0.85rem;
+  margin-bottom: 20px;
+}
+.gend-tbl td {
+  padding: 4px 0;
+  text-align: left;
+}
+.gend-tbl td:first-child {
+  color: var(--text-mute, #94a3b8);
+}
+.gend-tbl td:last-child {
+  text-align: right;
+  font-weight: 600;
+}
+.gend-sub { color: var(--text-mute, #94a3b8); font-weight: 400; font-size: 0.78rem; }
+.gend-actions { display: flex; gap: 10px; justify-content: center; }
+.gend-btn {
+  padding: 8px 18px; border-radius: 8px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: inherit;
+  font-weight: 600; cursor: pointer;
+}
+.gend-btn-primary {
+  background: var(--accent, #f87171);
+  border-color: var(--accent, #f87171);
+  color: #0b0f1a;
+}
+
+/* ── UI gating in game mode ─────────────────────────────────────────────── */
+/* Hide the patient-zero picker pill — auto-seeded in game mode. */
+body.game-mode #btnPickZero { display: none !important; }
+
+/* Lock everything inside the settings popover — sliders, presets,
+   simulation-mode radios, seed input, scenario buttons, the lot.
+   The popover still opens so the user can read what's running, but
+   nothing inside accepts input. NOTE: the popover keeps its
+   default `position: fixed; top: 60px; right: 12px;` so it docks
+   to the right edge in BOTH sandbox and game mode — that's where
+   the user expects it (alongside the stats panel). The earlier
+   `position: relative` override here was breaking that anchor. */
+body.game-mode #settingsPop input,
+body.game-mode #settingsPop select,
+body.game-mode #settingsPop textarea,
+body.game-mode #settingsPop button,
+body.game-mode #settingsPop label {
+  pointer-events: none !important;
+}
+body.game-mode #settingsPop input,
+body.game-mode #settingsPop select,
+body.game-mode #settingsPop textarea {
+  opacity: 0.55;
+  filter: grayscale(0.4);
+}
+body.game-mode #settingsPop button {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
+body.game-mode #settingsPop::before {
+  content: "🔒 Read-only — game mode";
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #fda4af;
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  background: rgba(248,113,113,0.10);
+  border: 1px dashed rgba(248,113,113,0.35);
+  border-radius: 6px;
+  text-align: center;
+  pointer-events: auto;
+}
+/* Swedish copy of the banner — `body.lang-sv` is toggled by i18n.js on
+   language switch (see ui.js onLangChange handler). */
+body.game-mode.lang-sv #settingsPop::before {
+  content: "🔒 Skrivskyddad — spelläge";
+}
+
+/* ==========================================================================
+   Time-locked intervention rows (e.g. vaccination rollout countdown)
+   ========================================================================== */
+
+.iv-row.iv-locked {
+  position: relative;
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.iv-row.iv-locked .ico,
+.iv-row.iv-locked .body { filter: grayscale(0.5); }
+.iv-row.iv-locked .sw { display: none; }
+
+.iv-lock-pill {
+  position: absolute;
+  top: 6px; right: 8px;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  background: rgba(248,113,113,0.14);
+  border: 1px solid rgba(248,113,113,0.40);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fda4af;
+  pointer-events: auto;
+  white-space: nowrap;
+}
+.iv-lock-ico { font-size: 0.78rem; line-height: 1; }
+
+/* ── Game HUD — headline Stability bar (sits above the four sub-bars) ──── */
+.ghud-headline {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.ghud-headline-h {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.78rem;
+}
+.ghud-headline-ico { font-size: 1.05rem; line-height: 1; }
+.ghud-headline-lbl {
+  flex: 1;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim, #cbd5e1);
+}
+.ghud-headline-val {
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: var(--text, #f1f5f9);
+  font-variant-numeric: tabular-nums;
+}
+.ghud-headline-track {
+  height: 10px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.ghud-headline-fill {
+  height: 100%;
+  width: 0%;
+  background: #22c55e;
+  transition: width 0.45s cubic-bezier(.2,.7,.3,1), background 0.3s;
+  border-radius: 5px;
+  box-shadow: 0 0 8px currentColor;
+}
+.ghud-headline[data-level="warn"] .ghud-headline-fill { background: #f59e0b; }
+.ghud-headline[data-level="bad"]  .ghud-headline-fill { background: #ef4444; }
+.ghud-headline[data-level="good"] .ghud-headline-val  { color: #34d399; }
+.ghud-headline[data-level="warn"] .ghud-headline-val  { color: #fbbf24; }
+.ghud-headline[data-level="bad"]  .ghud-headline-val  { color: #fda4af; }
+
+/* ==========================================================================
+   Spatial-intervention palette (Map Tools) inside the iv sidebar section
+   ========================================================================== */
+
+#spatialPalette {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 4px 10px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.sp-pal-h, .sp-pal-active-h {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text-mute, #94a3b8);
+  padding: 0 4px;
+}
+.sp-pal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.sp-tool {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s;
+}
+.sp-tool:hover { background: rgba(255,255,255,0.08); }
+.sp-tool.on {
+  background: rgba(248,113,113,0.10);
+  border-color: rgba(248,113,113,0.45);
+}
+.sp-tool-ico { font-size: 1.05rem; line-height: 1; }
+.sp-tool-lbl { font-size: 0.74rem; font-weight: 600; line-height: 1.2; }
+
+.sp-pal-active { display: flex; flex-direction: column; gap: 4px; }
+.sp-pal-row {
+  display: flex; gap: 8px; align-items: center;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 7px;
+  padding: 5px 8px;
+  font-size: 0.72rem;
+}
+.sp-pal-row-ico { font-size: 0.95rem; }
+.sp-pal-row-body { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.sp-pal-row-lbl  { font-weight: 600; color: var(--text-dim, #cbd5e1);
+                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-pal-row-meta { font-size: 0.66rem; color: var(--text-mute, #94a3b8); }
+.sp-pal-row-x {
+  background: transparent; color: var(--text-mute, #94a3b8);
+  border: none; cursor: pointer; font-size: 1rem; line-height: 1;
+  padding: 2px 6px; border-radius: 4px;
+}
+.sp-pal-row-x:hover { background: rgba(255,255,255,0.08); color: #fda4af; }
+
+/* Selection-mode cursor + map dim */
+body.spatial-selecting #map-container,
+body.spatial-selecting #map-container * { cursor: crosshair !important; }
+body.spatial-selecting #map-container { box-shadow: inset 0 0 0 2px rgba(248,113,113,0.45); }
+
+#spatialBanner {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 70;
+  background: rgba(15,23,42,0.95);
+  border: 1px solid rgba(248,113,113,0.40);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Lasso vertex dots */
+.sp-lasso-dot {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  background: #f87171;
+  border: 2px solid #fff;
+  box-shadow: 0 0 8px rgba(248,113,113,0.7);
+}
+
+/* ── Macro-view season picker ──────────────────────────────────────────── */
+.sp-block {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.sp-block-h {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-mute, #94a3b8);
+  margin-bottom: 8px;
+}
+.sp-block-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+}
+.sp-season {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.sp-season:hover { background: rgba(255,255,255,0.07); }
+.sp-season.on {
+  background: rgba(248,113,113,0.10);
+  border-color: rgba(248,113,113,0.45);
+  transform: translateY(-1px);
+}
+.sp-season-ico { font-size: 1rem; line-height: 1; }
+.sp-season-lbl { font-size: 0.66rem; font-weight: 600; }
+.sp-block-foot {
+  margin-top: 8px;
+  font-size: 0.7rem;
+  color: var(--text-mute, #94a3b8);
+  line-height: 1.4;
+}
+
+/* ── Mobile-clinic ambulance marker (maplibre overlay) ────────────────── */
+.sp-ambulance {
+  position: relative;
+  width: 30px; height: 30px;
+  pointer-events: auto;
+}
+.sp-ambulance-body {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 22px;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
+  animation: sp-ambulance-bob 1.2s ease-in-out infinite alternate;
+}
+@keyframes sp-ambulance-bob {
+  from { transform: translateY(-1px); }
+  to   { transform: translateY(1px);  }
+}
+.sp-ambulance-pulse {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.45);
+  transform: translate(-50%, -50%);
+  animation: sp-ambulance-pulse 1.6s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes sp-ambulance-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(239,68,68,0.55); opacity: 0.85; }
+  80%  { box-shadow: 0 0 0 22px rgba(239,68,68,0);  opacity: 0.0; }
+  100% { box-shadow: 0 0 0 22px rgba(239,68,68,0);  opacity: 0.0; }
+}
+
+/* ── Spatial map markers for vaccine drive + surge testing ──────────── */
+.sp-marker {
+  position: relative;
+  width: 30px; height: 30px;
+  pointer-events: auto;
+}
+.sp-marker-body {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 22px;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
+  animation: sp-marker-bob 1.4s ease-in-out infinite alternate;
+}
+@keyframes sp-marker-bob {
+  from { transform: translateY(-1px); }
+  to   { transform: translateY(1px);  }
+}
+.sp-marker-pulse {
+  position: absolute; left: 50%; top: 50%;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+/* Vaccine drive — green pulse */
+.sp-marker-vaccine .sp-marker-pulse {
+  background: rgba(34,197,94,0.45);
+  animation: sp-marker-pulse-green 1.6s ease-out infinite;
+}
+@keyframes sp-marker-pulse-green {
+  0%   { box-shadow: 0 0 0 0 rgba(34,197,94,0.55); opacity: 0.85; }
+  80%  { box-shadow: 0 0 0 22px rgba(34,197,94,0);  opacity: 0.0; }
+  100% { box-shadow: 0 0 0 22px rgba(34,197,94,0);  opacity: 0.0; }
+}
+/* Surge testing — cyan pulse */
+.sp-marker-surge .sp-marker-pulse {
+  background: rgba(34,211,238,0.45);
+  animation: sp-marker-pulse-cyan 1.6s ease-out infinite;
+}
+@keyframes sp-marker-pulse-cyan {
+  0%   { box-shadow: 0 0 0 0 rgba(34,211,238,0.55); opacity: 0.85; }
+  80%  { box-shadow: 0 0 0 22px rgba(34,211,238,0);  opacity: 0.0; }
+  100% { box-shadow: 0 0 0 22px rgba(34,211,238,0);  opacity: 0.0; }
+}
+
+/* ── Disabled spatial tool button (e.g. vaccine drive before rollout) ── */
+.sp-tool.sp-tool-disabled {
+  opacity: 0.40;
+  filter: grayscale(0.6);
+  cursor: not-allowed;
+}
+.sp-tool.sp-tool-disabled:hover { background: rgba(255,255,255,0.04); }
+
+/* ── Trend arrows on Stability + each resource bar ────────────────────── */
+/* Render an arrow as a ::after on the value chip; coloured + animated
+   for direction. "flat" shows a faint dash. */
+.ghud-bar-val::after,
+.ghud-headline-val::after {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 0.85em;
+  width: 0.9em;
+  text-align: center;
+  vertical-align: baseline;
+  color: var(--text-mute, #94a3b8);
+  transition: transform 0.25s, color 0.25s;
+  content: '·';
+}
+.ghud-bar[data-trend="up"]   .ghud-bar-val::after,
+.ghud-headline[data-trend="up"]   .ghud-headline-val::after {
+  content: '▲';
+  color: #34d399;
+  animation: ghud-trend-up 0.65s ease-in-out infinite alternate;
+}
+.ghud-bar[data-trend="down"] .ghud-bar-val::after,
+.ghud-headline[data-trend="down"] .ghud-headline-val::after {
+  content: '▼';
+  color: #fb7185;
+  animation: ghud-trend-down 0.65s ease-in-out infinite alternate;
+}
+.ghud-bar[data-trend="flat"] .ghud-bar-val::after,
+.ghud-headline[data-trend="flat"] .ghud-headline-val::after {
+  content: '–';
+  color: var(--text-mute, #94a3b8);
+}
+@keyframes ghud-trend-up {
+  from { transform: translateY(0px); }
+  to   { transform: translateY(-2px); }
+}
+@keyframes ghud-trend-down {
+  from { transform: translateY(0px); }
+  to   { transform: translateY(2px);  }
+}
+
+/* Active-zones rows — clickable, fly camera on click */
+.sp-pal-row { cursor: pointer; transition: background 0.15s; }
+.sp-pal-row:hover { background: rgba(255,255,255,0.07); }

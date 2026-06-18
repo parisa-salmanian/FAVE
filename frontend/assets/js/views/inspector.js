@@ -52,6 +52,28 @@
   // Currently inspected object: { kind: 'mezo' | 'district' | null, ... }
   let selected = null;
 
+  // ---- 2SFCA companion metric (network-accurate supply-to-demand provision) ----
+  // Loaded lazily per building click; guarded by a token so a stale async load
+  // (user clicked another building meanwhile) doesn't overwrite the selection.
+  let _a2sToken = 0;
+  function _a2sModeFromUI() {
+    let m = (document.getElementById('fairnessTravelMode')?.value || 'walking').toLowerCase();
+    return (m === 'walking' || m === 'cycling' || m === 'driving') ? m : 'walking';
+  }
+  async function _attachAccess2sfca(feat) {
+    if (typeof ensureAccess2sfca !== 'function' || typeof access2sfcaForFeature !== 'function') return;
+    const token = ++_a2sToken;
+    const mode = _a2sModeFromUI();
+    const city = (typeof a2sCurrentCity === 'function') ? a2sCurrentCity() : undefined;
+    try {
+      const net = await ensureAccess2sfca(city, mode);
+      if (token !== _a2sToken || !selected || selected.kind !== 'building') return;
+      const res = net ? access2sfcaForFeature(feat) : null;
+      selected.a2s = res ? { mode, overall: res.overall, cats: res.cats } : null;
+      renderSelection();
+    } catch (_) { /* companion metric is best-effort */ }
+  }
+
   function pickActiveCategories() {
     if (typeof selectedPOIMix !== 'undefined' && Array.isArray(selectedPOIMix) && selectedPOIMix.length) {
       return selectedPOIMix.map(e => e.cat);
@@ -127,7 +149,7 @@
 
     listEl.innerHTML = rows.map(([k, v]) =>
       `<div class="kv"><span class="kv-key">${k}</span><span class="kv-val">${v}</span></div>`
-    ).join('');
+    ).join('') + renderAccess2sfcaBlock();
 
     if (markerEl) {
       if (Number.isFinite(selected.fairness)) {
@@ -139,6 +161,31 @@
     }
 
     renderCategoryBars(selected.byCat || null);
+  }
+
+  // Network-accurate E2SFCA companion: overall supply-to-demand provision plus a
+  // per-category breakdown. Normalised 0..1 PER CATEGORY in the bake consumer, so
+  // values are comparable within a service type (not across types). Rendered as a
+  // self-contained HTML block (no CSS-grid coupling) inside the selection list.
+  function renderAccess2sfcaBlock() {
+    if (!selected || selected.kind !== 'building' || !selected.a2s) return '';
+    const a = selected.a2s;
+    const cats = pickActiveCategories();
+    const lines = cats.map(cat => {
+      const cd = a.cats?.[cat];
+      if (!cd) return null;
+      const label = (POI_LABEL[cat] || cat).padEnd(18);
+      const pct = `${Math.round((cd.norm || 0) * 100)}%`.padStart(4);
+      const bar = '█'.repeat(Math.round((cd.norm || 0) * 10)).padEnd(10, '·');
+      return `${label}${pct} ${bar}`;
+    }).filter(Boolean);
+    const overall = Number.isFinite(a.overall) ? `${Math.round(a.overall * 100)}%` : '—';
+    return `
+      <div class="kv" style="margin-top:6px;border-top:1px solid var(--insp-border,rgba(0,0,0,.1));padding-top:6px;">
+        <span class="kv-key" title="Enhanced 2-Step Floating Catchment Area: how much supply is actually available to you once competing demand is accounted for, over the real ${a.mode} street network.">Supply provision (2SFCA · ${a.mode})</span>
+        <span class="kv-val">${overall}</span>
+      </div>
+      ${lines.length ? `<pre style="white-space:pre;line-height:1.3;font-size:11px;margin:4px 0 0;opacity:.85;">${lines.join('\n')}</pre>` : ''}`;
   }
 
   function renderCategoryBars(byCat) {
@@ -390,9 +437,11 @@
         count: 1,
         gravity: props.__ifcity?.utility,
         byCat: Object.keys(byCat).length ? byCat : null,
+        a2s: null,
       };
       open();
       renderSelection();
+      _attachAccess2sfca(buildingFeat);
     },
 
     clearSelection() { selected = null; renderSelection(); },
