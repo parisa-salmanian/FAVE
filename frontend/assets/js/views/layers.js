@@ -108,6 +108,13 @@ function createCityLayer(grayBackdrop) {
         return transitionBuildingColor(f.properties);
       }
 
+      // 4b) Demographic lens — color by who lives in the building's DESO
+      // (Phase-4 alternate lens). Takes precedence over fairness coloring when
+      // a field is selected, so planners can read demographics on the same map.
+      if (typeof demoLensActive === 'function' && demoLensActive()) {
+        return demoLensColorForFeature(f);
+      }
+
       // 5) Fairness coloring if active (per-category mix selected by user)
       if (fairActive && f.properties?.fair) {
         return colorFromScore(f.properties.fair.score);
@@ -119,7 +126,7 @@ function createCityLayer(grayBackdrop) {
 
     updateTriggers: {
       getElevation:[heightScale],
-      getFillColor:[fairActive, fairCategory, fairRecolorTick, drSelectionTick, drHasSelection, buildingTypeTick, selectedBuildingType, transitionAnimTick, transitionAnimActive, changeLogTick, changeCompareBaseline, pinnedChangeId]
+      getFillColor:[fairActive, fairCategory, fairRecolorTick, drSelectionTick, drHasSelection, buildingTypeTick, selectedBuildingType, transitionAnimTick, transitionAnimActive, changeLogTick, changeCompareBaseline, pinnedChangeId, (typeof demoLensField !== 'undefined' ? demoLensField : ''), (typeof demoLensTick !== 'undefined' ? demoLensTick : 0)]
     }
   });
 }
