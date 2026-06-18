@@ -127,6 +127,7 @@
         ? 'Click a district to compare aggregations.'
         : 'Click a building for IF-City debug values.';
       renderCategoryBars(null);
+      renderAccess2sfcaBars();
       return;
     }
 
@@ -149,7 +150,7 @@
 
     listEl.innerHTML = rows.map(([k, v]) =>
       `<div class="kv"><span class="kv-key">${k}</span><span class="kv-val">${v}</span></div>`
-    ).join('') + renderAccess2sfcaBlock();
+    ).join('');
 
     if (markerEl) {
       if (Number.isFinite(selected.fairness)) {
@@ -161,31 +162,70 @@
     }
 
     renderCategoryBars(selected.byCat || null);
+    renderAccess2sfcaBars();
   }
 
   // Network-accurate E2SFCA companion: overall supply-to-demand provision plus a
-  // per-category breakdown. Normalised 0..1 PER CATEGORY in the bake consumer, so
-  // values are comparable within a service type (not across types). Rendered as a
-  // self-contained HTML block (no CSS-grid coupling) inside the selection list.
-  function renderAccess2sfcaBlock() {
-    if (!selected || selected.kind !== 'building' || !selected.a2s) return '';
+  // per-category breakdown, rendered BELOW the per-category fairness bars in the
+  // same bar-row style (legend icon + coloured track + number). Normalised 0..1
+  // PER CATEGORY in the bake consumer, so values are comparable within a service
+  // type, not across types. Section only shows for a building with loaded 2SFCA.
+  //
+  // Unreachable vs lowest-served: raw A === 0 means no POI of that category is
+  // reachable over the network within the catchment for the active mode — shown
+  // as a greyed "—" with an empty track, distinct from "0%" (reachable but at the
+  // p10 provision floor), so planners can tell "no service in range" apart from
+  // "served but worst-off".
+  function renderAccess2sfcaBars() {
+    const section = document.getElementById('insp2sfcaSection');
+    const host = document.getElementById('insp2sfcaBars');
+    const titleEl = document.getElementById('insp2sfcaTitle');
+    if (!section || !host) return;
+
+    if (!selected || selected.kind !== 'building' || !selected.a2s) {
+      section.style.display = 'none';
+      host.innerHTML = '';
+      return;
+    }
     const a = selected.a2s;
+    if (titleEl) titleEl.textContent = `Supply provision (2SFCA · ${a.mode})`;
+
     const cats = pickActiveCategories();
-    const lines = cats.map(cat => {
+    const rowsHtml = cats.map(cat => {
       const cd = a.cats?.[cat];
       if (!cd) return null;
-      const label = (POI_LABEL[cat] || cat).padEnd(18);
-      const pct = `${Math.round((cd.norm || 0) * 100)}%`.padStart(4);
-      const bar = '█'.repeat(Math.round((cd.norm || 0) * 10)).padEnd(10, '·');
-      return `${label}${pct} ${bar}`;
+      const label = POI_LABEL[cat] || cat;
+      const unreachable = !(cd.raw > 0);          // raw A === 0 → no service in range
+      const norm = Number.isFinite(cd.norm) ? cd.norm : 0;
+      const w = unreachable ? 0 : Math.max(2, Math.min(100, norm * 100));
+      const num = unreachable ? '—' : `${Math.round(norm * 100)}%`;
+      const fillBg = unreachable ? 'var(--insp-surface-2)' : rampColor(norm);
+      const numStyle = unreachable ? ' style="opacity:.5"' : '';
+      const title = unreachable
+        ? `No ${label.toLowerCase()} reachable over the ${a.mode} network within range`
+        : `${label}: ${Math.round(norm * 100)}% provision (normalized within category)`;
+      return `
+        <div class="bar-row" title="${title}">
+          <span class="label"><img src="assets/icons/legend-${cat}.svg" alt="" class="label-icon" aria-hidden="true">${label}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${w}%;background:${fillBg}"></div></div>
+          <span class="num"${numStyle}>${num}</span>
+        </div>`;
     }).filter(Boolean);
+
+    if (!rowsHtml.length) {
+      section.style.display = 'none';
+      host.innerHTML = '';
+      return;
+    }
+
     const overall = Number.isFinite(a.overall) ? `${Math.round(a.overall * 100)}%` : '—';
-    return `
-      <div class="kv" style="margin-top:6px;border-top:1px solid var(--insp-border,rgba(0,0,0,.1));padding-top:6px;">
-        <span class="kv-key" title="Enhanced 2-Step Floating Catchment Area: how much supply is actually available to you once competing demand is accounted for, over the real ${a.mode} street network.">Supply provision (2SFCA · ${a.mode})</span>
-        <span class="kv-val">${overall}</span>
-      </div>
-      ${lines.length ? `<pre style="white-space:pre;line-height:1.3;font-size:11px;margin:4px 0 0;opacity:.85;">${lines.join('\n')}</pre>` : ''}`;
+    section.style.display = '';
+    host.innerHTML =
+      `<div class="bar-row" style="font-weight:700">
+        <span class="label">Overall</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${Number.isFinite(a.overall) ? Math.max(2, Math.min(100, a.overall * 100)) : 0}%;background:${rampColor(a.overall)}"></div></div>
+        <span class="num">${overall}</span>
+      </div>` + rowsHtml.join('');
   }
 
   function renderCategoryBars(byCat) {
