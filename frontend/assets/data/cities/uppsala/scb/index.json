@@ -1,0 +1,79 @@
+{
+  "city": "uppsala",
+  "kommun": "0380",
+  "source": "SCB AA/AA0003",
+  "tables": [
+    {
+      "id": "IntGr1RegSOBASN",
+      "title": "Labour market status by RegSO, sex and background variable. Year 2024",
+      "folder": "AA/AA0003/AA0003B",
+      "year": "2024",
+      "regions": 61,
+      "cells": 4575
+    },
+    {
+      "id": "FolkmangdRegSO",
+      "title": "Population by RegSO and sex (Not updated). Year 1997 - 2009",
+      "folder": "AA/AA0003/AA0003E",
+      "year": "2009",
+      "regions": 61,
+      "cells": 183
+    },
+    {
+      "id": "IntGr3RegSOKONS",
+      "title": "Demographic variables for everyone by RegSO and sex. Year 2007 - 2023",
+      "folder": "AA/AA0003/AA0003E",
+      "year": "2023",
+      "regions": 61,
+      "cells": 1647
+    },
+    {
+      "id": "IntGr3RegSOKONU",
+      "title": "Demographic variables for foreign born persons by RegSO and sex. Year 2007 - 2023",
+      "folder": "AA/AA0003/AA0003E",
+      "year": "2023",
+      "regions": 61,
+      "cells": 1464
+    },
+    {
+      "id": "IntGr4RegSOKon",
+      "title": "Transfer variables by RegSO and sex. Year 2007 - 2023",
+      "folder": "AA/AA0003/AA0003G",
+      "year": "2023",
+      "regions": 61,
+      "cells": 4575
+    },
+    {
+      "id": "IntGr5RegSOKon",
+      "title": "Income variables by RegSO and sex. Year 2007 - 2023",
+      "folder": "AA/AA0003/AA0003F",
+      "year": "2023",
+      "regions": 61,
+      "cells": 4575
+    },
+    {
+      "id": "IntGr8RegSOKon2",
+      "title": "Proportion of persons eligible for upper secondary school and higher education by RegSO and sex. Year 2007 - 2023",
+      "folder": "AA/AA0003/AA0003H",
+      "year": "2023",
+      "regions": 61,
+      "cells": 183
+    },
+    {
+      "id": "IntGr8RegSOKON3",
+      "title": "Proportion of persons approved in Swedish for Immigrants (SFI) by RegSO. Year 2010 - 2023",
+      "folder": "AA/AA0003/AA0003H",
+      "year": "2023",
+      "regions": 61,
+      "cells": 61
+    },
+    {
+      "id": "IntGr8RegSOKON1N",
+      "title": "Proportion of students, or neither gainfully employed nor students by RegSO and sex. Year 2007 - 2023",
+      "folder": "AA/AA0003/AA0003H",
+      "year": "2023",
+      "regions": 61,
+      "cells": 4575
+    }
+  ]
+}
