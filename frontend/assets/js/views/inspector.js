@@ -323,6 +323,10 @@
       if (el) el.textContent = text;
     };
 
+    // Population-weighted per-group equity (all cities) — independent of the
+    // mezo histogram below, so it renders even before the Mezo view is opened.
+    if (typeof renderGroupEquity === 'function') { try { renderGroupEquity(); } catch (_) {} }
+
     if (!scores.length) {
       setText('statsN', '0');
       setText('statsMedian', '—');

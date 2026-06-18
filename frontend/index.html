@@ -1163,6 +1163,10 @@
           <div class="kv"><span class="kv-key">P25 / P75</span><span class="kv-val" id="statsP25P75">—</span></div>
         </div>
         <p class="ramp-help">Distribution of mezo-cell fairness scores for the current city. Open the Mezo view (offcanvas) and run a fairness compute to populate.</p>
+
+        <h3 class="section-title" style="margin-top:12px">Equity by group</h3>
+        <div id="statsGroupEquity"></div>
+        <p class="ramp-help">Population-weighted mean accessibility per demographic group (terciles of each DESO attribute, weighted by residents). A positive gap means the at-risk group is underserved.</p>
       </div>
 
       <!-- Compare tab -->
@@ -1605,6 +1609,7 @@
   <script src="assets/js/models/districts.js"></script>
   <script src="assets/js/models/demographics.js"></script>
   <script src="assets/js/models/epicityDemographics.js"></script>
+  <script src="assets/js/models/equityGroups.js"></script>
   <script src="assets/js/models/loaders.js"></script>
   <script src="assets/js/models/cityLoader.js"></script>
   <script src="assets/js/models/fairness.js"></script>
