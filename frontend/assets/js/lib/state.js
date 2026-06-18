@@ -128,6 +128,9 @@ let parallelCoordsBrushSelections = {};
 let parallelCoordsForceEmptySelection = false;
 let parallelCoordsColumnOrder = [];
 let parallelCoordsMaxPoints = 0;
+// PCP data-source: which axes to show — 'poi' (accessibility only),
+// 'demo' (demographics only), or 'mixed' (both). See views/drView.js.
+let parallelCoordsDataSourceMode = 'mixed';
 const PARALLEL_COORDS_OVERALL_KEY = '__overall';
 let additiveSelectionKeyActive = false;
 let mezoHexData = [];

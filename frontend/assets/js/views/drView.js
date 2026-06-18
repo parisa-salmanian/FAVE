@@ -1696,6 +1696,19 @@ function setParallelCoordsPending(isPending) {
   }
 }
 
+function bindParallelCoordsSourceSelect() {
+  const sel = document.getElementById('parallelCoordsSource');
+  if (!sel) return;
+  if (!sel.__bound) {
+    sel.addEventListener('change', () => {
+      parallelCoordsDataSourceMode = sel.value || 'mixed';
+      updateParallelCoordsPanel();
+    });
+    sel.__bound = true;
+  }
+  sel.value = parallelCoordsDataSourceMode;
+}
+
 function updateParallelCoordsDistrictFilterOptions() {
   const select = document.getElementById('parallelCoordsDistrictSelect');
   if (!select) return;
@@ -1746,14 +1759,34 @@ function pcDemoAxes() {
   base.push({ key: 'demNeed', label: 'Need index', json: '__needZ' });
   return base;
 }
-function pcFeatureSetForPCP() {
-  // PCP follows the same Features selector as the DR scatter.
-  const v = document.getElementById('drFeatureSet')?.value || 'access';
-  return ['access', 'access_demo', 'demo'].includes(v) ? v : 'access';
+// --- Demographic PCP axes (building mode) ---------------------------------
+// Building rows read demographics from their DESO (the Phase-3 baked
+// deso.geojson via EPI_DEMO + the feature's stamped __deso code), so the PCP
+// can show the multi-domain need index alongside per-category accessibility.
+const PC_BUILDING_DEMO_AXES = [
+  { key: 'demIncome',        label: 'Income (DESO)',        prop: 'income' },
+  { key: 'demNeed',          label: 'Need index',           prop: 'needZ' },
+  { key: 'demChild',         label: 'Children %',           prop: 'child_frac' },
+  { key: 'demElder',         label: 'Elderly %',            prop: 'elder_frac' },
+  { key: 'demDependency',    label: 'Dependency ratio',     prop: 'dependency' },
+  { key: 'demHigherEdu',     label: 'Higher-ed eligible %', prop: 'higher_ed' },
+  { key: 'demNeet',          label: 'NEET %',               prop: 'neet' },
+  { key: 'demIncomeSupport', label: 'Income support %',     prop: 'income_support' },
+  { key: 'demMale',          label: 'Male %',               prop: 'male_frac' },
+  { key: 'demPop',           label: 'Population (DESO)',     prop: 'pop' },
+];
+function pcBuildingDemoAxes() { return PC_BUILDING_DEMO_AXES.map(a => ({ key: a.key, label: a.label })); }
+// DESO code -> baked demographic properties (built once per render; ≤ a few
+// hundred DESOs). Empty when demographics aren't loaded → demo axes drop out.
+function pcDesoPropsMap() {
+  const m = new Map();
+  const feats = (typeof EPI_DEMO !== 'undefined' && EPI_DEMO && EPI_DEMO.features) ? EPI_DEMO.features : [];
+  for (const f of feats) { const p = f.properties || {}; if (p.deso != null) m.set(p.deso, p); }
+  return m;
 }
-// Friendly axis label, demographic-aware.
+// Friendly axis label, demographic-aware (district + building demo axes).
 function prettyParallelAxis(cat) {
-  const demo = pcDemoAxes().find(a => a.key === cat);
+  const demo = pcDemoAxes().find(a => a.key === cat) || PC_BUILDING_DEMO_AXES.find(a => a.key === cat);
   if (demo) return demo.label;
   return prettyPOIName(cat);
 }
@@ -1825,6 +1858,10 @@ function getParallelCoordsDataset(mode) {
     }));
   }
 
+  // Per-building demographics come from each building's DESO (Phase-3 baked
+  // deso.geojson). Built once; null for district/mezo (district uses __demo).
+  const pcDesoProps = (mode !== 'district' && mode !== 'mezo') ? pcDesoPropsMap() : null;
+
   rows = rows.map((row) => {
     const values = {};
     let count = 0;
@@ -1862,6 +1899,17 @@ function getParallelCoordsDataset(mode) {
         const v = a.json === '__needZ' ? Number(props.__needZ) : Number(demo[a.json]);
         if (Number.isFinite(v)) realValues[a.key] = v;
       });
+    } else if (pcDesoProps) {
+      // Building rows: read demographics from the building's DESO (stamped
+      // __deso by epicityDemographics) via the Phase-3 baked deso.geojson.
+      const code = row?.source?.properties?.__deso;
+      const dp = (code != null) ? pcDesoProps.get(code) : null;
+      if (dp) {
+        PC_BUILDING_DEMO_AXES.forEach((a) => {
+          const v = Number(dp[a.prop]);
+          if (Number.isFinite(v)) realValues[a.key] = v;
+        });
+      }
     }
     return { id: row.id, label: row.label || row.id, values, realValues, count, min, max, avg, source: row.source };
   }).filter(row => row.count > 0);
@@ -1870,10 +1918,16 @@ function getParallelCoordsDataset(mode) {
   // independent of the DR scatter's Features dropdown (the district PCP is the
   // place these belong). Plotted as per-axis min–max normalised [0,1]; the
   // renderer relabels the endpoints with real values and the tooltip shows them.
+  // Demographic axes: district reads __demo + need index; building rows read
+  // their DESO's baked props (filled into realValues above). Mezo has none.
+  // Each axis is min–max normalised into [0,1]; the renderer relabels the
+  // endpoints with the real values and the tooltip shows them.
   let extraCategories = [];
-  const fs = pcFeatureSetForPCP();
-  if (mode === 'district') {
-    const axes = pcDemoAxes().filter(a => rows.some(r => Number.isFinite(r.realValues?.[a.key])));
+  const demoAxisDefs = (mode === 'district') ? pcDemoAxes()
+    : (mode === 'mezo') ? []
+    : pcBuildingDemoAxes();
+  if (demoAxisDefs.length) {
+    const axes = demoAxisDefs.filter(a => rows.some(r => Number.isFinite(r.realValues?.[a.key])));
     axes.forEach((a) => {
       const vals = rows.map(r => r.realValues?.[a.key]).filter(Number.isFinite);
       const lo = Math.min(...vals), hi = Math.max(...vals);
@@ -1886,10 +1940,19 @@ function getParallelCoordsDataset(mode) {
     extraCategories = axes.map(a => a.key);
   }
 
-  let outCategories = categoriesWithOverall.concat(extraCategories);
-  // Only "Extra dims only" drops the fairness axes; otherwise show fairness + demo.
-  if (mode === 'district' && fs === 'demo' && extraCategories.length) {
+  // The PCP data-source selector decides which axis groups appear:
+  //   'poi'   = fairness/POI accessibility axes only
+  //   'demo'  = demographic axes only (kept anchored by the Overall axis)
+  //   'mixed' = both (default)
+  // Falls back to POI axes whenever no demographic axes are available.
+  const srcMode = parallelCoordsDataSourceMode || 'mixed';
+  let outCategories;
+  if (srcMode === 'poi' || !extraCategories.length) {
+    outCategories = categoriesWithOverall;
+  } else if (srcMode === 'demo') {
     outCategories = [PARALLEL_COORDS_OVERALL_KEY, ...extraCategories];
+  } else {
+    outCategories = categoriesWithOverall.concat(extraCategories);
   }
 
   const rawMaxPC = parseInt(parallelCoordsMaxPoints, 10);
@@ -1961,6 +2024,8 @@ function updateParallelCoordsPanel() {
   const modeLabel = parallelCoordsModeLabel(mode);
   const modeEl = document.getElementById('parallelCoordsMode');
   if (modeEl) modeEl.textContent = `Mode: ${modeLabel}.`;
+
+  bindParallelCoordsSourceSelect();
 
   const filterSelect = document.getElementById('parallelCoordsDistrictSelect');
   if (filterSelect) {

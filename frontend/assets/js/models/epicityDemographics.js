@@ -118,6 +118,9 @@ function buildEpicityBuildingMaps() {
     const needZ = entry.props.needZ;
     if (Number.isFinite(needZ)) epiBuildingNeedMap.set(idx, needZ);
     epiBuildingDesoMap.set(idx, code);
+    // Stamp the DESO code on the feature so views (e.g. the parallel-coordinates
+    // plot) can read per-building demographics in O(1) without a featIdx lookup.
+    if (feat.properties) feat.properties.__deso = code;
     const residential = _epiIsResidential(feat.properties || {});
     const fa = residential ? _epiFloorAreaM2(feat) : 0;
     perBuilding[idx] = { code, fa, pop: entry.props.pop || 0, residential };

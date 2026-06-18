@@ -50,3 +50,6 @@ tools/osrm/
 # --- Secrets (NEVER commit) ---
 .env
 .lantmateriet_credentials
+
+# Local Playwright verify screenshots (debug artifacts)
+tools/_verify_*.png

@@ -1269,6 +1269,11 @@
           <span class="tiny muted">Max points</span>
           <input id="parallelCoordsMaxPts" type="number" class="control" value="0" min="0" step="100" style="width: 80px;" title="0 = use default sample (4000)">
           <button id="parallelCoordsMaxBtn" class="control" type="button" title="Use all available rows (no sampling)">Max</button>
+          <select id="parallelCoordsSource" class="control" aria-label="PCP data source" style="width: 170px;" title="Which axes to show on the parallel-coordinates plot">
+            <option value="mixed" selected>POIs + demographics</option>
+            <option value="poi">POIs only</option>
+            <option value="demo">Demographics only</option>
+          </select>
           <select id="parallelCoordsDistrictSelect" class="control d-none" aria-label="District filter" style="width: 140px;"></select>
           <button id="parallelCoordsClose" class="icon-btn" aria-label="Close" type="button">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
