@@ -108,6 +108,12 @@ function createCityLayer(grayBackdrop) {
         return transitionBuildingColor(f.properties);
       }
 
+      // 4a2) Priority zones — high need × poor access intervention overlay
+      // (Phase-4). Highest-precedence lens so flagged pockets are never masked.
+      if (typeof priorityZonesOn === 'function' && priorityZonesOn()) {
+        return priorityColorForFeature(f);
+      }
+
       // 4b) Demographic lens — color by who lives in the building's DESO
       // (Phase-4 alternate lens). Takes precedence over fairness coloring when
       // a field is selected, so planners can read demographics on the same map.
@@ -126,7 +132,7 @@ function createCityLayer(grayBackdrop) {
 
     updateTriggers: {
       getElevation:[heightScale],
-      getFillColor:[fairActive, fairCategory, fairRecolorTick, drSelectionTick, drHasSelection, buildingTypeTick, selectedBuildingType, transitionAnimTick, transitionAnimActive, changeLogTick, changeCompareBaseline, pinnedChangeId, (typeof demoLensField !== 'undefined' ? demoLensField : ''), (typeof demoLensTick !== 'undefined' ? demoLensTick : 0)]
+      getFillColor:[fairActive, fairCategory, fairRecolorTick, drSelectionTick, drHasSelection, buildingTypeTick, selectedBuildingType, transitionAnimTick, transitionAnimActive, changeLogTick, changeCompareBaseline, pinnedChangeId, (typeof demoLensField !== 'undefined' ? demoLensField : ''), (typeof demoLensTick !== 'undefined' ? demoLensTick : 0), (typeof priorityZonesActive !== 'undefined' ? priorityZonesActive : false), (typeof priorityZonesTick !== 'undefined' ? priorityZonesTick : 0)]
     }
   });
 }
