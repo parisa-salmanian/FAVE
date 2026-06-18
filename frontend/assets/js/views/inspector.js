@@ -60,6 +60,27 @@
     let m = (document.getElementById('fairnessTravelMode')?.value || 'walking').toLowerCase();
     return (m === 'walking' || m === 'cycling' || m === 'driving') ? m : 'walking';
   }
+  // Normalise per-building 2SFCA cats into the uniform shape the renderer reads:
+  // { norm (0..1), unreachable (no POI of this cat in range), sub (optional note) }.
+  function _a2sCatsFromBuilding(res) {
+    const out = {};
+    for (const [cat, cd] of Object.entries(res.cats || {})) {
+      out[cat] = { norm: cd.norm, unreachable: !(cd.raw > 0), sub: null };
+    }
+    return out;
+  }
+  // Same uniform shape from an aggregate (district/hex): norm = mean provision,
+  // unreachable when NO member building reaches the cat, sub = % of members served.
+  function _a2sCatsFromAggregate(agg) {
+    const out = {};
+    for (const [cat, cd] of Object.entries(agg.cats || {})) {
+      const pct = Math.round((cd.reachableFrac || 0) * 100);
+      out[cat] = { norm: cd.normMean, unreachable: !(cd.reachableFrac > 0),
+                   sub: `${pct}% served` };
+    }
+    return out;
+  }
+
   async function _attachAccess2sfca(feat) {
     if (typeof ensureAccess2sfca !== 'function' || typeof access2sfcaForFeature !== 'function') return;
     const token = ++_a2sToken;
@@ -69,7 +90,30 @@
       const net = await ensureAccess2sfca(city, mode);
       if (token !== _a2sToken || !selected || selected.kind !== 'building') return;
       const res = net ? access2sfcaForFeature(feat) : null;
-      selected.a2s = res ? { mode, overall: res.overall, cats: res.cats } : null;
+      selected.a2s = res ? { mode, scope: 'building', overall: res.overall, cats: _a2sCatsFromBuilding(res) } : null;
+      renderSelection();
+    } catch (_) { /* companion metric is best-effort */ }
+  }
+
+  // Meso (hex) / macro (district) aggregation: average the per-building network
+  // provision over every baked building inside the selection. Best-effort and
+  // token-guarded against stale clicks, exactly like the per-building load.
+  async function _attachAccess2sfcaAggregate(kind, payload) {
+    if (typeof ensureAccess2sfca !== 'function') return;
+    const token = ++_a2sToken;
+    const mode = _a2sModeFromUI();
+    const city = (typeof a2sCurrentCity === 'function') ? a2sCurrentCity() : undefined;
+    try {
+      const net = await ensureAccess2sfca(city, mode);
+      if (token !== _a2sToken || !selected || selected.kind !== kind) return;
+      let agg = null;
+      if (kind === 'mezo' && typeof access2sfcaAggregateForHex === 'function') {
+        agg = net ? access2sfcaAggregateForHex(payload) : null;
+      } else if (kind === 'district' && typeof access2sfcaAggregateForPolygon === 'function') {
+        agg = net ? access2sfcaAggregateForPolygon(payload) : null;
+      }
+      if (token !== _a2sToken || !selected || selected.kind !== kind) return;
+      selected.a2s = (agg && agg.n) ? { mode, scope: kind, overall: agg.overall, n: agg.n, cats: _a2sCatsFromAggregate(agg) } : null;
       renderSelection();
     } catch (_) { /* companion metric is best-effort */ }
   }
@@ -182,31 +226,42 @@
     const titleEl = document.getElementById('insp2sfcaTitle');
     if (!section || !host) return;
 
-    if (!selected || selected.kind !== 'building' || !selected.a2s) {
+    // Works at all three scales: building (per-building provision) and the
+    // meso/macro aggregates (mean provision over the buildings inside the hex /
+    // district). The cats are pre-normalised into a uniform { norm, unreachable,
+    // sub } shape by the attach functions, so the renderer is scale-agnostic.
+    if (!selected || !selected.a2s || !selected.a2s.cats) {
       section.style.display = 'none';
       host.innerHTML = '';
       return;
     }
     const a = selected.a2s;
-    if (titleEl) titleEl.textContent = `Supply provision (2SFCA · ${a.mode})`;
+    const scopeLabel = a.scope === 'district' ? 'district'
+                     : a.scope === 'mezo' ? 'cell' : null;
+    if (titleEl) {
+      titleEl.textContent = scopeLabel
+        ? `Supply provision (2SFCA · ${a.mode} · ${scopeLabel} mean${a.n ? `, ${a.n.toLocaleString()} bldgs` : ''})`
+        : `Supply provision (2SFCA · ${a.mode})`;
+    }
 
     const cats = pickActiveCategories();
     const rowsHtml = cats.map(cat => {
       const cd = a.cats?.[cat];
       if (!cd) return null;
       const label = POI_LABEL[cat] || cat;
-      const unreachable = !(cd.raw > 0);          // raw A === 0 → no service in range
+      const unreachable = !!cd.unreachable;       // no service in range (per bldg or whole area)
       const norm = Number.isFinite(cd.norm) ? cd.norm : 0;
       const w = unreachable ? 0 : Math.max(2, Math.min(100, norm * 100));
       const num = unreachable ? '—' : `${Math.round(norm * 100)}%`;
       const fillBg = unreachable ? 'var(--insp-surface-2)' : rampColor(norm);
       const numStyle = unreachable ? ' style="opacity:.5"' : '';
+      const sub = cd.sub ? `<span class="insp-tiny muted" style="margin-left:4px">${cd.sub}</span>` : '';
       const title = unreachable
         ? `No ${label.toLowerCase()} reachable over the ${a.mode} network within range`
-        : `${label}: ${Math.round(norm * 100)}% provision (normalized within category)`;
+        : `${label}: ${Math.round(norm * 100)}% provision (normalized within category)${cd.sub ? ' · ' + cd.sub : ''}`;
       return `
         <div class="bar-row" title="${title}">
-          <span class="label"><img src="assets/icons/legend-${cat}.svg" alt="" class="label-icon" aria-hidden="true">${label}</span>
+          <span class="label"><img src="assets/icons/legend-${cat}.svg" alt="" class="label-icon" aria-hidden="true">${label}${sub}</span>
           <div class="bar-track"><div class="bar-fill" style="width:${w}%;background:${fillBg}"></div></div>
           <span class="num"${numStyle}>${num}</span>
         </div>`;
@@ -426,9 +481,11 @@
         fairness: Number.isFinite(score) ? score : null,
         count: Number.isFinite(cell.__count) ? cell.__count : null,
         byCat: cell.__fairByCat || null,
+        a2s: null,
       };
       open();
       renderSelection();
+      if (cell.hex) _attachAccess2sfcaAggregate('mezo', cell.hex);
     },
 
     /** Called by overlays.js handleDistrictClick / handleDistrictDoubleClick. */
@@ -445,9 +502,11 @@
         fairness: Number.isFinite(score) ? score : null,
         count: Number.isFinite(props.__count) ? props.__count : null,
         byCat: props.__fairByCat || null,
+        a2s: null,
       };
       open();
       renderSelection();
+      _attachAccess2sfcaAggregate('district', districtFeat);
     },
 
     /** Called by interaction.js handleClick (single-click on a building). */

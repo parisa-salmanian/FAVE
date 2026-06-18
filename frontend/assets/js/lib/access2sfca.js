@@ -176,3 +176,72 @@ function access2sfcaForFeature(feature) {
     return access2sfcaForPoint(c[0], c[1]);
   } catch { return null; }
 }
+
+// ---- Meso / macro aggregation -------------------------------------------------
+// Aggregate per-building 2SFCA over a set of baked rows (the buildings inside a
+// district or hex). Per category we report the MEAN normalised provision across
+// the member buildings (unreachable buildings contribute 0, so poor coverage is
+// penalised) plus the share of members that can reach the category at all.
+// overall = mean of the per-category means — same definition as per building, so
+// micro/meso/macro read on one comparable 0..1 scale.
+function access2sfcaAggregateForRows(rows) {
+  if (!ACCESS2SFCA || !rows || !rows.length) return null;
+  const cats = {};
+  let overallSum = 0, overallN = 0;
+  for (const cat of ACCESS2SFCA.catList) {
+    const cd = ACCESS2SFCA.cats[cat];
+    if (!cd) continue;
+    let sum = 0, reach = 0;
+    for (const row of rows) {
+      const raw = cd.rowToA.get(row) || 0;
+      sum += _a2sNorm(raw, cd.stats);
+      if (raw > 0) reach++;
+    }
+    const normMean = sum / rows.length;
+    cats[cat] = { normMean, reachableFrac: reach / rows.length, n: rows.length,
+                  catchment_m: cd.catchment_m, n_pois: cd.n_pois };
+    overallSum += normMean; overallN++;
+  }
+  return { n: rows.length, overall: overallN ? overallSum / overallN : 0, cats };
+}
+
+// Baked rows whose centroid falls inside a GeoJSON polygon/multipolygon feature.
+// Bbox pre-filter then turf point-in-polygon over ACCESS2SFCA.coords (~50k pts).
+function access2sfcaRowsInPolygon(feature) {
+  if (!ACCESS2SFCA || !feature) return [];
+  let bbox;
+  try { bbox = turf.bbox(feature); } catch { return []; }
+  const [minX, minY, maxX, maxY] = bbox;
+  const out = [];
+  const coords = ACCESS2SFCA.coords;
+  for (let i = 0; i < coords.length; i++) {
+    const c = coords[i];
+    if (c[0] < minX || c[0] > maxX || c[1] < minY || c[1] > maxY) continue;
+    try { if (turf.booleanPointInPolygon(c, feature)) out.push(i); } catch { /* skip */ }
+  }
+  return out;
+}
+
+// Baked rows whose centroid falls in the given H3 cell (resolution read from the
+// cell id, so it works at any mezo zoom). Uses the global h3-js (v3 API).
+function access2sfcaRowsInHex(hexId) {
+  if (!ACCESS2SFCA || !hexId || typeof h3 === 'undefined') return [];
+  const res = (typeof h3.h3GetResolution === 'function') ? h3.h3GetResolution(hexId) : null;
+  if (res == null) return [];
+  const out = [];
+  const coords = ACCESS2SFCA.coords;
+  const toCell = h3.geoToH3 || h3.latLngToCell;
+  if (typeof toCell !== 'function') return [];
+  for (let i = 0; i < coords.length; i++) {
+    const c = coords[i];
+    if (toCell(c[1], c[0], res) === hexId) out.push(i);
+  }
+  return out;
+}
+
+function access2sfcaAggregateForPolygon(feature) {
+  return access2sfcaAggregateForRows(access2sfcaRowsInPolygon(feature));
+}
+function access2sfcaAggregateForHex(hexId) {
+  return access2sfcaAggregateForRows(access2sfcaRowsInHex(hexId));
+}
