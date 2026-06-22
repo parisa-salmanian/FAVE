@@ -1763,9 +1763,11 @@ function pcDemoAxes() {
 // Building rows read demographics from their DESO (the Phase-3 baked
 // deso.geojson via EPI_DEMO + the feature's stamped __deso code), so the PCP
 // can show the multi-domain need index alongside per-category accessibility.
+// DESO-inherited fraction axes (no synthetic version — SCB resolution). Income,
+// need and population are NOT here: they're superseded by the per-building
+// SYNTHETIC axes below, so the plot shows ONE income/need/population axis (per
+// building) instead of a duplicate DESO axis with only ~N_DESO distinct lines.
 const PC_BUILDING_DEMO_AXES = [
-  { key: 'demIncome',        label: 'Income (DESO)',        prop: 'income' },
-  { key: 'demNeed',          label: 'Need index',           prop: 'needZ' },
   { key: 'demChild',         label: 'Children %',           prop: 'child_frac' },
   { key: 'demElder',         label: 'Elderly %',            prop: 'elder_frac' },
   { key: 'demDependency',    label: 'Dependency ratio',     prop: 'dependency' },
@@ -1773,9 +1775,31 @@ const PC_BUILDING_DEMO_AXES = [
   { key: 'demNeet',          label: 'NEET %',               prop: 'neet' },
   { key: 'demIncomeSupport', label: 'Income support %',     prop: 'income_support' },
   { key: 'demMale',          label: 'Male %',               prop: 'male_frac' },
-  { key: 'demPop',           label: 'Population (DESO)',     prop: 'pop' },
 ];
-function pcBuildingDemoAxes() { return PC_BUILDING_DEMO_AXES.map(a => ({ key: a.key, label: a.label })); }
+// SYNTHETIC per-building axes (from EpiCity city.json, stamped onto features by
+// lib/synthpop.js). Unlike the DESO axes above — which are identical for every
+// building in a district, so ~N_DESO distinct polylines — these vary building by
+// building, so the plot shows as many lines as buildings.
+const PC_BUILDING_SYNTH_AXES = [
+  { key: 'synPop',    label: 'Synthetic residents',  prop: '__synthPop' },
+  { key: 'synIncome', label: 'Income (synthetic)',   prop: '__synthIncome' },
+  { key: 'synNeed',   label: 'Need index (synthetic)', prop: '__synthNeed' },
+  { key: 'synLevels', label: 'Storeys (synthetic)',  prop: '__synthLevels' },
+  { key: 'synArea',   label: 'Footprint area (synthetic)', prop: '__synthArea' },
+  { key: 'synZone',   label: 'Land-use zone (synthetic)',  prop: '__synthZone' },
+];
+// Synthetic per-building axes FIRST (so the per-building income/need/population
+// are immediately visible next to Overall), then the DESO-inherited fractions.
+function pcBuildingDemoAxes() {
+  return [...PC_BUILDING_SYNTH_AXES, ...PC_BUILDING_DEMO_AXES].map(a => ({ key: a.key, label: a.label }));
+}
+// Maps a hex/district synthetic aggregate (from synthpopAggregate*) onto the
+// building demo-axis keys, so meso/macro PCP rows share the building axes.
+const PC_SYNTH_AGG_FIELD = {
+  synPop: 'pop', synIncome: 'income', synNeed: 'need',
+  demChild: 'child_frac', demElder: 'elder_frac', demDependency: 'dependency',
+  demHigherEdu: 'higher_ed', demNeet: 'neet', demIncomeSupport: 'income_support', demMale: 'male_frac',
+};
 // DESO code -> baked demographic properties (built once per render; ≤ a few
 // hundred DESOs). Empty when demographics aren't loaded → demo axes drop out.
 function pcDesoPropsMap() {
@@ -1786,7 +1810,9 @@ function pcDesoPropsMap() {
 }
 // Friendly axis label, demographic-aware (district + building demo axes).
 function prettyParallelAxis(cat) {
-  const demo = pcDemoAxes().find(a => a.key === cat) || PC_BUILDING_DEMO_AXES.find(a => a.key === cat);
+  const demo = pcDemoAxes().find(a => a.key === cat)
+    || PC_BUILDING_DEMO_AXES.find(a => a.key === cat)
+    || PC_BUILDING_SYNTH_AXES.find(a => a.key === cat);
   if (demo) return demo.label;
   return prettyPOIName(cat);
 }
@@ -1861,6 +1887,15 @@ function getParallelCoordsDataset(mode) {
   // Per-building demographics come from each building's DESO (Phase-3 baked
   // deso.geojson). Built once; null for district/mezo (district uses __demo).
   const pcDesoProps = (mode !== 'district' && mode !== 'mezo') ? pcDesoPropsMap() : null;
+  // Meso (hex): aggregate the SAME synthetic per-building source per hex in one
+  // pass, so the hex view shows demographics consistently with building/district.
+  let pcMezoAgg = null;
+  if (mode === 'mezo' && typeof synthpopAggregateAllHexes === 'function'
+      && typeof h3 !== 'undefined' && Array.isArray(mezoHexData) && mezoHexData.length) {
+    const res = (typeof h3.h3GetResolution === 'function' && mezoHexData[0]?.hex)
+      ? h3.h3GetResolution(mezoHexData[0].hex) : null;
+    if (res != null) pcMezoAgg = synthpopAggregateAllHexes(res);
+  }
 
   rows = rows.map((row) => {
     const values = {};
@@ -1910,6 +1945,23 @@ function getParallelCoordsDataset(mode) {
           if (Number.isFinite(v)) realValues[a.key] = v;
         });
       }
+      // SYNTHETIC per-building axes — read straight off the feature (stamped by
+      // synthpop.js), so every building contributes its own distinct value.
+      const sp = row?.source?.properties || {};
+      PC_BUILDING_SYNTH_AXES.forEach((a) => {
+        const v = Number(sp[a.prop]);
+        if (Number.isFinite(v)) realValues[a.key] = v;
+      });
+    } else if (mode === 'mezo' && pcMezoAgg) {
+      // Meso rows: per-hex aggregate of the SAME synthetic source, mapped onto
+      // the building demo-axis keys.
+      const agg = pcMezoAgg.get(row?.source?.hex);
+      if (agg && agg.pop > 0) {
+        pcBuildingDemoAxes().forEach((a) => {
+          const v = Number(agg[PC_SYNTH_AGG_FIELD[a.key]]);
+          if (Number.isFinite(v)) realValues[a.key] = v;
+        });
+      }
     }
     return { id: row.id, label: row.label || row.id, values, realValues, count, min, max, avg, source: row.source };
   }).filter(row => row.count > 0);
@@ -1924,7 +1976,7 @@ function getParallelCoordsDataset(mode) {
   // endpoints with the real values and the tooltip shows them.
   let extraCategories = [];
   const demoAxisDefs = (mode === 'district') ? pcDemoAxes()
-    : (mode === 'mezo') ? []
+    : (mode === 'mezo') ? pcBuildingDemoAxes()   // hex now aggregates the synthetic source
     : pcBuildingDemoAxes();
   if (demoAxisDefs.length) {
     const axes = demoAxisDefs.filter(a => rows.some(r => Number.isFinite(r.realValues?.[a.key])));

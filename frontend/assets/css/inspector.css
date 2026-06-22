@@ -25,6 +25,11 @@
   --insp-fair-2: oklch(58% 0.12 200);
   --insp-fair-3: oklch(72% 0.13 155);
   --insp-fair-4: oklch(85% 0.16 110);
+  /* 2SFCA "supply provision" — a single distinct hue (teal-blue), deliberately
+     NOT part of the diverging fairness ramp above, so the supply card reads as
+     its own metric rather than a copy of the "By category" fairness bars. */
+  --insp-supply: oklch(56% 0.12 230);
+  --insp-supply-soft: oklch(95% 0.02 230);
 
   /* Layout — fixed sidebar over the map, 320px wide. */
   position: fixed;
@@ -61,6 +66,8 @@ body[data-theme="dark"] #inspector {
   --insp-ink-1: #e3dfd6;
   --insp-ink-2: #a8a299;
   --insp-ink-3: #6f6a62;
+  --insp-supply: oklch(72% 0.13 230);
+  --insp-supply-soft: oklch(30% 0.04 230);
   background: var(--insp-surface);
   color: var(--insp-ink);
   border-left-color: var(--insp-line);
@@ -248,6 +255,31 @@ body[data-theme="dark"] #inspector[data-open="true"] {
   color: var(--insp-ink);
   font-weight: 500;
 }
+
+/* Supply provision (2SFCA) — rendered as its own card so planners read it as a
+   separate metric, not a duplicate of the "By category" fairness bars above.
+   Distinct on three axes: (1) a tinted card with a supply-hue left accent that
+   visually detaches it from the bars above; (2) a single flat supply hue where
+   magnitude is encoded by bar WIDTH only — vs the category bars where the bar
+   COLOR encodes the score; (3) supply-hue percentages instead of 0.00 scores. */
+#inspector #insp2sfcaSection {
+  margin-top: 20px;
+  padding: 14px 12px 12px;
+  border-radius: 10px;
+  background: var(--insp-supply-soft);
+  border: 1px solid var(--insp-line);
+  border-left: 3px solid var(--insp-supply);
+  transition: opacity 0.15s ease;
+}
+/* Held visible (dimmed) while a freshly hovered/clicked selection's provision
+   loads, so the card never collapses and yanks the scroll position. */
+#inspector #insp2sfcaSection[data-loading="true"] { opacity: 0.5; }
+#inspector #insp2sfcaSection .section-title { color: var(--insp-supply); margin-bottom: 6px; }
+#inspector #insp2sfcaSection .ramp-help { margin: 0 0 12px; }
+#inspector .bar-row.a2s-row .bar-track { height: 8px; border-radius: 4px; }
+#inspector .bar-row.a2s-row .bar-fill { background: var(--insp-supply); border-radius: 4px; }
+#inspector .bar-row.a2s-row.a2s-unreachable .bar-fill { background: transparent; }
+#inspector .bar-row.a2s-row .num { color: var(--insp-supply); font-weight: 600; }
 
 /* Mode comparison helpers */
 #inspector .compare-grid {

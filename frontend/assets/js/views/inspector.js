@@ -114,6 +114,10 @@
       }
       if (token !== _a2sToken || !selected || selected.kind !== kind) return;
       selected.a2s = (agg && agg.n) ? { mode, scope: kind, overall: agg.overall, n: agg.n, cats: _a2sCatsFromAggregate(agg) } : null;
+      // Synthetic resident sum over the buildings inside this hex/district.
+      selected.synthAgg = (kind === 'mezo')
+        ? (typeof synthpopAggregateForHex === 'function' ? synthpopAggregateForHex(payload) : null)
+        : (typeof synthpopAggregateForPolygon === 'function' ? synthpopAggregateForPolygon(payload) : null);
       renderSelection();
     } catch (_) { /* companion metric is best-effort */ }
   }
@@ -156,6 +160,34 @@
     const markerEl = document.getElementById('inspRampMarker');
     if (!titleEl || !listEl || !emptyEl) return;
 
+    // Keep the panel steady across re-renders. Hover mirrors a new feature into
+    // the inspector on every mouse-move; the selection's NAME (1 vs 2 lines) and
+    // row count change height ABOVE the lower cards, which would shove "Supply
+    // provision"/"Demographics" up or down. So we ANCHOR on whichever lower card
+    // the user is reading and pin its viewport position — not just the raw
+    // scrollTop. Falls back to scrollTop when no card is shown.
+    const bodyEl = document.querySelector('#inspector .inspector-body');
+    const _anchorEl = () => {
+      const a = document.getElementById('insp2sfcaSection');
+      if (a && a.style.display !== 'none') return a;
+      const d = document.getElementById('inspDemoSection');
+      if (d && d.style.display !== 'none') return d;
+      return null;
+    };
+    const keepScroll = bodyEl ? bodyEl.scrollTop : 0;
+    const anchor = bodyEl ? _anchorEl() : null;
+    const anchorRel = anchor ? (anchor.getBoundingClientRect().top - bodyEl.getBoundingClientRect().top) : null;
+    const restoreScroll = () => {
+      if (!bodyEl) return;
+      const a2 = _anchorEl();
+      if (a2 && a2 === anchor && anchorRel != null) {
+        const cur = a2.getBoundingClientRect().top - bodyEl.getBoundingClientRect().top;
+        bodyEl.scrollTop += (cur - anchorRel);
+      } else {
+        bodyEl.scrollTop = keepScroll;
+      }
+    };
+
     if (!selected) {
       titleEl.textContent = 'Hover or click';
       if (idEl) idEl.textContent = '';
@@ -172,6 +204,8 @@
         : 'Click a building for IF-City debug values.';
       renderCategoryBars(null);
       renderAccess2sfcaBars();
+      renderDemographics();
+      restoreScroll();
       return;
     }
 
@@ -207,6 +241,52 @@
 
     renderCategoryBars(selected.byCat || null);
     renderAccess2sfcaBars();
+    renderDemographics();
+    restoreScroll();
+  }
+
+  // Population & demographics card (below supply provision). Single source: the
+  // unified synthetic record (building) or its pop-weighted aggregate (hex/
+  // district) — synthetic pop/income/need + DESO-inherited shares.
+  function renderDemographics() {
+    const section = document.getElementById('inspDemoSection');
+    const list = document.getElementById('inspDemoList');
+    const titleEl = document.getElementById('inspDemoTitle');
+    if (!section || !list) return;
+    const agg = selected && selected.kind !== 'building';
+    const d = selected ? (agg ? selected.synthAgg : selected.synth) : null;
+    if (!selected || !d || !(Number.isFinite(d.pop) && d.pop > 0)) {
+      section.style.display = 'none'; list.innerHTML = ''; return;
+    }
+    if (titleEl) {
+      const scope = selected.kind === 'district' ? 'district' : selected.kind === 'mezo' ? 'cell' : null;
+      titleEl.textContent = scope
+        ? `Population & demographics (${scope}${Number.isFinite(d.n) ? ` · ${d.n.toLocaleString()} bldgs` : ''})`
+        : 'Population & demographics';
+    }
+    const pctFrac = v => `${(v * 100).toFixed(1)}%`;     // 0..1 fraction → %
+    const pctRaw  = v => `${v.toFixed(1)}%`;             // already a percentage
+    const rows = [];
+    rows.push(['Residents (synthetic)', Math.round(d.pop).toLocaleString() + (agg ? ' (sum)' : '')]);
+    if (Number.isFinite(d.income)) rows.push([`Income (synthetic${agg ? ', mean' : ''})`, `${Math.round(d.income).toLocaleString()} kSEK`]);
+    if (Number.isFinite(d.need))   rows.push([`Need index (synthetic${agg ? ', mean' : ''})`, d.need.toFixed(2)]);
+    if (!agg) {
+      if (Number.isFinite(d.levels)) rows.push(['Building storeys', String(d.levels)]);
+      if (Number.isFinite(d.area))   rows.push(['Footprint area', `${Math.round(d.area).toLocaleString()} m²`]);
+      if (Number.isFinite(d.zone))   rows.push(['Land-use zone', `#${d.zone}`]);
+    }
+    if (Number.isFinite(d.child_frac))     rows.push(['Children %', pctFrac(d.child_frac)]);
+    if (Number.isFinite(d.elder_frac))     rows.push(['Elderly %', pctFrac(d.elder_frac)]);
+    if (Number.isFinite(d.dependency))     rows.push(['Dependency ratio', d.dependency.toFixed(2)]);
+    if (Number.isFinite(d.higher_ed))      rows.push(['Higher-ed %', pctRaw(d.higher_ed)]);
+    if (Number.isFinite(d.neet))           rows.push(['NEET %', pctRaw(d.neet)]);
+    if (Number.isFinite(d.income_support)) rows.push(['Income support %', pctRaw(d.income_support)]);
+    if (Number.isFinite(d.male_frac))      rows.push(['Male %', pctFrac(d.male_frac)]);
+    if (!agg && d.deso) rows.push(['DESO', String(d.deso)]);
+    section.style.display = '';
+    list.innerHTML = rows.map(([k, v]) =>
+      `<div class="kv"><span class="kv-key">${k}</span><span class="kv-val">${v}</span></div>`
+    ).join('');
   }
 
   // Network-accurate E2SFCA companion: overall supply-to-demand provision plus a
@@ -231,10 +311,20 @@
     // district). The cats are pre-normalised into a uniform { norm, unreachable,
     // sub } shape by the attach functions, so the renderer is scale-agnostic.
     if (!selected || !selected.a2s || !selected.a2s.cats) {
+      // A new selection's provision is fetched async. If the card is already
+      // showing bars, keep them in place (dimmed) instead of hiding it — hiding
+      // collapses the card height, which clamps the scroll and yanks the panel
+      // back to the top before the fresh data arrives a frame later.
+      if (selected && section.style.display !== 'none' && host.innerHTML) {
+        section.setAttribute('data-loading', 'true');
+        return;
+      }
       section.style.display = 'none';
+      section.removeAttribute('data-loading');
       host.innerHTML = '';
       return;
     }
+    section.removeAttribute('data-loading');
     const a = selected.a2s;
     const scopeLabel = a.scope === 'district' ? 'district'
                      : a.scope === 'mezo' ? 'cell' : null;
@@ -253,16 +343,17 @@
       const norm = Number.isFinite(cd.norm) ? cd.norm : 0;
       const w = unreachable ? 0 : Math.max(2, Math.min(100, norm * 100));
       const num = unreachable ? '—' : `${Math.round(norm * 100)}%`;
-      const fillBg = unreachable ? 'var(--insp-surface-2)' : rampColor(norm);
       const numStyle = unreachable ? ' style="opacity:.5"' : '';
       const sub = cd.sub ? `<span class="insp-tiny muted" style="margin-left:4px">${cd.sub}</span>` : '';
       const title = unreachable
         ? `No ${label.toLowerCase()} reachable over the ${a.mode} network within range`
         : `${label}: ${Math.round(norm * 100)}% provision (normalized within category)${cd.sub ? ' · ' + cd.sub : ''}`;
+      // a2s-row: flat supply hue from CSS (magnitude = width), distinct from the
+      // colour-coded fairness bars above. No inline background here.
       return `
-        <div class="bar-row" title="${title}">
+        <div class="bar-row a2s-row${unreachable ? ' a2s-unreachable' : ''}" title="${title}">
           <span class="label"><img src="assets/icons/legend-${cat}.svg" alt="" class="label-icon" aria-hidden="true">${label}${sub}</span>
-          <div class="bar-track"><div class="bar-fill" style="width:${w}%;background:${fillBg}"></div></div>
+          <div class="bar-track"><div class="bar-fill" style="width:${w}%"></div></div>
           <span class="num"${numStyle}>${num}</span>
         </div>`;
     }).filter(Boolean);
@@ -276,9 +367,9 @@
     const overall = Number.isFinite(a.overall) ? `${Math.round(a.overall * 100)}%` : '—';
     section.style.display = '';
     host.innerHTML =
-      `<div class="bar-row" style="font-weight:700">
+      `<div class="bar-row a2s-row a2s-overall" style="font-weight:700">
         <span class="label">Overall</span>
-        <div class="bar-track"><div class="bar-fill" style="width:${Number.isFinite(a.overall) ? Math.max(2, Math.min(100, a.overall * 100)) : 0}%;background:${rampColor(a.overall)}"></div></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${Number.isFinite(a.overall) ? Math.max(2, Math.min(100, a.overall * 100)) : 0}%"></div></div>
         <span class="num">${overall}</span>
       </div>` + rowsHtml.join('');
   }
@@ -541,6 +632,7 @@
         gravity: props.__ifcity?.utility,
         byCat: Object.keys(byCat).length ? byCat : null,
         a2s: null,
+        synth: (typeof synthDemographicsForFeature === 'function') ? synthDemographicsForFeature(buildingFeat) : null,
       };
       open();
       renderSelection();

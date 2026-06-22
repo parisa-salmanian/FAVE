@@ -1148,6 +1148,12 @@
           <p class="ramp-help" style="margin-top:-2px">Network-accurate supply available to this building once competing demand is accounted for. Normalized within each service type; “—” = no service reachable in range.</p>
           <div id="insp2sfcaBars" class="bar-list"></div>
         </div>
+
+        <div id="inspDemoSection" style="display:none">
+          <h3 class="section-title" id="inspDemoTitle">Population &amp; demographics</h3>
+          <p class="ramp-help" id="inspDemoHelp" style="margin-top:-2px">Synthetic per-building population, income and need (EpiCity, anchored to SCB DESO means); remaining shares are DESO-level.</p>
+          <div id="inspDemoList" class="kv-list"></div>
+        </div>
       </div>
 
       <!-- Stats tab -->
@@ -1594,6 +1600,7 @@
   <script src="assets/js/lib/transit.js"></script>
   <script src="assets/js/lib/routingMatrix.js"></script>
   <script src="assets/js/lib/access2sfca.js"></script>
+  <script src="assets/js/lib/synthpop.js"></script>
   <script src="assets/js/lib/demographicLens.js"></script>
   <script src="assets/js/lib/priorityZones.js"></script>
   <script src="assets/js/lib/poi.js"></script>

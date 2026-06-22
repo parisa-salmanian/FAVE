@@ -70,7 +70,11 @@ function computeGroupEquity() {
   if (!feats || !feats.length) return null;
   const propsMap = (typeof _demoLensPropsMap === 'function') ? _demoLensPropsMap() : null;
   if (!propsMap || !propsMap.size) return null;
-  const popMap = (typeof epiBuildingPopMap !== 'undefined' && epiBuildingPopMap) ? epiBuildingPopMap : null;
+  // Same population source as fairness demand: synthetic per-building residents
+  // first (all cities), else the DESO floor-area proxy.
+  const popMap = (typeof synthBuildingPopMap !== 'undefined' && synthBuildingPopMap && synthBuildingPopMap.size)
+    ? synthBuildingPopMap
+    : ((typeof epiBuildingPopMap !== 'undefined' && epiBuildingPopMap) ? epiBuildingPopMap : null);
 
   // Collect one record per residential building with an access score + DESO.
   const records = [];

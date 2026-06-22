@@ -159,8 +159,27 @@ async function ensureEpicityDemographics(cityKey) {
 }
 let _epiMappedCity = null;
 
+// DESO code -> baked socioeconomic props (income, needZ, child/elder/dependency,
+// higher_ed, neet, income_support, male_frac). One shared lookup so every view
+// (synthetic per-building reader, inspector, parallel-coords) resolves the
+// "rest of the demographics" from the SAME source. Rebuilt on city change.
+let _epiDesoByCode = null;
+function epiDesoProps(code) {
+  if (!EPI_DEMO || code == null) return null;
+  if (!_epiDesoByCode || _epiDesoByCode.city !== EPI_DEMO.city) {
+    const m = new Map();
+    for (const f of (EPI_DEMO.features || [])) {
+      const p = f.properties || {};
+      if (p.deso != null) m.set(p.deso, p);
+    }
+    _epiDesoByCode = { city: EPI_DEMO.city, map: m };
+  }
+  return _epiDesoByCode.map.get(code) || null;
+}
+
 // Reset building maps when buildings reload (city switch); call from city loader.
 function resetEpicityBuildingMaps() {
+  _epiDesoByCode = null;
   epiBuildingNeedMap = null; epiBuildingPopMap = null;
   epiBuildingDesoMap = null; _epiMappedCity = null;
 }

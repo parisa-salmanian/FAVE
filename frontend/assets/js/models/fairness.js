@@ -1446,6 +1446,11 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
   if (typeof ensureEpicityDemographics === 'function') {
     try { await ensureEpicityDemographics(); } catch (e) { /* fall back to neutral weights */ }
   }
+  // EpiCity SYNTHETIC per-building population → preferred demand signal (genuine
+  // per-building residents vs the DESO-distributed proxy). All 7 cities.
+  if (typeof ensureSynthpop === 'function') {
+    try { await ensureSynthpop(); } catch (e) { /* fall back to DESO/floor-area demand */ }
+  }
 
   // Real network distances (walk/cycle/drive): load baked routing matrices for the
   // active mode. Categories with what-if edits keep the haversine model (their
@@ -1503,13 +1508,16 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
       const benefitRaw   = utility - IF_CITY_BASELINE_UTILITY;
       const equityWeight = ifCityEquityWeightForFeature(f);
 
-      // Demand: prefer EpiCity per-DESO population distributed over RESIDENTIAL
-      // buildings only (all 7 cities; residential via andamal1='Bostad'); fall back
-      // to the Växjö residential SCB map. Denser residential buildings weigh more.
+      // Demand: prefer EpiCity SYNTHETIC per-building population (genuine
+      // residents, all 7 cities); else the per-DESO population distributed over
+      // RESIDENTIAL buildings (residential via andamal1='Bostad'); else the
+      // Växjö residential SCB map. Denser residential buildings weigh more.
       let demandWeight = 1.0;
-      const popMap = (typeof epiBuildingPopMap !== 'undefined' && epiBuildingPopMap && epiBuildingPopMap.size)
-        ? epiBuildingPopMap
-        : ((vaxjoBuildingPopMap && vaxjoBuildingPopMap.size) ? vaxjoBuildingPopMap : null);
+      const popMap = (typeof synthBuildingPopMap !== 'undefined' && synthBuildingPopMap && synthBuildingPopMap.size)
+        ? synthBuildingPopMap
+        : ((typeof epiBuildingPopMap !== 'undefined' && epiBuildingPopMap && epiBuildingPopMap.size)
+          ? epiBuildingPopMap
+          : ((vaxjoBuildingPopMap && vaxjoBuildingPopMap.size) ? vaxjoBuildingPopMap : null));
       if (popMap) {
         const estPop = popMap.get(featIdx) || 0;
         demandWeight = estPop > 0 ? Math.max(0.5, Math.min(5.0, Math.log1p(estPop))) : 1.0;
