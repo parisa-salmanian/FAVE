@@ -10,17 +10,9 @@
     58.7509124,
     16.3503511
   ],
-  "baked_at": "2026-05-28T10:51:13.425562+00:00",
+  "baked_at": "2026-06-24T15:30:46.079882+00:00",
   "counts": {
-    "grocery": 68,
-    "hospital": 1,
-    "pharmacy": 15,
-    "dentistry": 5,
-    "healthcare_center": 15,
-    "veterinary": 2,
-    "university": 8,
-    "kindergarten": 89,
-    "school_primary": 1,
-    "school_high": 85
+    "school_primary": 74,
+    "school_high": 10
   }
 }

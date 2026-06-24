@@ -16,14 +16,12 @@ const POI_QUERIES = {
   veterinary: ['nwr["amenity"="veterinary"]'],
   university: ['nwr["amenity"="university"]'],
   kindergarten:   ['nwr["amenity"="kindergarten"]','nwr["amenity"="childcare"]'],
+  // Both school buckets pull the SAME amenity=school set (mirrors POI_QUERIES in
+  // tools/bake_city_data.py); the grundskola/gymnasium split is done downstream.
+  // Only the dead Overpass-fallback path uses these — supported cities load the
+  // pre-split baked geojsons directly in fetchPOIs.
   school_primary: ['nwr["amenity"="school"]'],
-  school_high:    [
-    'nwr["amenity"="school"]',
-    'nwr["amenity"="college"]',
-    'nwr["school:level"~"upper|secondary|gymnas|high",i]',
-    'nwr["education:level"~"upper|secondary|gymnas|high",i]',
-    'nwr["isced:level"~"3",i]'
-  ]
+  school_high:    ['nwr["amenity"="school"]']
 };
 
 function tagsText(...vals) {

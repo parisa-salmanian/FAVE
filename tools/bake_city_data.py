@@ -94,14 +94,16 @@ POI_QUERIES: dict[str, list[str]] = {
         'nwr["amenity"="kindergarten"]',
         'nwr["amenity"="childcare"]',
     ],
+    # Both school buckets pull the SAME `amenity=school` set; the
+    # primary/gymnasium split is done in filter_school_subtype() using the
+    # _is_swedish_gymnasium() heuristic (ported from EpiCity osm.py). Swedish OSM
+    # tags school levels very inconsistently, so the old approach — keep a school
+    # in `school_primary` only if explicitly tagged primary — dropped the many
+    # untagged grundskolor entirely (e.g. Göteborg kept 1 of ~343). Defaulting an
+    # untagged `amenity=school` to grundskola (primary) and promoting only the
+    # heuristic gymnasium matches recovers them and de-inflates school_high.
     "school_primary": ['nwr["amenity"="school"]'],
-    "school_high": [
-        'nwr["amenity"="school"]',
-        'nwr["amenity"="college"]',
-        'nwr["school:level"~"upper|secondary|gymnas|high",i]',
-        'nwr["education:level"~"upper|secondary|gymnas|high",i]',
-        'nwr["isced:level"~"3",i]',
-    ],
+    "school_high": ['nwr["amenity"="school"]'],
 }
 
 
@@ -210,38 +212,54 @@ def dedupe_pois(features: list[dict[str, Any]], category: str) -> list[dict[str,
     return list(by_place.values())
 
 
+def _is_swedish_gymnasium(tags: dict[str, Any]) -> bool:
+    """Detect a Swedish `gymnasium` (upper secondary, ages 16-19) vs. a regular
+    `grundskola`. Ported from EpiCity `osm.py:_is_swedish_gymnasium` (copy — the
+    EpiCity reference under epicity_engine/ is never modified). OSM tags Swedish
+    school levels very inconsistently, so several signals are combined:
+      • `isced:level` contains "3" (ISCED 3 = upper secondary; authoritative but
+        rarely tagged);
+      • `school:type` / `school:level` contains gymnasium / upper_secondary /
+        secondary;
+      • the name contains "gymnasi" (catches "Gymnasium" / "Gymnasiet" / …);
+      • a small list of historic gymnasiums whose names predate the word;
+      • `grades` includes "gy" or year labels 10/11/12.
+    NB `building=gymnasium` is deliberately NOT a signal — that OSM tag means a
+    sports hall and would create false positives.
+    """
+    isced = (tags.get("isced:level", "") or "").strip()
+    if "3" in isced.split(";"):
+        return True
+    school_type = (tags.get("school:type", "") or "").lower()
+    if any(kw in school_type for kw in ("gymnasium", "upper_secondary", "secondary")):
+        return True
+    school_level = (tags.get("school:level", "") or "").lower()
+    if any(kw in school_level for kw in ("gymnasium", "upper_secondary", "secondary")):
+        return True
+    name = (tags.get("name:sv") or tags.get("name") or "").lower()
+    if "gymnasi" in name:
+        return True
+    _GYM_NAMES = ("katedralskol", "teknikum", "kungsmadskol")
+    if any(kw in name for kw in _GYM_NAMES):
+        return True
+    grades = (tags.get("grades") or tags.get("grade") or "").lower()
+    if "gy" in grades or "10" in grades or "11" in grades or "12" in grades:
+        return True
+    return False
+
+
 def filter_school_subtype(features: list[dict[str, Any]], category: str) -> list[dict[str, Any]]:
-    """For school_primary and school_high, mirror the post-filter in fetchPOIs."""
+    """Split the shared `amenity=school` set into grundskola (school_primary,
+    the default) vs. gymnasium (school_high, the heuristic matches). Every school
+    lands in exactly one bucket — none are dropped, unlike the old level-tag
+    post-filter. See _is_swedish_gymnasium / the POI_QUERIES note."""
     if category not in {"school_primary", "school_high"}:
         return features
-
-    def parse_isced_digits(val: Any) -> list[int]:
-        return [int(c) for c in str(val or "") if c.isdigit()]
-
-    def text_for(tags: dict[str, Any]) -> str:
-        return " ".join(
-            str(tags.get(k) or "").lower()
-            for k in ("school:level", "education:level", "level")
-        )
-
-    def is_primary(tags: dict[str, Any]) -> bool:
-        t = text_for(tags)
-        if any(kw in t for kw in ("grund", "primary", "lower", "elementary")):
-            return True
-        nums = parse_isced_digits(tags.get("isced:level"))
-        return 1 in nums or 2 in nums
-
-    def is_high(tags: dict[str, Any]) -> bool:
-        t = text_for(tags)
-        if any(kw in t for kw in ("gymnas", "high", "upper", "secondary")):
-            return True
-        return 3 in parse_isced_digits(tags.get("isced:level"))
-
-    pred = is_primary if category == "school_primary" else is_high
-    filtered = [f for f in features if pred(f.get("properties", {}).get("tags", {}) or {})]
-    # If the post-filter discards everything, keep the unfiltered set so the
-    # frontend at least has data — same fallback behavior as fetchPOIs.
-    return filtered if filtered else features
+    want_high = (category == "school_high")
+    return [
+        f for f in features
+        if _is_swedish_gymnasium(f.get("properties", {}).get("tags", {}) or {}) == want_high
+    ]
 
 
 FORBIDDEN_ZONE_SELECTORS: list[str] = [
@@ -357,7 +375,7 @@ def overpass_to_polygons(opj: dict[str, Any]) -> list[dict[str, Any]]:
     return features
 
 
-def bake_city(key: str, query_string: str, force: bool, log) -> None:
+def bake_city(key: str, query_string: str, force: bool, log, cats: "set[str] | None" = None) -> None:
     out_dir = CACHE_ROOT / key
     pois_dir = out_dir / "pois"
     pois_dir.mkdir(parents=True, exist_ok=True)
@@ -384,6 +402,8 @@ def bake_city(key: str, query_string: str, force: bool, log) -> None:
     counts = meta.get("counts", {})
 
     for category, selectors in POI_QUERIES.items():
+        if cats is not None and category not in cats:
+            continue
         out_path = pois_dir / f"{category}.geojson"
         if out_path.exists() and not force:
             try:
@@ -410,9 +430,13 @@ def bake_city(key: str, query_string: str, force: bool, log) -> None:
         log(f"[{key}] {category}: {len(feats)} POIs → {out_path.relative_to(REPO_ROOT)}")
         time.sleep(OVERPASS_INTER_QUERY_DELAY_S)
 
-    # Forbidden zones: water bodies, wetlands (polygon geometry required)
+    # Forbidden zones: water bodies, wetlands (polygon geometry required).
+    # Skipped entirely when a --cats subset is in effect (those runs only touch
+    # the named POI categories, not the shared zone layer).
     forbidden_path = out_dir / "forbidden_zones.geojson"
-    if not forbidden_path.exists() or force:
+    if cats is not None:
+        pass
+    elif not forbidden_path.exists() or force:
         log(f"[{key}] querying Overpass for forbidden zones (water/wetlands)…")
         time.sleep(OVERPASS_INTER_QUERY_DELAY_S)
         body = build_overpass_body_geom(bbox, FORBIDDEN_ZONE_SELECTORS)
@@ -460,6 +484,12 @@ def main() -> int:
              "Edit CITIES in this file to make the addition permanent.",
     )
     parser.add_argument(
+        "--cats", nargs="+", default=None,
+        help="Subset of POI categories to (re)bake (default: all). "
+             "Other categories' cached files are left untouched. "
+             "Keys: " + ", ".join(POI_QUERIES),
+    )
+    parser.add_argument(
         "--list", action="store_true",
         help="List supported city keys and exit.",
     )
@@ -485,10 +515,18 @@ def main() -> int:
     def log(msg: str) -> None:
         print(msg, flush=True)
 
-    log(f"baking {len(targets)} city/cities into {CACHE_ROOT}")
+    cats = set(args.cats) if args.cats else None
+    if cats:
+        unknown = cats - set(POI_QUERIES)
+        if unknown:
+            print(f"unknown POI categories: {', '.join(sorted(unknown))}", file=sys.stderr)
+            return 2
+
+    log(f"baking {len(targets)} city/cities into {CACHE_ROOT}"
+        + (f" (categories: {', '.join(sorted(cats))})" if cats else ""))
     for key, query in targets:
         try:
-            bake_city(key, query, args.force, log)
+            bake_city(key, query, args.force, log, cats=cats)
         except Exception as exc:
             log(f"[{key}] FAILED: {exc}")
             return 1
