@@ -530,6 +530,12 @@ body[data-inspector-open="true"] .shell-zoom { right: calc(var(--inspector-w) + 
   color: var(--ink);
 }
 .shell-popover .popover-body { padding: 12px 14px; }
+/* POI list can be long (30 categories) — cap height and scroll so the bottom
+   rows stay reachable instead of running off the bottom of the screen. */
+.shell-poi-menu .popover-body {
+  max-height: min(60vh, 540px);
+  overflow-y: auto;
+}
 
 /* Generic .icon-btn used by panes (DR Explorer, Parallel Coords header).
    The fave-topbar / shell-drawer-bar scoped versions still take precedence
