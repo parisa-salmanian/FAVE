@@ -1140,17 +1140,35 @@
         </div>
         <p class="ramp-help">Color encodes normalized benefit from gravity-based accessibility. Lower = higher equity.</p>
 
-        <h3 class="section-title">By category</h3>
+        <h3 class="section-title">
+          <span class="st-label">
+            <button type="button" class="insp-help-btn" aria-label="About: By category" aria-expanded="false" data-help-target="helpByCategory"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 1 1 5.5 1.7c-.6.6-1.6 1-1.6 2.3M12 17v.01"/></svg></button>
+            By category
+          </span>
+        </h3>
+        <p class="insp-help-text" id="helpByCategory" hidden>Per-service fairness for this place: how equitable access is to each service type (grocery, school, healthcare…) under the chosen travel mode — it flags which specific services are lacking here. Differs from <b>Supply provision</b> (how crowded/available a service is, not just how close) and <b>Population &amp; demographics</b> (who actually lives here).</p>
         <div id="inspCategoryBars" class="bar-list"></div>
 
         <div id="insp2sfcaSection" style="display:none">
-          <h3 class="section-title" id="insp2sfcaTitle">Supply provision (2SFCA)</h3>
+          <h3 class="section-title">
+            <span class="st-label">
+              <button type="button" class="insp-help-btn" aria-label="About: Supply provision" aria-expanded="false" data-help-target="helpSupply"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 1 1 5.5 1.7c-.6.6-1.6 1-1.6 2.3M12 17v.01"/></svg></button>
+              <span id="insp2sfcaTitle">Supply provision (2SFCA)</span>
+            </span>
+          </h3>
+          <p class="insp-help-text" id="helpSupply" hidden>How much service capacity is actually available to this place once everyone else competing for it is counted in (supply-to-demand crowding), measured over the real travel network — it answers “is there enough to go around?”. <b>By category</b> instead measures closeness / equity of access, and <b>Population &amp; demographics</b> describes the residents.</p>
           <p class="ramp-help" style="margin-top:-2px">Network-accurate supply available to this building once competing demand is accounted for. Normalized within each service type; “—” = no service reachable in range.</p>
           <div id="insp2sfcaBars" class="bar-list"></div>
         </div>
 
         <div id="inspDemoSection" style="display:none">
-          <h3 class="section-title" id="inspDemoTitle">Population &amp; demographics</h3>
+          <h3 class="section-title">
+            <span class="st-label">
+              <button type="button" class="insp-help-btn" aria-label="About: Population &amp; demographics" aria-expanded="false" data-help-target="helpDemo"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 1 1 5.5 1.7c-.6.6-1.6 1-1.6 2.3M12 17v.01"/></svg></button>
+              <span id="inspDemoTitle">Population &amp; demographics</span>
+            </span>
+          </h3>
+          <p class="insp-help-text" id="helpDemo" hidden>Who lives here — modeled residents, income, need, and the age / education / employment makeup of the population. It supplies the demand-and-need context that <b>By category</b> fairness and <b>Supply provision</b> are weighted against; it describes people, not access.</p>
           <p class="ramp-help" id="inspDemoHelp" style="margin-top:-2px">Synthetic per-building population, income and need (EpiCity, anchored to SCB DESO means); remaining shares are DESO-level.</p>
           <div id="inspDemoList" class="kv-list"></div>
         </div>

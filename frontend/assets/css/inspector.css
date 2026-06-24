@@ -146,6 +146,54 @@ body[data-theme="dark"] #inspector[data-open="true"] {
 }
 #inspector .section-title + .section-title { margin-top: 16px; }
 
+/* Help (?) affordance: a small leading button in section titles and demo rows
+   that toggles an inline explanation. Click-to-read, so the longer multi-line
+   blurbs aren't constrained by the single-line hover tooltip (.fave-tip). */
+#inspector .st-label { display: inline-flex; align-items: center; gap: 6px; }
+#inspector .insp-help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--insp-ink-3);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: color 0.12s, background 0.12s;
+}
+#inspector .insp-help-btn:hover,
+#inspector .insp-help-btn:focus-visible,
+#inspector .insp-help-btn[aria-expanded="true"] {
+  color: var(--insp-ink);
+  background: var(--insp-surface-2);
+  outline: none;
+}
+#inspector .insp-help-text {
+  font-size: 11px;
+  color: var(--insp-ink-2);
+  line-height: 1.5;
+  margin: -4px 0 12px;
+  padding: 8px 10px;
+  background: var(--insp-surface-2);
+  border-radius: 6px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+#inspector .insp-help-text b { color: var(--insp-ink); font-weight: 600; }
+/* Per-item explanation under a demographic row (toggled by its ? button). */
+#inspector .kv-key .insp-help-btn { width: 14px; height: 14px; margin-right: 2px; }
+#inspector .kv-help {
+  font-size: 11px;
+  color: var(--insp-ink-3);
+  line-height: 1.45;
+  padding: 2px 0 8px;
+}
+
 #inspector .kv-list {
   display: flex;
   flex-direction: column;

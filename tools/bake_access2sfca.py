@@ -83,6 +83,24 @@ MODE_CATCHMENT_FACTOR = {"walking": 1.0, "cycling": 3.0, "driving": 8.0}
 CATS_ALL = list(CATCHMENT_WALK_M.keys())
 SWEREF99 = 3006  # metric CRS for area / accurate centroids in Sweden
 
+# ---- transit mode (uses the baked stop network, NOT an OSMnx graph) --------
+# Mirrors frontend/assets/js/lib/transit.js exactly: a building->POI transit
+# trip is access-walk (origin -> nearest stop) + boarding wait + in-vehicle
+# (stop->stop matrix) + egress-walk (stop -> POI). The resulting minutes are
+# converted to "effective metres" at the reference walking speed (the same unit
+# fairness.js's ifCityDistanceForMode emits), so the 2SFCA Gaussian decay and the
+# per-category catchments below apply unchanged. Catchment factor 1.0 means
+# transit gets the SAME time budget as walking for each category (just more
+# geographic reach), exactly how the walk/cycle/drive factors encode an equal
+# time budget across modes.
+TRANSIT_ACCESS_WALK_KMH = 5.0     # config.js TRANSIT_ACCESS_WALK_KMH
+TRANSIT_MAX_ACCESS_M = 1500.0     # config.js TRANSIT_MAX_ACCESS_M
+TRANSIT_NEAREST_STOPS_K = 3       # config.js TRANSIT_NEAREST_STOPS_K
+REF_SPEED_KMH = 5.0               # config.js IF_CITY_REFERENCE_SPEED_KMH (walking)
+TRANSIT_CATCHMENT_FACTOR = 1.0    # equal time budget vs walking
+# minutes -> effective metres at the reference walking speed.
+MIN_TO_EFF_M = REF_SPEED_KMH * 1000.0 / 60.0   # 83.33 m per minute
+
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -343,10 +361,161 @@ def bake_mode(city: str, mode: str, cats: list[str], lons, lats, P, meta) -> dic
     }
 
 
+# ---- transit E2SFCA --------------------------------------------------------
+
+def _equirect_xy(lon, lat, lat0):
+    """Local equirectangular projection to metres (good for <2 km neighbour queries)."""
+    x = np.asarray(lon, dtype=float) * (111320.0 * math.cos(math.radians(lat0)))
+    y = np.asarray(lat, dtype=float) * 110540.0
+    return np.column_stack([x, y])
+
+
+def _nearest_stops(tree, stop_xy, pt_xy, k, max_m):
+    """k nearest stops within max_m for one projected point. Returns [(idx, walk_min), ...]."""
+    kk = min(k, stop_xy.shape[0])
+    dist, idx = tree.query(pt_xy, k=kk)
+    dist = np.atleast_1d(dist)
+    idx = np.atleast_1d(idx)
+    out = []
+    for d, i in zip(dist, idx):
+        if d <= max_m:
+            out.append((int(i), (d / 1000.0 / TRANSIT_ACCESS_WALK_KMH) * 60.0))
+    return out
+
+
+def load_transit_network(city: str):
+    fp = CITIES / city / "transit" / "network.json"
+    if not fp.exists():
+        return None
+    net = json.loads(fp.read_text(encoding="utf-8"))
+    stops = np.asarray(net["stops"], dtype=float)          # (n, 2) lon, lat
+    wait = np.asarray(net["wait_min"], dtype=float)        # (n,)
+    # n x n in-vehicle minutes; None (unreachable) -> inf.
+    T = np.array([[(v if v is not None else np.inf) for v in row]
+                  for row in net["time_min"]], dtype=float)
+    return {"stops": stops, "wait": wait, "time": T, "n": int(net.get("n", len(stops)))}
+
+
+def bake_transit_mode(city: str, cats: list[str], lons, lats, P, net) -> dict:
+    from scipy.spatial import cKDTree
+
+    stops = net["stops"]
+    wait = net["wait"]
+    T = net["time"]
+    nstop = stops.shape[0]
+    lat0 = float(np.mean(lats)) if len(lats) else 57.0
+    stop_xy = _equirect_xy(stops[:, 0], stops[:, 1], lat0)
+    bldg_xy = _equirect_xy(lons, lats, lat0)
+    tree = cKDTree(stop_xy)
+
+    # Building -> nearby stops (access walk), as flat parallel arrays for vectorised
+    # per-POI reduction. A building with no stop within range gets no transit access.
+    print(f"  [transit] snapping {len(lons)} buildings to {nstop} stops ...", flush=True)
+    kk = min(TRANSIT_NEAREST_STOPS_K, nstop)
+    dist, idx = tree.query(bldg_xy, k=kk)
+    dist = np.atleast_2d(dist.T).T if dist.ndim == 1 else dist
+    idx = np.atleast_2d(idx.T).T if idx.ndim == 1 else idx
+    bi_list, bs_list, ba_list = [], [], []
+    for col in range(idx.shape[1]):
+        d = dist[:, col]
+        within = d <= TRANSIT_MAX_ACCESS_M
+        rows = np.nonzero(within)[0]
+        bi_list.append(rows)
+        bs_list.append(idx[rows, col].astype(np.int64))
+        ba_list.append((d[rows] / 1000.0 / TRANSIT_ACCESS_WALK_KMH) * 60.0)
+    bi = np.concatenate(bi_list) if bi_list else np.array([], dtype=np.int64)
+    bs = np.concatenate(bs_list) if bs_list else np.array([], dtype=np.int64)
+    ba = np.concatenate(ba_list) if ba_list else np.array([], dtype=float)
+    n_access = int(np.unique(bi).size) if bi.size else 0
+    print(f"  [transit] {n_access}/{len(lons)} buildings within "
+          f"{TRANSIT_MAX_ACCESS_M:.0f} m of a stop", flush=True)
+
+    out_cats = {}
+    factor = TRANSIT_CATCHMENT_FACTOR
+    for cat in cats:
+        pois = load_pois(city, cat)
+        if not pois:
+            continue
+        catch = CATCHMENT_WALK_M.get(cat, 1500) * factor   # effective metres
+        sigma = catch / 3.0
+
+        poi_pairs = []   # per POI: (bidx_array, eff_dist_m_array)
+        for p in pois:
+            pxy = _equirect_xy([p["lon"]], [p["lat"]], lat0)[0]
+            pstops = _nearest_stops(tree, stop_xy, pxy, TRANSIT_NEAREST_STOPS_K, TRANSIT_MAX_ACCESS_M)
+            if not pstops:
+                poi_pairs.append((np.array([], dtype=np.int64), np.array([], dtype=float)))
+                continue
+            ps_idx = np.array([s for s, _ in pstops], dtype=np.int64)
+            ps_egress = np.array([e for _, e in pstops], dtype=float)
+            # Cost to reach this POI once boarded at origin stop os:
+            #   stopCost[os] = wait[os] + min_ps( T[os, ps] + egress_ps )
+            ride_egress = T[:, ps_idx] + ps_egress[None, :]      # (nstop, |ps|)
+            stop_cost = wait + ride_egress.min(axis=1)           # (nstop,)
+            # Building total minutes = min over its stops of access + stopCost.
+            cand = ba + stop_cost[bs]                            # per (building,stop) pair
+            totals = np.full(len(lons), np.inf)
+            np.minimum.at(totals, bi, cand)
+            eff_m = totals * MIN_TO_EFF_M
+            mask = np.isfinite(eff_m) & (eff_m <= catch)
+            bidx = np.nonzero(mask)[0].astype(np.int64)
+            poi_pairs.append((bidx, eff_m[bidx]))
+
+        # Step 1: supply-to-demand ratio R_j.
+        R = np.zeros(len(pois))
+        for j, (bidx, dd) in enumerate(poi_pairs):
+            if bidx.size == 0:
+                continue
+            wj = gaussian_w(dd, sigma)
+            demand = float(np.sum(P[bidx] * wj))
+            R[j] = (pois[j]["cap"] / demand) if demand > 0 else 0.0
+
+        # Step 2: building accessibility A_i = sum_j R_j W(d_ij).
+        A = np.zeros(len(lons))
+        for j, (bidx, dd) in enumerate(poi_pairs):
+            if bidx.size == 0 or R[j] == 0:
+                continue
+            A[bidx] += R[j] * gaussian_w(dd, sigma)
+
+        poi_out = []
+        for j, p in enumerate(pois):
+            bidx, dd = poi_pairs[j]
+            demand = float(np.sum(P[bidx] * gaussian_w(dd, sigma))) if bidx.size else 0.0
+            poi_out.append({
+                "id": p["id"], "lon": round(p["lon"], 6), "lat": round(p["lat"], 6),
+                "cap": p["cap"], "demand": round(demand, 1), "R": sig(float(R[j]), 4),
+            })
+
+        nz = np.nonzero(A > 0)[0]
+        a_sparse = [[int(i), sig(float(A[i]), 4)] for i in nz]
+        out_cats[cat] = {
+            "catchment_m": round(catch, 1), "sigma_m": round(sigma, 1),
+            "n_pois": len(pois), "n_reachable": int(nz.size),
+            "pois": poi_out, "a": a_sparse,
+        }
+        print(f"    [{cat}] {len(pois)} pois, catch {catch:.0f}m (eff), "
+              f"{nz.size}/{len(lons)} buildings reachable", flush=True)
+
+    return {
+        "city": city, "mode": "transit", "baked_at": _now_iso(), "n": len(lons),
+        "cats": out_cats,
+        "params": {
+            "metric": "E2SFCA",
+            "decay": "gaussian W=exp(-d^2/(2 sigma^2)), sigma=catchment/3",
+            "network": "baked transit stop network (transit/network.json)",
+            "distance": ("transit time -> effective metres at "
+                         f"{REF_SPEED_KMH} km/h: access walk + wait + in-vehicle + egress walk"),
+            "demand": "DESO pop distributed to residential buildings by floor area",
+            "capacity_note": "S_j from POI beds/capacity tags else 1 (mostly uniform)",
+            "catchment_factor": factor,
+        },
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("city")
-    ap.add_argument("--modes", default="walking,cycling,driving")
+    ap.add_argument("--modes", default="walking,cycling,driving,transit")
     ap.add_argument("--cats", default=",".join(CATS_ALL))
     args = ap.parse_args()
 
@@ -364,20 +533,43 @@ def main():
 
     # Shared building-coordinate index (join key for runtime, like routing/index.json).
     # The `a` sparse arrays in each mode file reference these positions by bldgIdx.
+    # The keys are mode-independent (building centroids), so re-baking a single
+    # mode regenerates them identically — but UNION the `modes` list with whatever
+    # is already on disk so a `--modes transit` run doesn't drop walking/cycling/
+    # driving from the manifest.
     keys = [f"{round(float(lons[i]),6)},{round(float(lats[i]),6)}" for i in range(len(lons))]
+    idx_fp = outdir / "index.json"
+    prior_modes = []
+    if idx_fp.exists():
+        try:
+            prior_modes = json.loads(idx_fp.read_text(encoding="utf-8")).get("modes", []) or []
+        except (ValueError, OSError):
+            prior_modes = []
+    all_modes = list(dict.fromkeys([*prior_modes, *modes]))   # preserve order, dedupe
     idx = {
         "city": city, "baked_at": _now_iso(), "n": len(keys),
         "key_format": "lon,lat", "key_decimals": 6, "key": keys,
-        "modes": modes, "cats": cats,
+        "modes": all_modes, "cats": cats,
     }
-    (outdir / "index.json").write_text(json.dumps(idx, separators=(",", ":")), encoding="utf-8")
+    idx_fp.write_text(json.dumps(idx, separators=(",", ":")), encoding="utf-8")
+
+    # Load the transit network once if any transit bake is requested.
+    transit_net = load_transit_network(city) if "transit" in modes else None
 
     for mode in modes:
-        if mode not in MODE_NETWORK:
+        if mode == "transit":
+            if not transit_net:
+                print(f"skip transit — no transit/network.json for {city}", flush=True)
+                continue
+            print(f"\n=== {city} / transit ===", flush=True)
+            t0 = time.time()
+            result = bake_transit_mode(city, cats, lons, lats, P, transit_net)
+        elif mode in MODE_NETWORK:
+            print(f"\n=== {city} / {mode} ===", flush=True)
+            t0 = time.time()
+            result = bake_mode(city, mode, cats, lons, lats, P, meta)
+        else:
             print(f"skip unknown mode '{mode}'", flush=True); continue
-        print(f"\n=== {city} / {mode} ===", flush=True)
-        t0 = time.time()
-        result = bake_mode(city, mode, cats, lons, lats, P, meta)
         fp = outdir / f"{mode}.json"
         fp.write_text(json.dumps(result, separators=(",", ":")), encoding="utf-8")
         kb = fp.stat().st_size / 1024

@@ -161,6 +161,18 @@ actually available to me once everyone else competing for it is accounted for"
   with `python tools/bake_access2sfca.py <city>` (big metros are slow — driving
   graphs are large). Catchments per category scale by mode (walk×1, cycle×3,
   drive×8).
+- **transit mode (added 2026-06-24)** uses the baked stop network
+  (`transit/network.json`), NOT an OSMnx graph — so `--modes transit` is fast (no
+  graph build). `bake_transit_mode` mirrors `lib/transit.js` exactly: a
+  building→POI trip = access-walk (≤1500 m to nearest 3 stops, 5 km/h) + boarding
+  wait + in-vehicle (stop→stop matrix) + egress-walk, then converts the minutes to
+  *effective metres* at the 5 km/h reference walking speed (`time_min × 83.33`).
+  Those effective metres feed the SAME Gaussian decay + per-category catchments
+  with `factor 1.0`, i.e. transit gets the same time budget as walking (just more
+  geographic reach) — the same equal-time-budget logic the walk/cycle/drive
+  factors encode. Output schema is identical (`transit.json`). `index.json`'s
+  `modes` list is UNIONed with what's on disk, so `--modes transit` doesn't drop
+  the other three. Cities without a transit network skip transit silently.
 - Runtime: `frontend/assets/js/lib/access2sfca.js` loads index + mode file,
   joins buildings by `"lon,lat"` coordinate snap (≤45 m — runtime building set is
   filtered to ~45.7k vs the bake's ~50.3k, so featIdx can't be used). Raw A
@@ -168,10 +180,13 @@ actually available to me once everyone else competing for it is accounted for"
   comparable across categories; the consumer normalises **per category**
   (log1p + robust p10..p95 clamp) to 0..1 provision, then combines by mean for an
   overall score. `views/inspector.js` `setBuildingSelection` attaches it async
-  (mode follows `#fairnessTravelMode`, transit falls back to walking) and renders
-  "Supply provision (2SFCA · <mode>)" + a per-category breakdown. It does NOT feed
-  the Gini/headline number — purely an inspector companion (priority-zone use is
-  a future step).
+  (mode follows `#fairnessTravelMode`, including `transit` via `transit.json`;
+  unknown modes fall back to walking) and renders
+  "Supply provision (2SFCA · <mode>)" + a per-category breakdown. When the travel
+  mode changes, `state.js` calls `faveInspector.notifyTravelModeChanged()` so the
+  open inspector re-fetches the new mode's provision immediately (it used to only
+  refresh on the next map hover). It does NOT feed the Gini/headline number —
+  purely an inspector companion (priority-zone use is a future step).
 
 ## Demographic fairness weighting (EpiCity SCB data)
 

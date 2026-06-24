@@ -897,6 +897,11 @@ function wireUI() {
         console.error('travel_mode record failed', err);
       } finally {
         hideGlobalSpinner();
+        // Mode-dependent companion metric (2SFCA) in the open inspector must
+        // follow the new mode immediately, not wait for the next map hover.
+        if (window.faveInspector && typeof window.faveInspector.notifyTravelModeChanged === 'function') {
+          window.faveInspector.notifyTravelModeChanged();
+        }
       }
     });
   }

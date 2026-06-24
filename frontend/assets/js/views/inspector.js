@@ -49,6 +49,36 @@
     return Number.isFinite(n) ? n.toFixed(digits) : '—';
   }
 
+  // Inline "?" help glyph (matches the shell's `help` icon) + a leading button
+  // that toggles an adjacent explanation. Used by the demographic rows below.
+  const HELP_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 1 1 5.5 1.7c-.6.6-1.6 1-1.6 2.3M12 17v.01"/></svg>';
+  function helpBtn(label) {
+    return `<button type="button" class="insp-help-btn" aria-label="About: ${label}" aria-expanded="false">${HELP_SVG}</button>`;
+  }
+  function escAttr(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Short per-item explanations for the Population & demographics rows: what the
+  // value means and which direction is "better" for the resident (where it has a
+  // direction — many are descriptive context, not good/bad).
+  const DEMO_HELP = {
+    pop:           'Modeled residents living here (official SCB area population shared out by building size). It is the demand weight behind the fairness numbers — more people means more is at stake, not “better” or “worse”.',
+    income:        'Average modeled disposable income (kSEK/year). Higher income usually marks a more advantaged area; lower-income areas tend to read as higher-need in the fairness model.',
+    need:          'Composite socioeconomic need (z-score combining low income and high dependency). Higher = more disadvantaged, so an under-served high-need area counts as less fair. Lower = more advantaged.',
+    levels:        'Estimated number of floors, used to model how many residents the footprint holds. Neither value is better or worse.',
+    area:          'Ground footprint of the building (m²). Larger footprints are modeled to hold more residents. Descriptive only.',
+    zone:          'EpiCity residential density class (1 = low-density, 3 = high-density). Descriptive context only.',
+    child_frac:    'Share of residents aged 0–15. High shares flag demand for schools, kindergartens and family services — context, not good or bad.',
+    elder_frac:    'Share of residents aged 65+. High shares flag demand for healthcare and step-free, nearby services. Context, not good or bad.',
+    dependency:    '(children + elderly) ÷ working-age residents. Higher means more dependents per worker — a marker of higher need.',
+    higher_ed:     'Share eligible for / holding higher education. Higher generally indicates a more advantaged, higher-resource area.',
+    neet:          'Youth not in employment, education or training. Lower is better; high values signal disadvantage.',
+    income_support:'Share on long-term income support (welfare). Lower is better; high values signal economic hardship and higher need.',
+    male_frac:     'Share of male residents (≈50% is balanced). Descriptive only — no “better” value.',
+    deso:          'The SCB statistical area (DESO) this building falls in — the source zone for the demographic means shown above.',
+  };
+
   // Currently inspected object: { kind: 'mezo' | 'district' | null, ... }
   let selected = null;
 
@@ -63,7 +93,9 @@
   let _a2sToken = 0;
   function _a2sModeFromUI() {
     let m = (document.getElementById('fairnessTravelMode')?.value || 'walking').toLowerCase();
-    return (m === 'walking' || m === 'cycling' || m === 'driving') ? m : 'walking';
+    // transit now has its own baked 2SFCA layer (transit.json); fall back to
+    // walking only for any genuinely unknown mode value.
+    return (m === 'walking' || m === 'cycling' || m === 'driving' || m === 'transit') ? m : 'walking';
   }
   // Normalise per-building 2SFCA cats into the uniform shape the renderer reads:
   // { norm (0..1), unreachable (no POI of this cat in range), sub (optional note) }.
@@ -290,27 +322,32 @@
     }
     const pctFrac = v => `${(v * 100).toFixed(1)}%`;     // 0..1 fraction → %
     const pctRaw  = v => `${v.toFixed(1)}%`;             // already a percentage
+    // Each row: [label, value, helpKey] — helpKey looks up DEMO_HELP for the
+    // toggled "?" explanation. Omit helpKey to render a row with no help icon.
     const rows = [];
-    rows.push(['Residents (synthetic)', Math.round(d.pop).toLocaleString() + (agg ? ' (sum)' : '')]);
-    if (Number.isFinite(d.income)) rows.push([`Income (synthetic${agg ? ', mean' : ''})`, `${Math.round(d.income).toLocaleString()} kSEK`]);
-    if (Number.isFinite(d.need))   rows.push([`Need index (synthetic${agg ? ', mean' : ''})`, d.need.toFixed(2)]);
+    rows.push(['Residents (synthetic)', Math.round(d.pop).toLocaleString() + (agg ? ' (sum)' : ''), 'pop']);
+    if (Number.isFinite(d.income)) rows.push([`Income (synthetic${agg ? ', mean' : ''})`, `${Math.round(d.income).toLocaleString()} kSEK`, 'income']);
+    if (Number.isFinite(d.need))   rows.push([`Need index (synthetic${agg ? ', mean' : ''})`, d.need.toFixed(2), 'need']);
     if (!agg) {
-      if (Number.isFinite(d.levels)) rows.push(['Building storeys', String(d.levels)]);
-      if (Number.isFinite(d.area))   rows.push(['Footprint area', `${Math.round(d.area).toLocaleString()} m²`]);
-      if (Number.isFinite(d.zone))   rows.push(['Land-use zone', `#${d.zone}`]);
+      if (Number.isFinite(d.levels)) rows.push(['Building storeys', String(d.levels), 'levels']);
+      if (Number.isFinite(d.area))   rows.push(['Footprint area', `${Math.round(d.area).toLocaleString()} m²`, 'area']);
+      if (Number.isFinite(d.zone))   rows.push(['Land-use zone', `#${d.zone}`, 'zone']);
     }
-    if (Number.isFinite(d.child_frac))     rows.push(['Children %', pctFrac(d.child_frac)]);
-    if (Number.isFinite(d.elder_frac))     rows.push(['Elderly %', pctFrac(d.elder_frac)]);
-    if (Number.isFinite(d.dependency))     rows.push(['Dependency ratio', d.dependency.toFixed(2)]);
-    if (Number.isFinite(d.higher_ed))      rows.push(['Higher-ed %', pctRaw(d.higher_ed)]);
-    if (Number.isFinite(d.neet))           rows.push(['NEET %', pctRaw(d.neet)]);
-    if (Number.isFinite(d.income_support)) rows.push(['Income support %', pctRaw(d.income_support)]);
-    if (Number.isFinite(d.male_frac))      rows.push(['Male %', pctFrac(d.male_frac)]);
-    if (!agg && d.deso) rows.push(['DESO', String(d.deso)]);
+    if (Number.isFinite(d.child_frac))     rows.push(['Children %', pctFrac(d.child_frac), 'child_frac']);
+    if (Number.isFinite(d.elder_frac))     rows.push(['Elderly %', pctFrac(d.elder_frac), 'elder_frac']);
+    if (Number.isFinite(d.dependency))     rows.push(['Dependency ratio', d.dependency.toFixed(2), 'dependency']);
+    if (Number.isFinite(d.higher_ed))      rows.push(['Higher-ed %', pctRaw(d.higher_ed), 'higher_ed']);
+    if (Number.isFinite(d.neet))           rows.push(['NEET %', pctRaw(d.neet), 'neet']);
+    if (Number.isFinite(d.income_support)) rows.push(['Income support %', pctRaw(d.income_support), 'income_support']);
+    if (Number.isFinite(d.male_frac))      rows.push(['Male %', pctFrac(d.male_frac), 'male_frac']);
+    if (!agg && d.deso) rows.push(['DESO', String(d.deso), 'deso']);
     section.style.display = '';
-    list.innerHTML = rows.map(([k, v]) =>
-      `<div class="kv"><span class="kv-key">${k}</span><span class="kv-val">${v}</span></div>`
-    ).join('');
+    list.innerHTML = rows.map(([k, v, helpKey]) => {
+      const help = helpKey && DEMO_HELP[helpKey];
+      const key = `<span class="kv-key">${help ? helpBtn(k) + ' ' : ''}${k}</span>`;
+      const kv = `<div class="kv">${key}<span class="kv-val">${v}</span></div>`;
+      return help ? kv + `<div class="kv-help" hidden>${escAttr(help)}</div>` : kv;
+    }).join('');
   }
 
   // Network-accurate E2SFCA companion: overall supply-to-demand provision plus a
@@ -594,8 +631,25 @@
     renderMetricStrip();
   }
 
+  // Re-fetch the 2SFCA companion for the CURRENT selection using the travel mode
+  // now showing in the UI. Called when the app's travel mode changes so the
+  // inspector updates immediately, instead of only when the user next hovers/
+  // clicks a feature (which is what re-ran the mode-dependent fetch before).
+  function reattachAccess2sfcaForMode() {
+    if (!selected || selected.a2sSource == null) return;
+    selected.a2s = null;          // drop stale-mode provision; bars dim while loading
+    selected.a2sPending = true;
+    renderSelection();
+    if (selected.kind === 'building') _attachAccess2sfca(selected.a2sSource);
+    else if (selected.kind === 'mezo') _attachAccess2sfcaAggregate('mezo', selected.a2sSource);
+    else if (selected.kind === 'district') _attachAccess2sfcaAggregate('district', selected.a2sSource);
+  }
+
   // ===== Public API =====
   window.faveInspector = {
+    /** Called by state.js when the travel-mode <select> changes. */
+    notifyTravelModeChanged: reattachAccess2sfcaForMode,
+
     /** Called by overlays.js handleMezoClick. */
     setMezoSelection(cell) {
       if (!cell) { selected = null; renderSelection(); return; }
@@ -613,6 +667,7 @@
         byCat: cell.__fairByCat || null,
         a2s: null,
         a2sPending: true,
+        a2sSource: cell.hex || null,
       };
       open();
       renderSelection();
@@ -635,6 +690,7 @@
         byCat: props.__fairByCat || null,
         a2s: null,
         a2sPending: true,
+        a2sSource: districtFeat,
       };
       open();
       renderSelection();
@@ -670,6 +726,7 @@
         byCat: Object.keys(byCat).length ? byCat : null,
         a2s: null,
         a2sPending: true,
+        a2sSource: buildingFeat,
         synth: (typeof synthDemographicsForFeature === 'function') ? synthDemographicsForFeature(buildingFeat) : null,
       };
       open();
@@ -733,6 +790,29 @@
         _scrollFloor = 0;           // fresh tab → start at natural height
         refreshActiveTab();
       });
+    });
+
+    // Help (?) toggles. A button either targets a fixed help paragraph by id
+    // (section headers, via data-help-target) or the .kv-help paragraph rendered
+    // right after its demographic row. Delegated so it covers re-rendered rows.
+    root.addEventListener('click', (e) => {
+      const btn = e.target.closest && e.target.closest('.insp-help-btn');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const targetId = btn.getAttribute('data-help-target');
+      let panel = null;
+      if (targetId) {
+        panel = document.getElementById(targetId);
+      } else {
+        const row = btn.closest('.kv');
+        const next = row && row.nextElementSibling;
+        if (next && next.classList.contains('kv-help')) panel = next;
+      }
+      if (!panel) return;
+      const show = panel.hasAttribute('hidden');
+      if (show) panel.removeAttribute('hidden'); else panel.setAttribute('hidden', '');
+      btn.setAttribute('aria-expanded', show ? 'true' : 'false');
     });
 
     const closeBtn = document.getElementById('inspectorCloseBtn');
