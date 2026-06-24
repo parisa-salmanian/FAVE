@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"id":1359184,"osm_type":"relation","name":"Kalmarpolisen","category":"police","tags":{"amenity":"police","building":"yes","name":"Kalmarpolisen","type":"multipolygon","website":"https://polisen.se/"}},"geometry":{"type":"Point","coordinates":[16.3394015,56.6720753]}}]}

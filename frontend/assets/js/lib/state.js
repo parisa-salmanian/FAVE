@@ -38,7 +38,8 @@ var ALL_CATEGORIES = window.ALL_CATEGORIES || [
   'grocery',
   'hospital','pharmacy','dentistry','healthcare_center','veterinary',
   'university',
-  'kindergarten','school_primary','school_high'
+  'kindergarten','school_primary','school_high',
+  ...(window.POI_EXTRA_KEYS || [])   // EpiCity-derived categories (poiCategories.js)
 ];
 window.ALL_CATEGORIES = ALL_CATEGORIES;
 const WHATIF_MOCK_TYPE_OPTIONS = ['residential', ...ALL_CATEGORIES];

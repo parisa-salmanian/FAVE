@@ -16,6 +16,7 @@
     kindergarten: 'Kindergarten',
     school_primary: 'Primary school',
     school_high: 'High school',
+    ...(window.POI_EXTRA_LABELS || {}),
   };
   const POI_COLOR = {
     grocery: 'oklch(62% 0.14 40)',
@@ -28,6 +29,7 @@
     kindergarten: 'oklch(70% 0.13 80)',
     school_primary: 'oklch(62% 0.12 200)',
     school_high: 'oklch(55% 0.13 220)',
+    ...(window.POI_EXTRA_COLORS || {}),
   };
 
   // Ramp gradient samples, in score order (0 → 1). Match #inspector --insp-fair-*.

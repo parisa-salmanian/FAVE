@@ -104,6 +104,29 @@ POI_QUERIES: dict[str, list[str]] = {
     # heuristic gymnasium matches recovers them and de-inflates school_high.
     "school_primary": ['nwr["amenity"="school"]'],
     "school_high": ['nwr["amenity"="school"]'],
+    # ── EpiCity-derived categories (Phase 2). Selectors mirror EpiCity
+    # epicity_engine/osm.py classify_zone() and the JS registry in
+    # frontend/assets/js/lib/poiCategories.js — keep all three in sync. ──
+    "library": ['nwr["amenity"="library"]'],
+    "place_of_worship": ['nwr["amenity"="place_of_worship"]'],
+    "restaurant": ['nwr["amenity"~"^(restaurant|cafe|fast_food|pub|bar|food_court|biergarten|ice_cream)$"]'],
+    "sports_centre": ['nwr["leisure"~"^(sports_centre|sports_hall|fitness_centre|swimming_pool|ice_rink|fitness_station)$"]'],
+    "hotel": ['nwr["tourism"~"^(hotel|hostel|guest_house|motel)$"]'],
+    "community_centre": ['nwr["amenity"="community_centre"]'],
+    "mall": ['nwr["shop"="mall"]'],
+    "museum": ['nwr["tourism"="museum"]', 'nwr["amenity"="museum"]'],
+    "theatre": ['nwr["amenity"~"^(theatre|concert_hall|arts_centre|cinema|opera_house|events_venue)$"]'],
+    "stadium": ['nwr["leisure"="stadium"]'],
+    "nightclub": ['nwr["amenity"="nightclub"]'],
+    "playground": ['nwr["leisure"="playground"]'],
+    "park": ['nwr["leisure"="park"]'],
+    "cemetery": ['nwr["landuse"="cemetery"]', 'nwr["amenity"="grave_yard"]'],
+    "police": ['nwr["amenity"="police"]'],
+    "fire_station": ['nwr["amenity"="fire_station"]'],
+    "castle": ['nwr["historic"~"^(castle|fort|fortress)$"]'],
+    "manor": ['nwr["historic"="manor"]'],
+    "historic_landmark": ['nwr["historic"~"^(building|yes)$"]', 'nwr["tourism"="attraction"]'],
+    "parking": ['nwr["amenity"="parking"]'],
 }
 
 

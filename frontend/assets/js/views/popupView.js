@@ -17,7 +17,8 @@ function prettyPOIName(cat) {
     grocery:'Grocery', hospital:'Hospital', pharmacy:'Pharmacy', dentistry:'Dentistry',
     healthcare_center:'HC Center', veterinary:'Veterinary', university:'University',
     kindergarten:'Kindergarten', school_primary:'Primary.S',
-    school_high:'High.S', mix:'Custom mix'
+    school_high:'High.S', mix:'Custom mix',
+    ...(window.POI_EXTRA_LABELS || {})
     };
 return dict[cat] || cat;
 }

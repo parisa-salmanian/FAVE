@@ -1,18 +1,38 @@
 {
   "categories": [
+    "castle",
+    "cemetery",
+    "community_centre",
     "dentistry",
+    "fire_station",
     "grocery",
     "healthcare_center",
+    "historic_landmark",
     "hospital",
+    "hotel",
     "kindergarten",
+    "library",
+    "mall",
+    "manor",
+    "museum",
+    "nightclub",
+    "park",
+    "parking",
     "pharmacy",
+    "place_of_worship",
+    "playground",
+    "police",
+    "restaurant",
     "school_high",
     "school_primary",
+    "sports_centre",
+    "stadium",
+    "theatre",
     "university",
     "veterinary"
   ],
   "counts": {
-    "school_primary": 45,
-    "school_high": 3
+    "mall": 6,
+    "historic_landmark": 35
   }
 }

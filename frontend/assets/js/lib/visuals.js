@@ -100,7 +100,8 @@ const YEAR_COLORS = { '0':[190,190,190], '2021':[52,152,219], '2022':[46,204,113
 const POI_MARK_COLORS = {
   grocery:[0,180,255], hospital:[0,180,255], pharmacy:[0,180,255], dentistry:[0,180,255],
   healthcare_center:[0,180,255], veterinary:[0,180,255], university:[0,180,255],
-  kindergarten:[0,180,255], school_primary:[0,180,255], school_high:[0,180,255]
+  kindergarten:[0,180,255], school_primary:[0,180,255], school_high:[0,180,255],
+  ...(window.POI_EXTRA_MARKCOLORS || {})
 };
 
 const POI_SYMBOLS = {
@@ -114,6 +115,7 @@ const POI_SYMBOLS = {
   kindergarten:      { icon: 'assets/icons/poi-kindergarten.svg' },
   school_primary:    { icon: 'assets/icons/poi-school_primary.svg' },
   school_high:       { icon: 'assets/icons/poi-school_high.svg' },
+  ...(window.POI_EXTRA_SYMBOLS || {}),
   default:           { icon: 'assets/icons/poi-university.svg' },
 };
 

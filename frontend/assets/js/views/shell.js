@@ -52,6 +52,7 @@
     { id: 'kindergarten',      label: 'Kindergarten',color: 'oklch(70% 0.13 80)' },
     { id: 'school_primary',    label: 'Primary.S',   color: 'oklch(62% 0.12 200)' },
     { id: 'school_high',       label: 'High.S',      color: 'oklch(55% 0.13 220)' },
+    ...(window.POI_EXTRA_META || []),
   ];
   const CITIES = [
     { key: 'vaxjo',      label: 'Växjö' },
