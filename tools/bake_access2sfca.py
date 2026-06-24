@@ -77,6 +77,14 @@ CATCHMENT_WALK_M = {
     "grocery": 1200, "pharmacy": 1500, "healthcare_center": 2500, "dentistry": 2500,
     "kindergarten": 1200, "school_primary": 1500, "school_high": 2500,
     "hospital": 6000, "university": 5000, "veterinary": 4000,
+    # Community-facility services added 2026-06-25: capacity-limited, recurring
+    # demand → 2SFCA crowding is meaningful, and counts/catchments are bounded so
+    # the per-building arrays stay a sane size. The other EpiCity categories are
+    # deliberately not here — either not a crowding signal (park/playground/
+    # parking/restaurant/attractions) or large catchments that would bloat the
+    # per-building files on big cities.
+    "library": 2500, "place_of_worship": 2500,
+    "sports_centre": 2500, "community_centre": 2500,
 }
 MODE_CATCHMENT_FACTOR = {"walking": 1.0, "cycling": 3.0, "driving": 8.0}
 
