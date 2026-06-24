@@ -1772,23 +1772,21 @@ function pcDemoAxes() {
 // Building rows read demographics from their DESO (the Phase-3 baked
 // deso.geojson via EPI_DEMO + the feature's stamped __deso code), so the PCP
 // can show the multi-domain need index alongside per-category accessibility.
-// DESO-inherited fraction axes (no synthetic version — SCB resolution). Income,
-// need and population are NOT here: they're superseded by the per-building
-// SYNTHETIC axes below, so the plot shows ONE income/need/population axis (per
-// building) instead of a duplicate DESO axis with only ~N_DESO distinct lines.
-// NOTE: these 7 are SCB DESO-level shares (no per-building synthetic version),
-// so every building in a DESO carries the identical value — vaxjo has only ~53
-// DESO zones, so these axes show at most ~53 distinct polylines no matter how
-// many buildings are plotted. The "(DESO)" suffix flags this as neighbourhood-
-// level (vs the per-building SYNTHETIC axes, which vary building by building).
+// SYNTHETIC per-building demographic axes. SCB publishes these 7 shares only per
+// DESO, so tools/bake_synthpop.py SYNTHESIZES a per-building value (sampled
+// around the building's DESO share with binomial-style spread, pop-weighted DESO
+// mean preserved) — stamped onto features by lib/synthpop.js. So every building
+// carries its OWN value and the axes vary building-by-building (not ~N_DESO
+// bands). `desoProp` is the DESO field used as a fallback when a building has no
+// synthetic value stamped.
 const PC_BUILDING_DEMO_AXES = [
-  { key: 'demChild',         label: 'Children % (DESO)',           prop: 'child_frac' },
-  { key: 'demElder',         label: 'Elderly % (DESO)',            prop: 'elder_frac' },
-  { key: 'demDependency',    label: 'Dependency ratio (DESO)',     prop: 'dependency' },
-  { key: 'demHigherEdu',     label: 'Higher-ed eligible % (DESO)', prop: 'higher_ed' },
-  { key: 'demNeet',          label: 'NEET % (DESO)',               prop: 'neet' },
-  { key: 'demIncomeSupport', label: 'Income support % (DESO)',     prop: 'income_support' },
-  { key: 'demMale',          label: 'Male % (DESO)',               prop: 'male_frac' },
+  { key: 'demChild',         label: 'Children % (synthetic)',           prop: '__synthChild',          desoProp: 'child_frac' },
+  { key: 'demElder',         label: 'Elderly % (synthetic)',            prop: '__synthElder',          desoProp: 'elder_frac' },
+  { key: 'demDependency',    label: 'Dependency ratio (synthetic)',     prop: '__synthDependency',     desoProp: 'dependency' },
+  { key: 'demHigherEdu',     label: 'Higher-ed eligible % (synthetic)', prop: '__synthHigherEd',       desoProp: 'higher_ed' },
+  { key: 'demNeet',          label: 'NEET % (synthetic)',               prop: '__synthNeet',           desoProp: 'neet' },
+  { key: 'demIncomeSupport', label: 'Income support % (synthetic)',     prop: '__synthIncomeSupport',  desoProp: 'income_support' },
+  { key: 'demMale',          label: 'Male % (synthetic)',               prop: '__synthMale',           desoProp: 'male_frac' },
 ];
 // SYNTHETIC per-building axes (from EpiCity city.json, stamped onto features by
 // lib/synthpop.js). Unlike the DESO axes above — which are identical for every
@@ -1954,21 +1952,17 @@ function getParallelCoordsDataset(mode) {
         if (Number.isFinite(v)) realValues[a.key] = v;
       });
     } else if (pcDesoProps) {
-      // Building rows: read demographics from the building's DESO (stamped
-      // __deso by epicityDemographics) via the Phase-3 baked deso.geojson.
-      const code = row?.source?.properties?.__deso;
-      const dp = (code != null) ? pcDesoProps.get(code) : null;
-      if (dp) {
-        PC_BUILDING_DEMO_AXES.forEach((a) => {
-          const v = Number(dp[a.prop]);
-          if (Number.isFinite(v)) realValues[a.key] = v;
-        });
-      }
-      // SYNTHETIC per-building axes — read straight off the feature (stamped by
-      // synthpop.js), so every building contributes its own distinct value.
+      // Building rows: ALL per-building axes (synthetic descriptive + synthetic
+      // demographic shares) read straight off the feature, stamped by
+      // synthpop.js, so every building contributes its own distinct value. Demo
+      // axes fall back to the building's DESO share (via __deso) when no
+      // synthetic value is stamped (e.g. non-residential / unmatched footprints).
       const sp = row?.source?.properties || {};
-      PC_BUILDING_SYNTH_AXES.forEach((a) => {
-        const v = Number(sp[a.prop]);
+      const code = sp.__deso;
+      const dp = (code != null) ? pcDesoProps.get(code) : null;
+      [...PC_BUILDING_SYNTH_AXES, ...PC_BUILDING_DEMO_AXES].forEach((a) => {
+        let v = Number(sp[a.prop]);
+        if (!Number.isFinite(v) && a.desoProp && dp) v = Number(dp[a.desoProp]);
         if (Number.isFinite(v)) realValues[a.key] = v;
       });
     } else if (mode === 'mezo' && pcMezoAgg) {

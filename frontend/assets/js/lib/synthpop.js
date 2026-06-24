@@ -81,13 +81,20 @@ async function loadSynthpop(cityKey) {
   _synLoadCity = cityKey;
   _synLoadPromise = (async () => {
     try {
-      const res = await fetch(`assets/data/cities/${cityKey}/synthpop/buildings.json`, { cache: 'force-cache' });
+      // Revalidate rather than force-cache: this file is re-baked during dev, and
+      // a stale force-cached copy (e.g. one missing the synthetic demographic
+      // arrays) silently makes the PCP demographic axes fall back to flat DESO
+      // values. `no-cache` revalidates (304 when unchanged → still fast).
+      const res = await fetch(`assets/data/cities/${cityKey}/synthpop/buildings.json`, { cache: 'no-cache' });
       if (!res.ok) { SYNTHPOP = null; return null; }
       const d = await res.json();
       const snap = _synBuildSnapIndex(d.k || []);
       SYNTHPOP = { city: cityKey, meta: d.meta || null, ...snap,
                    pop: d.pop || [], lv: d.lv || [], ar: d.ar || [], zn: d.zn || [],
-                   inc: d.inc || [], nz: d.nz || [], de: d.de || [] };
+                   inc: d.inc || [], nz: d.nz || [], de: d.de || [],
+                   // synthetic per-building demographic shares (parallel to k)
+                   ch: d.ch || [], el: d.el || [], dp: d.dp || [], he: d.he || [],
+                   nt: d.nt || [], iss: d.iss || [], ml: d.ml || [] };
       return SYNTHPOP;
     } catch (e) {
       console.warn('[synthpop] load failed for', cityKey, e);
@@ -119,10 +126,22 @@ function buildSynthpopMaps() {
     if (SYNTHPOP.inc[row] != null) props.__synthIncome = SYNTHPOP.inc[row];
     if (SYNTHPOP.nz[row] != null) props.__synthNeed = SYNTHPOP.nz[row];
     if (SYNTHPOP.de[row] != null) props.__synthDeso = SYNTHPOP.de[row];
+    // synthetic per-building demographic shares (so the 7 demo PCP axes vary
+    // building-by-building instead of carrying one identical DESO value)
+    for (const [, arr, prop] of SYN_DEMO) { const v = SYNTHPOP[arr][row]; if (v != null) props[prop] = v; }
     stamped++;
   });
+  // Distinct synthetic child% values — a quick proof the per-building demographic
+  // arrays loaded (not the stale force-cached file): expect thousands, not ~53.
+  let childDistinct = 0;
+  try {
+    const s = new Set();
+    baseCityFC.features.forEach(f => { const v = f.properties?.__synthChild; if (v != null) s.add(v); });
+    childDistinct = s.size;
+  } catch { /* ignore */ }
   console.log('[synthpop] mapped —', synthBuildingPopMap.size, 'buildings with synthetic pop;',
-    stamped, 'footprints matched of', baseCityFC.features.length, 'rendered.');
+    stamped, 'footprints matched of', baseCityFC.features.length, 'rendered;',
+    childDistinct, 'distinct synthetic child% values (≫53 = per-building demographics live).');
 }
 
 // Ensure the active city's synthetic data is loaded AND mapped to buildings.
@@ -174,21 +193,37 @@ function synthpopAggregateForFeatures(feats) {
   return { pop, n };
 }
 
-// Fields inherited per-building from the building's DESO (no synthetic version —
-// SCB resolution). Resolved through the shared epiDesoProps() lookup so every
-// view uses the SAME source.
-const SYN_DESO_FIELDS = ['child_frac', 'elder_frac', 'dependency', 'higher_ed', 'neet', 'income_support', 'male_frac'];
+// The 7 demographic shares. Canonical field names (used as aggregate output keys
+// + PCP axis props). SCB only publishes these per DESO, so we SYNTHESIZE a
+// per-building value (baked by tools/bake_synthpop.py — sampled around the DESO
+// share, pop-weighted mean preserved). [canonical field, buildings.json array,
+// stamped feature prop].
+const SYN_DEMO = [
+  ['child_frac',     'ch',  '__synthChild'],
+  ['elder_frac',     'el',  '__synthElder'],
+  ['dependency',     'dp',  '__synthDependency'],
+  ['higher_ed',      'he',  '__synthHigherEd'],
+  ['neet',           'nt',  '__synthNeet'],
+  ['income_support', 'iss', '__synthIncomeSupport'],
+  ['male_frac',      'ml',  '__synthMale'],
+];
+const SYN_DESO_FIELDS = SYN_DEMO.map(d => d[0]);
 
 // Unified per-building demographic record: synthetic (pop/income/need/levels/
-// area/zone) + DESO-inherited fractions. THE single source for the inspector and
-// parallel-coords building rows.
+// area/zone) + synthetic per-building demographic shares. THE single source for
+// the inspector and parallel-coords building rows. Falls back to the DESO value
+// only if a building has no synthetic share stamped (non-residential / unmatched).
 function synthDemographicsForFeature(feat) {
   const s = synthpopForFeature(feat) || {};
   const code = s.deso || feat?.properties?.__deso || null;
   const out = { pop: s.pop ?? null, income: s.income ?? null, need: s.need ?? null,
                 levels: s.levels ?? null, area: s.area ?? null, zone: s.zone ?? null, deso: code };
+  const props = feat?.properties || {};
   const dp = (typeof epiDesoProps === 'function') ? epiDesoProps(code) : null;
-  for (const k of SYN_DESO_FIELDS) out[k] = (dp && Number.isFinite(dp[k])) ? dp[k] : null;
+  for (const [field, , prop] of SYN_DEMO) {
+    const v = Number(props[prop]);
+    out[field] = Number.isFinite(v) ? v : ((dp && Number.isFinite(dp[field])) ? dp[field] : null);
+  }
   return out;
 }
 
@@ -201,7 +236,7 @@ let _SYN_CENTROIDS = null;
 function _synEnsureCentroids() {
   if (_SYN_CENTROIDS && _SYN_CENTROIDS.city === _synMappedCity) return _SYN_CENTROIDS;
   if (!(typeof baseCityFC !== 'undefined' && baseCityFC?.features)) return null;
-  const pts = [], pop = [], inc = [], need = [], deso = [];
+  const pts = [], pop = [], inc = [], need = [], deso = [], demo = [];
   for (const f of baseCityFC.features) {
     const pr = f.properties || {};
     const p = pr.__synthPop;
@@ -212,8 +247,11 @@ function _synEnsureCentroids() {
     inc.push(Number.isFinite(pr.__synthIncome) ? pr.__synthIncome : null);
     need.push(Number.isFinite(pr.__synthNeed) ? pr.__synthNeed : null);
     deso.push(pr.__synthDeso || pr.__deso || null);
+    const dv = {};                                          // synthetic per-building demo shares
+    for (const [field, , prop] of SYN_DEMO) { const v = Number(pr[prop]); dv[field] = Number.isFinite(v) ? v : null; }
+    demo.push(dv);
   }
-  _SYN_CENTROIDS = { city: _synMappedCity, pts, pop, inc, need, deso };
+  _SYN_CENTROIDS = { city: _synMappedCity, pts, pop, inc, need, deso, demo };
   return _SYN_CENTROIDS;
 }
 
@@ -229,9 +267,9 @@ function _synAggregate(members, cc) {
     pop += w; n++;
     if (Number.isFinite(cc.inc[i])) { incW += cc.inc[i] * w; incP += w; }
     if (Number.isFinite(cc.need[i])) { ndW += cc.need[i] * w; ndP += w; }
-    const dp = (typeof epiDesoProps === 'function') ? epiDesoProps(cc.deso[i]) : null;
-    if (dp) for (const k of SYN_DESO_FIELDS) {
-      if (Number.isFinite(dp[k])) { fW[k] += dp[k] * w; fP[k] += w; }
+    const dv = cc.demo ? cc.demo[i] : null;                 // synthetic per-building demo shares
+    if (dv) for (const k of SYN_DESO_FIELDS) {
+      if (Number.isFinite(dv[k])) { fW[k] += dv[k] * w; fP[k] += w; }
     }
   }
   const out = { pop, n, income: incP > 0 ? incW / incP : null, need: ndP > 0 ? ndW / ndP : null };

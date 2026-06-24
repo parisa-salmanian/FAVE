@@ -260,7 +260,8 @@
 
   // Population & demographics card (below supply provision). Single source: the
   // unified synthetic record (building) or its pop-weighted aggregate (hex/
-  // district) — synthetic pop/income/need + DESO-inherited shares.
+  // district) — synthetic per-building pop/income/need + the 7 synthetic
+  // demographic shares (hex/district aggregates pop-weight back to ~DESO means).
   function renderDemographics() {
     const section = document.getElementById('inspDemoSection');
     const list = document.getElementById('inspDemoList');

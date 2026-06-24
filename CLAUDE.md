@@ -188,10 +188,58 @@ areas read as more unfair (closer to how planners assess equity):
   `epiBuildingNeedMap` (needZ) + `epiBuildingPopMap`. `models/fairness.js` applies
   `socioWeight = needWeightFromZ(needZ, EPI_SOCIO_STRENGTH)` (default 0.5, on by
   default) in the benefit product. Effect on Växjö walking: Gini 0.061 → 0.130.
-- NOT yet used for demand: distributing per-DESO population over ALL building
-  types over-weights large non-residential buildings (0.5–5x, distorts Gini).
-  Demand still uses the residential-based map; wiring EpiCity's per-building
-  *synthetic* (residential) population from `city.json` is the proper next step.
+## Synthetic per-building population (EpiCity dasymetric model)
+
+The demand side of fairness/2SFCA needs residents *per building*, but SCB only
+publishes population per DESO. We GENERATE a synthetic per-building population the
+way EpiCity does — a dasymetric (areal-interpolation) model — using only repo
+data, so it covers every residential building and has no external dependency.
+
+- Bake: `tools/bake_synthpop.py` → `cities/<key>/synthpop/buildings.json`. For
+  each `byggnad` footprint: classify residential from Lantmäteriet `andamal1`
+  (`Bostad;…`; `Komplementbyggnad`/other carry no residents), assign an EpiCity
+  land-use zone (RES_LO/MED/HI) from typology + storeys (storeys from `height_m`
+  where present — only the vaxjo extract has it — else a per-typology default),
+  and a capacity weight `floor_area / density` (`density` = m²/person per zone:
+  35/22/14, from `epicity_engine/osm.py` `_DENSITY_M2`). Then each DESO's real
+  SCB `pop` (from `demographics/deso.geojson`) is distributed across that DESO's
+  residential buildings in proportion to capacity weight, largest-remainder
+  rounded so the per-DESO total is reproduced EXACTLY. Per-building income/needZ
+  are synthesized as a mean-preserving lognormal around the DESO mean, and the 7
+  demographic shares (`ch`=child, `el`=elder, `dp`=dependency, `he`=higher-ed%,
+  `nt`=NEET%, `iss`=income-support%, `ml`=male) are SYNTHESIZED per building too —
+  LOGIT-normal sample `sigmoid(logit(p) + σ·z)` with σ = binomial logit-scale SE
+  `sqrt(1/(N·p(1-p)))` (bigger buildings sit tighter on the DESO mean), then a
+  single logit shift makes the pop-weighted mean reproduce the DESO value exactly.
+  The sigmoid keeps every value strictly inside (0,1) — NOTHING piles up on the
+  0/1 boundary (an additive-Gaussian+clamp version stacked ~24% of small houses
+  on 0, which read as one fat line on the PCP floor). Output is parallel
+  arrays `{k,pop,lv,ar,zn,inc,nz,de,ch,el,dp,he,nt,iss,ml}` keyed by
+  `turf.centroid` "lon,lat" (6 dp). Re-bake all 7 with
+  `python tools/bake_synthpop.py` (~25 s).
+- This REPLACED the old NN-transfer-from-`city.json` version. `city.json` (an
+  OSM building set) is not in the repo, so that bake couldn't reproduce and it
+  stranded ~20% of residents (>SNAP_M from a footprint). The dasymetric model
+  needs no `city.json`. Coverage: malmo/goteborg/stockholm/kalmar/norrkoping =
+  100% of DESO population placed; vaxjo 86% / uppsala 88% — the shortfall is
+  purely rural kommun DESOs that lie OUTSIDE the city building extract (`meta`
+  records `desos_covered`, `uncovered_pop`). City totals match real populations
+  (e.g. stockholm 999k, goteborg 613k, malmo 368k).
+- Runtime: `frontend/assets/js/lib/synthpop.js` loads it, joins to buildings by
+  `"lon,lat"` key (exact; ≤45 m snap fallback), stamps `__synthPop/__synthIncome/…`
+  and builds `synthBuildingPopMap`. `models/fairness.js` and `models/equityGroups.js`
+  use that map as the PRIMARY demand weight (`demandWeight = log1p(pop)` clamped
+  0.5–5.0), falling back to `epiBuildingPopMap` (DESO-over-residential) then the
+  vaxjo SCB map. Also feeds the inspector + PCP synthetic axes (`drView.js`).
+- The 7 synthetic demographic shares are stamped per building (`__synthChild`,
+  `__synthElder`, `__synthDependency`, `__synthHigherEd`, `__synthNeet`,
+  `__synthIncomeSupport`, `__synthMale`) via `synthpop.js` `SYN_DEMO`. The
+  building-mode PCP demographic axes (`drView.js` `PC_BUILDING_DEMO_AXES`, labeled
+  "(synthetic)") read these, so they vary building-by-building (~thousands of
+  distinct values) instead of the old ≤53 DESO bands. Hex/district aggregates
+  pop-weight the per-building values, recovering ~the DESO mean. NB these shares
+  are a synthetic spread for visualization, NOT measured per-building data — the
+  only real signal at this resolution is SCB's DESO share (the preserved mean).
 
 ## Local dev (running the app)
 
