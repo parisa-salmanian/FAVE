@@ -21,7 +21,11 @@ let _synMappedCity = null;
 let _synLoadCity = null;
 let _synLoadPromise = null;
 
-const _SYN_SNAP_TOL_M = 12;          // centroids are computed the same way → near-exact
+const _SYN_SNAP_TOL_M = 45;          // match routing/2SFCA snap (CLAUDE.md): baked
+                                     // footprints are a ~19k OSM-derived subset of
+                                     // the ~50k rendered byggnad, so non-baked
+                                     // footprints borrow the nearest baked record.
+                                     // 12 m left ~19% of vaxjo unmatched; 45 m → ~90%.
 const _SYN_CELL = 0.006;             // ~0.6 km grid cells (matches access2sfca)
 
 function _synCurrentCity() {
@@ -99,6 +103,9 @@ function buildSynthpopMaps() {
   if (!SYNTHPOP || !(typeof baseCityFC !== 'undefined' && baseCityFC?.features)) return;
   let stamped = 0;
   baseCityFC.features.forEach((feat, idx) => {
+    // Accessory structures (garages/sheds) aren't dwellings — don't give them
+    // synthetic residents/demand or they'd double-count a neighbour's people.
+    if (typeof isAccessoryBuilding === 'function' && isAccessoryBuilding(feat.properties)) return;
     let c; try { c = turf.centroid(feat).geometry.coordinates; } catch { return; }
     if (!c) return;
     const row = _synRowForPoint(c[0], c[1]);
@@ -137,6 +144,10 @@ function resetSynthpopMaps() { synthBuildingPopMap = null; _synMappedCity = null
 // Per-building synthetic record. Prefers stamped props (O(1)); else snaps.
 function synthpopForFeature(feat) {
   const p = feat?.properties || {};
+  // Accessory structures (garages/sheds) are not dwellings — never return a
+  // (borrowed) synthetic record for them, so a clicked garage reads "No
+  // synthetic residents" instead of a neighbour's people.
+  if (typeof isAccessoryBuilding === 'function' && isAccessoryBuilding(p)) return null;
   if (p.__synthPop != null || p.__synthLevels != null || p.__synthArea != null) {
     return { pop: p.__synthPop ?? null, levels: p.__synthLevels ?? null,
              area: p.__synthArea ?? null, zone: p.__synthZone ?? null,

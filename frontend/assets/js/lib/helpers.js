@@ -72,6 +72,19 @@ function buildingTypeOf(f) {
   return type || '';
 }
 
+// Accessory structures — Lantmäteriet "Komplementbyggnad" (garages, sheds,
+// storage, carports). They belong to a main building on the property, not their
+// own dwelling, so they are NOT analytical units: excluded from the PCP/DR
+// building set, the building count, the synthetic-population demand, and the
+// inequality (Gini) aggregate. They ARE kept on the map and still get a
+// location-based fairness color (accessibility is scored per point), so they
+// blend in with their neighbours instead of showing as a separate colour.
+function isAccessoryBuilding(props) {
+  if (!props) return false;
+  const t = String(props.objekttyp || props.andamal1 || props.building || '');
+  return /komplementbyggnad/i.test(t);
+}
+
 // Popup rendering (map popups + side panel) lives in assets/js/views/popupView.js
 // Change-history log lives in assets/js/models/changeHistory.js
 

@@ -52,6 +52,11 @@
   // Currently inspected object: { kind: 'mezo' | 'district' | null, ... }
   let selected = null;
 
+  // Persistent monotonic scroll floor (px) for the active pane — see the long
+  // note in renderSelection. Reset when the panel closes or the tab changes so
+  // a fresh context starts at its natural height.
+  let _scrollFloor = 0;
+
   // ---- 2SFCA companion metric (network-accurate supply-to-demand provision) ----
   // Loaded lazily per building click; guarded by a token so a stale async load
   // (user clicked another building meanwhile) doesn't overwrite the selection.
@@ -89,6 +94,7 @@
     try {
       const net = await ensureAccess2sfca(city, mode);
       if (token !== _a2sToken || !selected || selected.kind !== 'building') return;
+      selected.a2sPending = false;
       const res = net ? access2sfcaForFeature(feat) : null;
       selected.a2s = res ? { mode, scope: 'building', overall: res.overall, cats: _a2sCatsFromBuilding(res) } : null;
       renderSelection();
@@ -113,6 +119,7 @@
         agg = net ? access2sfcaAggregateForPolygon(payload) : null;
       }
       if (token !== _a2sToken || !selected || selected.kind !== kind) return;
+      selected.a2sPending = false;
       selected.a2s = (agg && agg.n) ? { mode, scope: kind, overall: agg.overall, n: agg.n, cats: _a2sCatsFromAggregate(agg) } : null;
       // Synthetic resident sum over the buildings inside this hex/district.
       selected.synthAgg = (kind === 'mezo')
@@ -160,32 +167,38 @@
     const markerEl = document.getElementById('inspRampMarker');
     if (!titleEl || !listEl || !emptyEl) return;
 
-    // Keep the panel steady across re-renders. Hover mirrors a new feature into
-    // the inspector on every mouse-move; the selection's NAME (1 vs 2 lines) and
-    // row count change height ABOVE the lower cards, which would shove "Supply
-    // provision"/"Demographics" up or down. So we ANCHOR on whichever lower card
-    // the user is reading and pin its viewport position — not just the raw
-    // scrollTop. Falls back to scrollTop when no card is shown.
+    // Keep the scrollbar exactly where the user left it across re-renders, in
+    // ANY condition — the panel must never creep upward. Hover mirrors a new
+    // feature on every mouse-move and the async 2SFCA load re-renders a frame
+    // later; both rewrite the content. When the new content is SHORTER (a "no
+    // data" placeholder), the browser clamps scrollTop to the new max and the
+    // view jumps up; the previous attempt then re-measured by CLEARING the
+    // spacer, which itself momentarily shrank the content and let the clamp
+    // through — so the position crept up a little on every render.
+    //
+    // Robust fix: a PERSISTENT, monotonic floor. We reserve a min-height on the
+    // active pane that only ever GROWS while the panel stays scrolled, so the
+    // scroll content can never shrink and the browser can never clamp. We never
+    // clear it to "measure" (that was the leak); instead we read scrollHeight
+    // WITH the floor in place — it already equals max(content, floor), so it
+    // tells us when real content has outgrown the floor. The reserved space is
+    // released only when the user is back at the top (keepScroll <= 0), where
+    // shrinking is harmless. White space below a sparse selection is intentional.
     const bodyEl = document.querySelector('#inspector .inspector-body');
-    const _anchorEl = () => {
-      const a = document.getElementById('insp2sfcaSection');
-      if (a && a.style.display !== 'none') return a;
-      const d = document.getElementById('inspDemoSection');
-      if (d && d.style.display !== 'none') return d;
-      return null;
-    };
+    const paneEl = bodyEl ? bodyEl.querySelector('.insp-pane[data-active="true"]') : null;
     const keepScroll = bodyEl ? bodyEl.scrollTop : 0;
-    const anchor = bodyEl ? _anchorEl() : null;
-    const anchorRel = anchor ? (anchor.getBoundingClientRect().top - bodyEl.getBoundingClientRect().top) : null;
     const restoreScroll = () => {
       if (!bodyEl) return;
-      const a2 = _anchorEl();
-      if (a2 && a2 === anchor && anchorRel != null) {
-        const cur = a2.getBoundingClientRect().top - bodyEl.getBoundingClientRect().top;
-        bodyEl.scrollTop += (cur - anchorRel);
-      } else {
-        bodyEl.scrollTop = keepScroll;
+      if (paneEl) {
+        if (keepScroll <= 0) _scrollFloor = 0;          // at top → safe to release
+        paneEl.style.minHeight = `${_scrollFloor}px`;   // hold the floor (never cleared)
+        const sh = paneEl.scrollHeight;                 // = max(content, floor)
+        if (sh > _scrollFloor) {                         // real content outgrew floor
+          _scrollFloor = sh;
+          paneEl.style.minHeight = `${_scrollFloor}px`;
+        }
       }
+      if (bodyEl.scrollTop !== keepScroll) bodyEl.scrollTop = keepScroll;
     };
 
     if (!selected) {
@@ -255,8 +268,18 @@
     if (!section || !list) return;
     const agg = selected && selected.kind !== 'building';
     const d = selected ? (agg ? selected.synthAgg : selected.synth) : null;
-    if (!selected || !d || !(Number.isFinite(d.pop) && d.pop > 0)) {
+    // Only fully remove the card when NOTHING is selected (the panel's empty
+    // state). When something IS selected but has no synthetic residents, keep
+    // the card MOUNTED with a muted note — removing it collapses the panel
+    // height and yanks the scroll to the top while you sweep the map.
+    if (!selected) {
       section.style.display = 'none'; list.innerHTML = ''; return;
+    }
+    if (!d || !(Number.isFinite(d.pop) && d.pop > 0)) {
+      if (titleEl) titleEl.textContent = 'Population & demographics';
+      section.style.display = '';
+      list.innerHTML = '<div class="empty">No synthetic residents for this selection.</div>';
+      return;
     }
     if (titleEl) {
       const scope = selected.kind === 'district' ? 'district' : selected.kind === 'mezo' ? 'cell' : null;
@@ -311,17 +334,28 @@
     // district). The cats are pre-normalised into a uniform { norm, unreachable,
     // sub } shape by the attach functions, so the renderer is scale-agnostic.
     if (!selected || !selected.a2s || !selected.a2s.cats) {
-      // A new selection's provision is fetched async. If the card is already
-      // showing bars, keep them in place (dimmed) instead of hiding it — hiding
-      // collapses the card height, which clamps the scroll and yanks the panel
-      // back to the top before the fresh data arrives a frame later.
-      if (selected && section.style.display !== 'none' && host.innerHTML) {
-        section.setAttribute('data-loading', 'true');
+      // Only fully remove the card when NOTHING is selected. When a selection
+      // exists but its provision isn't ready (fetched async) or none is in
+      // range, keep the card MOUNTED so the panel height stays stable and the
+      // scroll never jumps — collapsing it is what yanked the panel to the top.
+      if (!selected) {
+        section.style.display = 'none';
+        section.removeAttribute('data-loading');
+        host.innerHTML = '';
         return;
       }
-      section.style.display = 'none';
-      section.removeAttribute('data-loading');
-      host.innerHTML = '';
+      section.style.display = '';
+      const hasRealBars = host.children.length && !host.querySelector('.empty');
+      if (hasRealBars && selected.a2sPending) {
+        // Stale bars from the previous selection — dim them while the new
+        // provision loads, instead of swapping to a placeholder (less flicker).
+        section.setAttribute('data-loading', 'true');
+      } else {
+        section.removeAttribute('data-loading');
+        host.innerHTML = `<div class="empty">${selected.a2sPending
+          ? 'Loading supply provision…'
+          : 'No supply provision in range for this selection.'}</div>`;
+      }
       return;
     }
     section.removeAttribute('data-loading');
@@ -577,6 +611,7 @@
         count: Number.isFinite(cell.__count) ? cell.__count : null,
         byCat: cell.__fairByCat || null,
         a2s: null,
+        a2sPending: true,
       };
       open();
       renderSelection();
@@ -598,6 +633,7 @@
         count: Number.isFinite(props.__count) ? props.__count : null,
         byCat: props.__fairByCat || null,
         a2s: null,
+        a2sPending: true,
       };
       open();
       renderSelection();
@@ -632,6 +668,7 @@
         gravity: props.__ifcity?.utility,
         byCat: Object.keys(byCat).length ? byCat : null,
         a2s: null,
+        a2sPending: true,
         synth: (typeof synthDemographicsForFeature === 'function') ? synthDemographicsForFeature(buildingFeat) : null,
       };
       open();
@@ -665,6 +702,9 @@
     root.setAttribute('data-open', 'false');
     const btn = document.getElementById('inspectorToggleBtn');
     if (btn) btn.setAttribute('data-active', 'false');
+    _scrollFloor = 0;
+    const pane = root.querySelector('.inspector-body .insp-pane[data-active="true"]');
+    if (pane) pane.style.minHeight = '';
   }
 
   function toggle() {
@@ -687,7 +727,9 @@
         });
         root.querySelectorAll('.insp-pane').forEach(p => {
           p.setAttribute('data-active', p.dataset.tab === tab ? 'true' : 'false');
+          p.style.minHeight = '';   // drop any reserved spacer from the old tab
         });
+        _scrollFloor = 0;           // fresh tab → start at natural height
         refreshActiveTab();
       });
     });

@@ -1600,9 +1600,15 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
     }
   }
 
-  const inequality = generalizedEntropy(benefits, IF_CITY_ALPHA);
   // GE(2) on raw benefits — the IF-City inequality metric. Used for both the
-  // metric strip display and the per-selection Gini badge.
+  // metric strip display and the per-selection Gini badge. Exclude accessory
+  // structures (garages/sheds): a house and its garage share a location, so
+  // counting both double-weights residential areas. benefits[i] is aligned with
+  // baseCityFC.features[i]. Per-building scores/colors above are untouched.
+  const benefitsForInequality = (typeof isAccessoryBuilding === 'function')
+    ? benefits.filter((_, i) => !isAccessoryBuilding(baseCityFC.features[i]?.properties))
+    : benefits;
+  const inequality = generalizedEntropy(benefitsForInequality, IF_CITY_ALPHA);
   const giniCoeff = inequality;
   // Bump the recolor tick on every compute (overall *or* per-category) so
   // deck.gl's updateTriggers re-evaluate getFillColor.

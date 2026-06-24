@@ -513,7 +513,13 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
 
   if (!baseCityFC?.features?.length) throw new Error('No buildings loaded.');
 
-  const sample = baseCityFC.features;
+  // Drop accessory structures (garages/sheds — Komplementbyggnad) from the
+  // building set: they aren't dwellings and shouldn't be counted as buildings
+  // or padded into the synthetic axes. They remain on the map (see
+  // isAccessoryBuilding). This also fixes the "of N buildings" count.
+  const sample = (typeof isAccessoryBuilding === 'function')
+    ? baseCityFC.features.filter(f => !isAccessoryBuilding(f.properties))
+    : baseCityFC.features;
   const richFeats = (typeof DR_RICH_FEATURES !== 'undefined') ? DR_RICH_FEATURES : [];
   const rows = sample.map((f) => {
     const props = f.properties || {};
@@ -1637,7 +1643,10 @@ function spatialModeEntityStats(mode = currentDRDataMode()) {
   if (mode === 'mezo') {
     return { noun: 'mezo cells', total: Array.isArray(mezoHexData) ? mezoHexData.length : 0 };
   }
-  return { noun: 'buildings', total: (baseCityFC?.features || []).length };
+  const bFeats = (typeof isAccessoryBuilding === 'function')
+    ? (baseCityFC?.features || []).filter(f => !isAccessoryBuilding(f.properties))
+    : (baseCityFC?.features || []);
+  return { noun: 'buildings', total: bFeats.length };
 }
 
 function updateDRAndPCBadges() {
@@ -1767,14 +1776,19 @@ function pcDemoAxes() {
 // need and population are NOT here: they're superseded by the per-building
 // SYNTHETIC axes below, so the plot shows ONE income/need/population axis (per
 // building) instead of a duplicate DESO axis with only ~N_DESO distinct lines.
+// NOTE: these 7 are SCB DESO-level shares (no per-building synthetic version),
+// so every building in a DESO carries the identical value — vaxjo has only ~53
+// DESO zones, so these axes show at most ~53 distinct polylines no matter how
+// many buildings are plotted. The "(DESO)" suffix flags this as neighbourhood-
+// level (vs the per-building SYNTHETIC axes, which vary building by building).
 const PC_BUILDING_DEMO_AXES = [
-  { key: 'demChild',         label: 'Children %',           prop: 'child_frac' },
-  { key: 'demElder',         label: 'Elderly %',            prop: 'elder_frac' },
-  { key: 'demDependency',    label: 'Dependency ratio',     prop: 'dependency' },
-  { key: 'demHigherEdu',     label: 'Higher-ed eligible %', prop: 'higher_ed' },
-  { key: 'demNeet',          label: 'NEET %',               prop: 'neet' },
-  { key: 'demIncomeSupport', label: 'Income support %',     prop: 'income_support' },
-  { key: 'demMale',          label: 'Male %',               prop: 'male_frac' },
+  { key: 'demChild',         label: 'Children % (DESO)',           prop: 'child_frac' },
+  { key: 'demElder',         label: 'Elderly % (DESO)',            prop: 'elder_frac' },
+  { key: 'demDependency',    label: 'Dependency ratio (DESO)',     prop: 'dependency' },
+  { key: 'demHigherEdu',     label: 'Higher-ed eligible % (DESO)', prop: 'higher_ed' },
+  { key: 'demNeet',          label: 'NEET % (DESO)',               prop: 'neet' },
+  { key: 'demIncomeSupport', label: 'Income support % (DESO)',     prop: 'income_support' },
+  { key: 'demMale',          label: 'Male % (DESO)',               prop: 'male_frac' },
 ];
 // SYNTHETIC per-building axes (from EpiCity city.json, stamped onto features by
 // lib/synthpop.js). Unlike the DESO axes above — which are identical for every
@@ -1870,7 +1884,12 @@ function getParallelCoordsDataset(mode) {
       source: entry
     }));
   } else {
-    const feats = baseCityFC?.features || [];
+    // Exclude accessory structures (garages/sheds) so the PCP rows and the
+    // "of N buildings" count reflect real buildings — consistent with the DR
+    // matrix sample (which is already filtered in buildBuildingMatrix).
+    const feats = (typeof isAccessoryBuilding === 'function')
+      ? (baseCityFC?.features || []).filter(f => !isAccessoryBuilding(f.properties))
+      : (baseCityFC?.features || []);
     const drSample = (drPlot.mode === mode && Array.isArray(drPlot.sample) && drPlot.sample.length)
       ? drPlot.sample
       : null;
@@ -1979,14 +1998,23 @@ function getParallelCoordsDataset(mode) {
     : (mode === 'mezo') ? pcBuildingDemoAxes()   // hex now aggregates the synthetic source
     : pcBuildingDemoAxes();
   if (demoAxisDefs.length) {
+    // Heavy-tailed synthetic axes (residents, footprint area, income) are
+    // power-law distributed: a handful of large apartment blocks stretch the
+    // axis so every normal house collapses onto the floor under linear min–max
+    // (e.g. residents 1..498 → a 3-person house sits at 0.006). Log-scale those
+    // so the bulk of the distribution is actually readable. Endpoints stay the
+    // real min/max (log is monotonic), so the relabeled ticks remain correct.
+    const LOG_PC_AXES = new Set(['synPop', 'synArea', 'synIncome']);
     const axes = demoAxisDefs.filter(a => rows.some(r => Number.isFinite(r.realValues?.[a.key])));
     axes.forEach((a) => {
       const vals = rows.map(r => r.realValues?.[a.key]).filter(Number.isFinite);
-      const lo = Math.min(...vals), hi = Math.max(...vals);
+      const useLog = LOG_PC_AXES.has(a.key) && Math.min(...vals) >= 0;
+      const tf = useLog ? (v => Math.log1p(v)) : (v => v);
+      const lo = Math.min(...vals.map(tf)), hi = Math.max(...vals.map(tf));
       const span = (hi - lo) || 1;
       rows.forEach((r) => {
         const v = r.realValues?.[a.key];
-        r.values[a.key] = Number.isFinite(v) ? (v - lo) / span : null;
+        r.values[a.key] = Number.isFinite(v) ? (tf(v) - lo) / span : null;
       });
     });
     extraCategories = axes.map(a => a.key);
@@ -2238,10 +2266,18 @@ function renderParallelCoords(rows, total, modeLabel, categories, { pending = fa
   // colour so DR scatter ↔ PC ↔ map all show the same highlight hue.
   const colorByRow = new Map();
   lineData.forEach(d => {
-    const vals = d.points.map(p => p.value).filter(Number.isFinite);
-    const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0.5;
+    // Colour by the row's OVERALL fairness — the same value the map paints —
+    // NOT the mean of the visible axes. Averaging visible axes meant that in
+    // "Demographics only" mode lines were coloured by average demographic value
+    // (which clusters low → everything read blue), instead of by accessibility.
+    const ov = d.row?.values?.[PARALLEL_COORDS_OVERALL_KEY];
+    let score = Number.isFinite(ov) ? ov : null;
+    if (score == null) {
+      const vals = d.points.map(p => p.value).filter(Number.isFinite);
+      score = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0.5;
+    }
     const [r, g, b] = (typeof colorFromScore === 'function')
-      ? colorFromScore(avg)
+      ? colorFromScore(score)
       : [60, 120, 180];
     colorByRow.set(d.row.id, `rgb(${r}, ${g}, ${b})`);
   });

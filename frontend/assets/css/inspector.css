@@ -281,6 +281,10 @@ body[data-theme="dark"] #inspector[data-open="true"] {
 #inspector .bar-row.a2s-row.a2s-unreachable .bar-fill { background: transparent; }
 #inspector .bar-row.a2s-row .num { color: var(--insp-supply); font-weight: 600; }
 
+/* Population & demographics card — match the spacing the 2SFCA card has so it
+   doesn't sit flush against the block above it. */
+#inspector #inspDemoSection { margin-top: 20px; }
+
 /* Mode comparison helpers */
 #inspector .compare-grid {
   display: grid;
