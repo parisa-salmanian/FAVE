@@ -92,9 +92,14 @@ async function ensureAccess2sfca(cityKey, mode) {
   _a2sLoadPromise = (async () => {
     try {
       const base = `assets/data/cities/${city}/access2sfca`;
+      // no-cache (revalidate, 304 when unchanged) — NOT force-cache. These files
+      // are re-baked whenever categories are added (e.g. the 16 EpiCity cats added
+      // for the smaller cities), and force-cache would keep serving a stale index/
+      // mode file that lacks the new categories, so they'd silently never appear in
+      // the inspector. Same trap synthpop.js hit with its demo arrays.
       const [idxRes, modeRes] = await Promise.all([
-        fetch(`${base}/index.json`, { cache: 'force-cache' }),
-        fetch(`${base}/${m}.json`, { cache: 'force-cache' }),
+        fetch(`${base}/index.json`, { cache: 'no-cache' }),
+        fetch(`${base}/${m}.json`, { cache: 'no-cache' }),
       ]);
       if (!idxRes.ok || !modeRes.ok) { ACCESS2SFCA = null; return null; }
       const idx = await idxRes.json();
