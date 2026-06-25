@@ -1014,7 +1014,17 @@ function ifCityAccessibilityForBuilding(cB, poiArr, cat, mode = FAIRNESS_TRAVEL_
   return sum;
 }
 
-function normalizeBenefitsToScores(benefits, mode) {
+function normalizeBenefitsToScores(benefits, mode, allowAbsolute = false) {
+  // EXPERIMENTAL absolute color scale (removable — see lib/absoluteColorScale.js).
+  // Only the overall building-color pass opts in (allowAbsolute=true); per-category
+  // and DR/PC normalizations keep the relative logic. When the toggle is off, or
+  // the module isn't loaded, this guard is false and the original path runs.
+  if (allowAbsolute
+      && typeof window !== 'undefined'
+      && typeof window.fairAbsoluteScaleActive === 'function'
+      && window.fairAbsoluteScaleActive()) {
+    return window.fairAbsoluteNormalize(benefits, mode);
+  }
   // Robust normalization for map coloring:
   // - avoids a single global outlier dominating (old min-max issue),
   // - avoids saturating almost everything to high scores (absolute exp issue).
@@ -1566,7 +1576,7 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
     }
   }
 
-  const scores = normalizeBenefitsToScores(benefits, fairnessTravelMode);
+  const scores = normalizeBenefitsToScores(benefits, fairnessTravelMode, true);
   // Second pass: normalise each category's accessibility array to 0..1
   // using the same logic as the overall benefit. This is the fix for
   // fair_multi[cat].score sometimes exceeding 1 (or even 2 in car mode).
