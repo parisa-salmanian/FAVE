@@ -92,7 +92,8 @@
   let _threshold = 0.5;          // default bar — see UI tooltip / chat for rationale
   let _lastBenefits = null;      // most recent SELECTED-MIX benefits (index = featIdx)
   let _lastMode = null;
-  let _adequacy = null;          // 0..1 share of population at/above the bar
+  let _adequacy = null;          // 0..1 share of POPULATION at/above the bar
+  let _adequacyBldg = null;      // 0..1 share of BUILDINGS at/above the bar (same denom set)
   let _maskOn = true;            // flag below-bar buildings on the map
   // Strong RED — high contrast against BOTH the light-grey basemap AND the
   // blue→green→yellow fairness ramp (its complementary opposite), and the
@@ -133,18 +134,22 @@
   // unserved residents count as inadequate, NOT excluded); without a pop map we
   // fall back to counting served buildings.
   function recomputeAdequacy() {
-    if (!_lastBenefits || !_lastBenefits.length) { _adequacy = null; renderBadge(); return; }
+    if (!_lastBenefits || !_lastBenefits.length) { _adequacy = _adequacyBldg = null; renderBadge(); return; }
     const ref = _ensureRef(_lastMode, _lastBenefits);
-    if (!ref) { _adequacy = null; renderBadge(); return; }
+    if (!ref) { _adequacy = _adequacyBldg = null; renderBadge(); return; }
     const pop = _popMap();
-    let num = 0, den = 0;
+    // Two shares over the SAME set (residents with a known pop weight, so they're
+    // directly comparable): population-weighted (people) and unweighted (buildings).
+    // They differ because dense central blocks hold many residents in few buildings.
+    let num = 0, den = 0, numB = 0, denB = 0;
     for (let i = 0; i < _lastBenefits.length; i++) {
       const w = pop ? (pop.get(i) || 0) : (_lastBenefits[i] > 0 ? 1 : 0);
       if (w <= 0) continue;
-      den += w;
-      if (_scoreFor(_lastBenefits[i], ref) >= _threshold) num += w;
+      den += w; denB += 1;
+      if (_scoreFor(_lastBenefits[i], ref) >= _threshold) { num += w; numB += 1; }
     }
     _adequacy = den > 0 ? num / den : null;
+    _adequacyBldg = denB > 0 ? numB / denB : null;
     renderBadge();
   }
 
@@ -182,7 +187,13 @@
   function renderBadge() {
     const out = document.getElementById('fairAdequacyVal');
     if (!out) return;
-    out.textContent = (_adequacy == null) ? '—' : `${Math.round(_adequacy * 100)}%`;
+    if (_adequacy == null) { out.textContent = '—'; out.title = ''; return; }
+    const ppl = Math.round(_adequacy * 100);
+    const bld = (_adequacyBldg == null) ? '—' : Math.round(_adequacyBldg * 100);
+    out.textContent = `${ppl}% people · ${bld}% bldgs`;
+    out.title = 'Share above the bar: of residents (population-weighted) vs of '
+      + 'buildings (count). They differ because dense blocks hold many people in '
+      + 'few buildings; the map mask colours buildings, so it tracks the bldgs %.';
   }
 
   // Relabel the bottom-left fairness legend while Absolute is active (the ramp
