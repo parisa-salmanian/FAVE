@@ -262,7 +262,24 @@
       '<button data-active="false" data-colorscale="absolute" type="button" ' +
       'aria-label="Absolute color scale">Absolute</button>' +
       '</div>';
-    modelField.parentElement.insertBefore(field, modelField.nextSibling);
+    // Give Color scale its OWN topbar section preceded by a divider, exactly like
+    // City|Model, so a 1px separator sits between Model and Color scale. Fall back
+    // to appending inside the Model section if the expected structure isn't found.
+    const modelSection = modelField.closest('.topbar-section');
+    const topbar = modelSection ? modelSection.parentElement : null;
+    if (modelSection && topbar) {
+      const divider = document.createElement('div');
+      divider.className = 'topbar-divider';
+      divider.dataset.experimental = 'absolute-color-scale';
+      const section = document.createElement('div');
+      section.className = 'topbar-section';
+      section.dataset.experimental = 'absolute-color-scale';
+      section.appendChild(field);
+      topbar.insertBefore(divider, modelSection.nextSibling);
+      topbar.insertBefore(section, divider.nextSibling);
+    } else {
+      modelField.parentElement.insertBefore(field, modelField.nextSibling);
+    }
 
     field.querySelectorAll('[data-colorscale]').forEach((b) => {
       b.addEventListener('click', () => {
