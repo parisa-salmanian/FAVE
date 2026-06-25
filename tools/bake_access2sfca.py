@@ -79,16 +79,35 @@ CATCHMENT_WALK_M = {
     "hospital": 6000, "university": 5000, "veterinary": 4000,
     # Community-facility services added 2026-06-25: capacity-limited, recurring
     # demand → 2SFCA crowding is meaningful, and counts/catchments are bounded so
-    # the per-building arrays stay a sane size. The other EpiCity categories are
-    # deliberately not here — either not a crowding signal (park/playground/
-    # parking/restaurant/attractions) or large catchments that would bloat the
-    # per-building files on big cities.
+    # the per-building arrays stay a sane size.
     "library": 2500, "place_of_worship": 2500,
     "sports_centre": 2500, "community_centre": 2500,
+    # Remaining EpiCity categories added 2026-06-25 (user asked for ALL 20 new POIs
+    # in 2SFCA). Catchments follow the same local→regional logic as above: daily
+    # local destinations short (restaurant/park/playground/parking), capacity-limited
+    # civic/recreation mid, sparse regional/heritage draws long. These are baked for
+    # the SMALLER cities only — on goteborg/stockholm the per-building × per-cat arrays
+    # explode the file size, so the two big metros stay on BIG_METRO_CATS below.
+    "restaurant": 1200, "hotel": 2500, "mall": 3000, "museum": 4000,
+    "theatre": 4000, "stadium": 5000, "nightclub": 2500, "playground": 1000,
+    "park": 1200, "cemetery": 2500, "police": 4000, "fire_station": 5000,
+    "castle": 6000, "manor": 6000, "historic_landmark": 4000, "parking": 800,
 }
 MODE_CATCHMENT_FACTOR = {"walking": 1.0, "cycling": 3.0, "driving": 8.0}
 
 CATS_ALL = list(CATCHMENT_WALK_M.keys())
+
+# The two big metros keep a lean 2SFCA set: a value is stored per building per
+# category per mode, so each extra category multiplies the file size, and on
+# goteborg/stockholm the driving files with all 30 categories run >100 MB. They
+# get the 14 capacity-limited services; the 5 smaller cities get everything
+# (default --cats). Override with an explicit --cats on the command line.
+BIG_METRO_CATS = [
+    "grocery", "pharmacy", "healthcare_center", "dentistry", "kindergarten",
+    "school_primary", "school_high", "hospital", "university", "veterinary",
+    "library", "place_of_worship", "sports_centre", "community_centre",
+]
+BIG_METROS = {"stockholm", "goteborg"}
 SWEREF99 = 3006  # metric CRS for area / accurate centroids in Sweden
 
 # ---- transit mode (uses the baked stop network, NOT an OSMnx graph) --------
@@ -524,14 +543,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("city")
     ap.add_argument("--modes", default="walking,cycling,driving,transit")
-    ap.add_argument("--cats", default=",".join(CATS_ALL))
+    ap.add_argument("--cats", default=None,
+                    help="comma-separated categories; default = all for the 5 smaller "
+                         "cities, the lean BIG_METRO_CATS for goteborg/stockholm")
     args = ap.parse_args()
 
     city = args.city
     if city not in BUILDING_FILE:
         sys.exit(f"unknown city '{city}' (known: {', '.join(BUILDING_FILE)})")
     modes = [m.strip() for m in args.modes.split(",") if m.strip()]
-    cats = [c.strip() for c in args.cats.split(",") if c.strip()]
+    if args.cats:
+        cats = [c.strip() for c in args.cats.split(",") if c.strip()]
+    else:
+        cats = BIG_METRO_CATS if city in BIG_METROS else CATS_ALL
 
     meta = load_meta(city)
     lons, lats, P = build_demand(city)
