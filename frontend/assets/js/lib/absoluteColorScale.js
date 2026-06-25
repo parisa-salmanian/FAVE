@@ -17,6 +17,8 @@
 //      (revert it to `normalizeBenefitsToScores(benefits, fairnessTravelMode)`).
 //   4. in models/fairness.js, delete the `window.fairAdequacyOnComputed(...)`
 //      guard block (just after the per-building `props.fair`/`fair_overall` loop).
+//   5. in views/layers.js, delete the `window.fairAdequacyRecolor(...)` guard
+//      block inside the building getFillColor (just before `colorFromScore(...)`).
 //   Nothing else in the app references this module. The relative path is the
 //   untouched original, so removal can never break the working coloring.
 //
@@ -91,6 +93,31 @@
   let _lastBenefits = null;      // most recent SELECTED-MIX benefits (index = featIdx)
   let _lastMode = null;
   let _adequacy = null;          // 0..1 share of population at/above the bar
+  let _maskOn = true;            // flag below-bar buildings on the map
+  // Strong RED — high contrast against BOTH the light-grey basemap AND the
+  // blue→green→yellow fairness ramp (its complementary opposite), and the
+  // intuitive "deficient / under-served" colour. Distinct 4th state, not a ramp hue.
+  const _MASK_COLOR = [220, 53, 53, 240];
+  const _MASK_CSS = 'rgb(220,53,53)';   // same colour for the HTML legend swatches
+
+  // Map-recolor hook (called by views/layers.js for each building). Returns the
+  // grey mask colour when the absolute scale + masking are on AND this building's
+  // absolute provision score is below the bar; otherwise null → keep the normal
+  // ramp colour. props.fair.score IS the absolute score while Absolute is active,
+  // the same number the adequacy % thresholds, so map and metric always agree.
+  function fairAdequacyRecolor(props) {
+    if (!_on || !_maskOn) return null;
+    const s = props && props.fair ? props.fair.score : null;
+    if (!Number.isFinite(s)) return null;
+    return s < _threshold ? _MASK_COLOR : null;
+  }
+
+  // Repaint the building layer (re-evaluates getFillColor via the fairRecolorTick
+  // updateTrigger) without recomputing fairness — used when only the bar/mask moves.
+  function _repaintMap() {
+    try { fairRecolorTick++; } catch (e) { /* not declared yet — ignore */ }
+    if (typeof updateLayers === 'function') updateLayers();
+  }
 
   // Population weight per building (mirrors fairness.js demand fallback chain).
   function _popMap() {
@@ -137,6 +164,7 @@
     _refByKey = Object.create(null);   // re-freeze yardstick to the current mix
     const field = document.getElementById('fairAdequacyField');
     if (field) field.style.display = _on ? '' : 'none';
+    _applyLegend();
     const apply = () => {
       try { fairRecolorTick++; } catch (e) { /* not declared yet — ignore */ }
       if (typeof updateLayers === 'function') updateLayers();
@@ -155,6 +183,47 @@
     const out = document.getElementById('fairAdequacyVal');
     if (!out) return;
     out.textContent = (_adequacy == null) ? '—' : `${Math.round(_adequacy * 100)}%`;
+  }
+
+  // Relabel the bottom-left fairness legend while Absolute is active (the ramp
+  // means provision level, not fairness, in this mode) and append a red
+  // "below bar" marker row. Originals are stashed on the element and restored
+  // when Absolute is turned off — so removing this module leaves no trace.
+  function _applyLegend() {
+    const leg = document.querySelector('.shell-legend');
+    if (!leg) return;
+    const head = leg.querySelector('.legend-head');
+    const labels = leg.querySelectorAll('.ramp-labels span');
+    if (head && leg.dataset.adqOrigHead == null) leg.dataset.adqOrigHead = head.textContent;
+    if (labels.length && leg.dataset.adqOrigLabels == null) {
+      leg.dataset.adqOrigLabels = JSON.stringify(Array.from(labels).map((s) => s.textContent));
+    }
+    if (_on) {
+      if (head) head.textContent = 'Provision (absolute)';
+      if (labels.length >= 3) {
+        labels[0].textContent = 'Under-served';
+        labels[1].textContent = 'Medium';
+        labels[2].textContent = 'Well-served';
+      }
+    } else {
+      if (head && leg.dataset.adqOrigHead != null) head.textContent = leg.dataset.adqOrigHead;
+      if (labels.length && leg.dataset.adqOrigLabels != null) {
+        const orig = JSON.parse(leg.dataset.adqOrigLabels);
+        labels.forEach((s, i) => { if (orig[i] != null) s.textContent = orig[i]; });
+      }
+    }
+    let row = leg.querySelector('#adqLegendBelow');
+    const show = _on && _maskOn;
+    if (show && !row) {
+      row = document.createElement('div');
+      row.id = 'adqLegendBelow';
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11px';
+      row.innerHTML = '<span style="display:inline-block;width:12px;height:12px;border-radius:2px;'
+        + 'background:' + _MASK_CSS + ';border:1px solid rgba(0,0,0,.15)"></span>'
+        + '<span>Below bar (under-served)</span>';
+      leg.appendChild(row);
+    }
+    if (row) row.style.display = show ? 'flex' : 'none';
   }
 
   // --- Inject into the shell topbar, right after the "Model" segmented control,
@@ -210,7 +279,17 @@
       '<span id="fairAdequacyThreshVal" style="min-width:2.4ch;display:inline-block;'
       + 'font-variant-numeric:tabular-nums">0.50</span>' +
       '<span id="fairAdequacyVal" class="badge" '
-      + 'style="margin-left:6px;background:var(--accent,#2d7);color:#fff">—</span>';
+      + 'style="margin-left:6px;background:var(--accent,#2d7);color:#fff">—</span>' +
+      // Mask toggle. Its label carries a grey swatch so it doubles as the legend:
+      // "grey = below bar". The green→purple ramp legend (bottom-left) already
+      // explains the above-bar provision levels.
+      '<label id="fairAdequacyMaskLbl" style="margin-left:10px;display:inline-flex;'
+      + 'align-items:center;gap:4px;font-size:11px;color:var(--ink-3,#667);'
+      + 'white-space:nowrap;cursor:pointer">'
+      + '<input type="checkbox" id="fairAdequacyMask" checked style="vertical-align:middle">'
+      + '<span style="display:inline-block;width:11px;height:11px;border-radius:2px;'
+      + 'background:rgb(220,53,53);border:1px solid rgba(0,0,0,.15)"></span>'
+      + 'red = below bar</label>';
     field.parentElement.insertBefore(adq, field.nextSibling);
 
     const slider = adq.querySelector('#fairAdequacyThresh');
@@ -219,11 +298,20 @@
       slider.addEventListener('input', () => {
         _threshold = parseFloat(slider.value);
         if (sliderVal) sliderVal.textContent = _threshold.toFixed(2);
-        recomputeAdequacy();   // re-threshold only — no fairness recompute
+        recomputeAdequacy();          // re-threshold the % (no fairness recompute)
+        if (_on && _maskOn) _repaintMap();   // move the grey mask with the bar
+      });
+    }
+    const maskChk = adq.querySelector('#fairAdequacyMask');
+    if (maskChk) {
+      maskChk.addEventListener('change', () => {
+        _maskOn = maskChk.checked;
+        _applyLegend();
+        if (_on) _repaintMap();
       });
     }
 
-    console.info('[absolute-scale] "Color scale" + adequacy metric injected after the Model control.');
+    console.info('[absolute-scale] "Color scale" + adequacy metric + map mask injected after the Model control.');
     return true;
   }
 
@@ -231,6 +319,7 @@
   window.fairAbsoluteScaleActive = fairAbsoluteScaleActive;
   window.fairAbsoluteNormalize = fairAbsoluteNormalize;
   window.fairAdequacyOnComputed = fairAdequacyOnComputed;
+  window.fairAdequacyRecolor = fairAdequacyRecolor;
 
   // The shell topbar is built asynchronously after this script runs, so try now,
   // retry on a timer, AND watch the DOM until the Model control appears.

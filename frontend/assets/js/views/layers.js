@@ -123,6 +123,12 @@ function createCityLayer(grayBackdrop) {
 
       // 5) Fairness coloring if active (per-category mix selected by user)
       if (fairActive && f.properties?.fair) {
+        // EXPERIMENTAL adequacy map mask (removable — see lib/absoluteColorScale.js):
+        // grey out buildings below the chosen absolute provision bar.
+        if (typeof window !== 'undefined' && typeof window.fairAdequacyRecolor === 'function') {
+          const masked = window.fairAdequacyRecolor(f.properties);
+          if (masked) return masked;
+        }
         return colorFromScore(f.properties.fair.score);
       }
 
