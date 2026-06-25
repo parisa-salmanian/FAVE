@@ -1610,6 +1610,14 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
     }
   }
 
+  // EXPERIMENTAL adequacy metric (removable — see lib/absoluteColorScale.js).
+  // Hand the selected-mix benefits (not the all-categories overall pass) to the
+  // adequacy module so it can report the population share above its provision bar.
+  if (!setOverall && typeof window !== 'undefined'
+      && typeof window.fairAdequacyOnComputed === 'function') {
+    try { window.fairAdequacyOnComputed(benefits, fairnessTravelMode); } catch (e) { /* ignore */ }
+  }
+
   // GE(2) on raw benefits — the IF-City inequality metric. Used for both the
   // metric strip display and the per-selection Gini badge. Exclude accessory
   // structures (garages/sheds): a house and its garage share a location, so
