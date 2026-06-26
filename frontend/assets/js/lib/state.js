@@ -903,6 +903,9 @@ function wireUI() {
         if (window.faveInspector && typeof window.faveInspector.notifyTravelModeChanged === 'function') {
           window.faveInspector.notifyTravelModeChanged();
         }
+        // The Supply provision map coloring is per-mode too — re-stamp it if it's
+        // the active map color variable (no-op on the Fairness tab).
+        if (typeof notifySupplyDataChanged === 'function') notifySupplyDataChanged();
       }
     });
   }
@@ -1477,6 +1480,8 @@ function wireUI() {
         if (citySelect) citySelect.disabled = false;
         hideGlobalSpinner();
         cityLoadInFlight = false;
+        // City changed → snap the map back to Fairness (Supply/Mismatch are per-city).
+        if (typeof resetMapColorVarToFairness === 'function') resetMapColorVarToFairness();
       }
       return;
     }
@@ -1506,6 +1511,8 @@ function wireUI() {
       if (citySelect) citySelect.disabled = false;
       hideGlobalSpinner();
       cityLoadInFlight = false;
+      // City changed → snap the map back to Fairness (Supply/Mismatch are per-city).
+      if (typeof resetMapColorVarToFairness === 'function') resetMapColorVarToFairness();
     }
   };
 

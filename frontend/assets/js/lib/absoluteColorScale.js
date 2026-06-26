@@ -1,12 +1,16 @@
 // absoluteColorScale.js — EXPERIMENTAL · ISOLATED · MEANT TO BE REMOVED.
 //
-// Adds an "Absolute scale" toggle to the fairness toolbar. The map normally
-// colors buildings on a RELATIVE scale: every recompute, fairness.js rescales
-// all benefits to the city's own p10..p95 spread (normalizeBenefitsToScores), so
-// an abundant category (e.g. parking, present everywhere) lifts every building
+// Adds a "Scale: Relative / Absolute" control to the bottom-left map legend
+// (under the Fairness / Supply provision tabs). The map normally colors
+// buildings on a RELATIVE scale: every recompute, fairness.js rescales all
+// benefits to the city's own p10..p95 spread (normalizeBenefitsToScores), so an
+// abundant category (e.g. parking, present everywhere) lifts every building
 // roughly equally and gets normalized away — the colors barely move. This toggle
 // swaps in an ABSOLUTE scale anchored to a FIXED yardstick, so adding such a
-// category visibly greens the whole map. Built purely for A/B comparison.
+// category visibly greens the whole map. Built purely for A/B comparison. The
+// adequacy slider + red below-bar mask (also here) are the sufficiency companion
+// to that absolute scale. Scale is a FAIRNESS-only concept — the legend greys it
+// out on the Supply provision tab (lib/supplyProvisionLens.js owns the tabs).
 //
 // ── HOW TO REMOVE COMPLETELY (no residue in working code) ──────────────────
 //   1. delete this file
@@ -19,8 +23,10 @@
 //      guard block (just after the per-building `props.fair`/`fair_overall` loop).
 //   5. in views/layers.js, delete the `window.fairAdequacyRecolor(...)` guard
 //      block inside the building getFillColor (just before `colorFromScore(...)`).
-//   Nothing else in the app references this module. The relative path is the
-//   untouched original, so removal can never break the working coloring.
+//   The `#legendScaleSlot` div in views/shell.js then stays empty and the CSS
+//   `.legend-scale:empty { display:none }` collapses it — no visible residue.
+//   The Fairness/Supply tabs (supplyProvisionLens.js) are a separate, permanent
+//   feature and keep working with this module gone (its hooks are typeof-guarded).
 //
 // Everything experimental lives behind window.* hooks so fairness.js can defer
 // to us with a typeof guard that is simply false when this file is gone.
@@ -167,8 +173,14 @@
   function setAbsolute(on) {
     _on = !!on;
     _refByKey = Object.create(null);   // re-freeze yardstick to the current mix
+    // Show/hide the whole topbar adequacy section (field + its leading divider)
+    // together, so no stray 1px divider floats when the field is hidden.
     const field = document.getElementById('fairAdequacyField');
     if (field) field.style.display = _on ? '' : 'none';
+    const section = document.getElementById('fairAdequacySection');
+    if (section) section.style.display = _on ? '' : 'none';
+    const divider = document.getElementById('fairAdequacyDivider');
+    if (divider) divider.style.display = _on ? '' : 'none';
     _applyLegend();
     const apply = () => {
       try { fairRecolorTick++; } catch (e) { /* not declared yet — ignore */ }
@@ -196,35 +208,25 @@
       + 'few buildings; the map mask colours buildings, so it tracks the bldgs %.';
   }
 
-  // Relabel the bottom-left fairness legend while Absolute is active (the ramp
-  // means provision level, not fairness, in this mode) and append a red
-  // "below bar" marker row. Originals are stashed on the element and restored
-  // when Absolute is turned off — so removing this module leaves no trace.
+  // Refresh the legend. The ramp labels + note + scale-enabled state are owned by
+  // supplyProvisionLens.js (it reads fairAbsoluteScaleActive() to pick the
+  // "Under-served…Well-served" wording while Absolute is on); we just ask it to
+  // refresh and then sync our own red "below bar" marker row.
   function _applyLegend() {
+    if (typeof window.faveRefreshLegend === 'function') window.faveRefreshLegend();
+    else _applyBelowBarRow();   // supply lens absent — still manage our own row
+  }
+
+  // Append/toggle the red "below bar (under-served)" row in the legend. Shown
+  // only while Absolute + mask are on AND the map is on the Fairness tab (the
+  // mask is fairness-only; the Supply tab doesn't paint it). Exposed on window so
+  // the supply lens can call it from its single refreshLegend() entry point.
+  function _applyBelowBarRow() {
     const leg = document.querySelector('.shell-legend');
     if (!leg) return;
-    const head = leg.querySelector('.legend-head');
-    const labels = leg.querySelectorAll('.ramp-labels span');
-    if (head && leg.dataset.adqOrigHead == null) leg.dataset.adqOrigHead = head.textContent;
-    if (labels.length && leg.dataset.adqOrigLabels == null) {
-      leg.dataset.adqOrigLabels = JSON.stringify(Array.from(labels).map((s) => s.textContent));
-    }
-    if (_on) {
-      if (head) head.textContent = 'Provision (absolute)';
-      if (labels.length >= 3) {
-        labels[0].textContent = 'Under-served';
-        labels[1].textContent = 'Medium';
-        labels[2].textContent = 'Well-served';
-      }
-    } else {
-      if (head && leg.dataset.adqOrigHead != null) head.textContent = leg.dataset.adqOrigHead;
-      if (labels.length && leg.dataset.adqOrigLabels != null) {
-        const orig = JSON.parse(leg.dataset.adqOrigLabels);
-        labels.forEach((s, i) => { if (orig[i] != null) s.textContent = orig[i]; });
-      }
-    }
+    const onFairness = (typeof window.faveSupplyActive !== 'function') || !window.faveSupplyActive();
     let row = leg.querySelector('#adqLegendBelow');
-    const show = _on && _maskOn;
+    const show = _on && _maskOn && onFairness;
     if (show && !row) {
       row = document.createElement('div');
       row.id = 'adqLegendBelow';
@@ -236,59 +238,46 @@
     }
     if (row) row.style.display = show ? 'flex' : 'none';
   }
+  window.fairApplyBelowBarRow = _applyBelowBarRow;
 
-  // --- Inject into the shell topbar, right after the "Model" segmented control,
-  //     as a matching "Color scale: Relative / Absolute" segmented control. -----
-  function injectToggle() {
+  // Mount in two places (each appears at its own time, so each is independently
+  // guarded + retried): the Relative/Absolute control goes into the legend's
+  // #legendScaleSlot (under the Fairness/Supply tabs); the adequacy slider + mask
+  // go into the shell topbar. injectToggle() returns true only once BOTH land.
+  function _mountScaleControl() {
     if (document.getElementById('fairColorScaleSeg')) return true;
-    // The visible toolbar is the shell topbar (views/shell.js), NOT the legacy
-    // Bootstrap navbar — target the Model segmented control's field.
-    const modelBtn = document.querySelector('.fave-topbar .segmented [data-model]');
-    if (!modelBtn) return false;   // shell topbar not mounted yet — caller retries
-    const modelField = modelBtn.closest('.field') || modelBtn.closest('.topbar-section');
-    if (!modelField || !modelField.parentElement) return false;
-
-    const field = document.createElement('div');
-    field.className = 'field';
-    field.dataset.experimental = 'absolute-color-scale';
-    field.title = 'EXPERIMENTAL: color buildings on a fixed ABSOLUTE scale instead '
+    const slot = document.getElementById('legendScaleSlot');
+    if (!slot) return false;       // shell legend not mounted yet — caller retries
+    slot.dataset.experimental = 'absolute-color-scale';
+    slot.title = 'EXPERIMENTAL: color buildings on a fixed ABSOLUTE scale instead '
       + 'of the per-recompute RELATIVE one. Absolute → an abundant category like '
       + 'parking greens the whole map; Relative (default) normalizes it away.';
-    field.innerHTML =
-      '<span class="field-label">Color scale</span>' +
+    slot.innerHTML =
+      '<span class="legend-scale-label">Scale</span>' +
       '<div class="segmented" id="fairColorScaleSeg">' +
       '<button data-active="true" data-colorscale="relative" type="button" ' +
       'aria-label="Relative color scale">Relative</button>' +
       '<button data-active="false" data-colorscale="absolute" type="button" ' +
       'aria-label="Absolute color scale">Absolute</button>' +
       '</div>';
-    // Give Color scale its OWN topbar section preceded by a divider, exactly like
-    // City|Model, so a 1px separator sits between Model and Color scale. Fall back
-    // to appending inside the Model section if the expected structure isn't found.
-    const modelSection = modelField.closest('.topbar-section');
-    const topbar = modelSection ? modelSection.parentElement : null;
-    if (modelSection && topbar) {
-      const divider = document.createElement('div');
-      divider.className = 'topbar-divider';
-      divider.dataset.experimental = 'absolute-color-scale';
-      const section = document.createElement('div');
-      section.className = 'topbar-section';
-      section.dataset.experimental = 'absolute-color-scale';
-      section.appendChild(field);
-      topbar.insertBefore(divider, modelSection.nextSibling);
-      topbar.insertBefore(section, divider.nextSibling);
-    } else {
-      modelField.parentElement.insertBefore(field, modelField.nextSibling);
-    }
-
-    field.querySelectorAll('[data-colorscale]').forEach((b) => {
+    slot.querySelectorAll('[data-colorscale]').forEach((b) => {
       b.addEventListener('click', () => {
-        field.querySelectorAll('[data-colorscale]')
+        slot.querySelectorAll('[data-colorscale]')
           .forEach((x) => x.setAttribute('data-active', 'false'));
         b.setAttribute('data-active', 'true');
         setAbsolute(b.dataset.colorscale === 'absolute');
       });
     });
+    return true;
+  }
+
+  function _mountAdequacyField() {
+    if (document.getElementById('fairAdequacyField')) return true;
+    // Anchor in the shell topbar, in its own divider-prefixed section after Model.
+    const modelBtn = document.querySelector('.fave-topbar .segmented [data-model]');
+    if (!modelBtn) return false;   // shell topbar not mounted yet — caller retries
+    const modelField = modelBtn.closest('.field') || modelBtn.closest('.topbar-section');
+    if (!modelField || !modelField.parentElement) return false;
 
     // Adequacy metric field (hidden until Absolute is active). A draggable bar:
     // the threshold is a policy choice, so it's adjustable for sensitivity.
@@ -308,8 +297,8 @@
       + 'font-variant-numeric:tabular-nums">0.50</span>' +
       '<span id="fairAdequacyVal" class="badge" '
       + 'style="margin-left:6px;background:var(--accent,#2d7);color:#fff">—</span>' +
-      // Mask toggle. Its label carries a grey swatch so it doubles as the legend:
-      // "grey = below bar". The green→purple ramp legend (bottom-left) already
+      // Mask toggle. Its label carries a red swatch so it doubles as the legend:
+      // "red = below bar". The green→purple ramp legend (bottom-left) already
       // explains the above-bar provision levels.
       '<label id="fairAdequacyMaskLbl" style="margin-left:10px;display:inline-flex;'
       + 'align-items:center;gap:4px;font-size:11px;color:var(--ink-3,#667);'
@@ -318,7 +307,28 @@
       + '<span style="display:inline-block;width:11px;height:11px;border-radius:2px;'
       + 'background:rgb(220,53,53);border:1px solid rgba(0,0,0,.15)"></span>'
       + 'red = below bar</label>';
-    field.parentElement.insertBefore(adq, field.nextSibling);
+
+    const modelSection = modelField.closest('.topbar-section');
+    const topbar = modelSection ? modelSection.parentElement : null;
+    if (modelSection && topbar) {
+      // Section + divider start hidden alongside the (hidden) adequacy field;
+      // setAbsolute() shows/hides all three together. See setAbsolute.
+      const divider = document.createElement('div');
+      divider.className = 'topbar-divider';
+      divider.id = 'fairAdequacyDivider';
+      divider.dataset.experimental = 'absolute-color-scale';
+      divider.style.display = 'none';
+      const section = document.createElement('div');
+      section.className = 'topbar-section';
+      section.id = 'fairAdequacySection';
+      section.dataset.experimental = 'absolute-color-scale';
+      section.style.display = 'none';
+      section.appendChild(adq);
+      topbar.insertBefore(divider, modelSection.nextSibling);
+      topbar.insertBefore(section, divider.nextSibling);
+    } else {
+      modelField.parentElement.insertBefore(adq, modelField.nextSibling);
+    }
 
     const slider = adq.querySelector('#fairAdequacyThresh');
     const sliderVal = adq.querySelector('#fairAdequacyThreshVal');
@@ -327,7 +337,7 @@
         _threshold = parseFloat(slider.value);
         if (sliderVal) sliderVal.textContent = _threshold.toFixed(2);
         recomputeAdequacy();          // re-threshold the % (no fairness recompute)
-        if (_on && _maskOn) _repaintMap();   // move the grey mask with the bar
+        if (_on && _maskOn) _repaintMap();   // move the red mask with the bar
       });
     }
     const maskChk = adq.querySelector('#fairAdequacyMask');
@@ -338,9 +348,17 @@
         if (_on) _repaintMap();
       });
     }
-
-    console.info('[absolute-scale] "Color scale" + adequacy metric + map mask injected after the Model control.');
     return true;
+  }
+
+  function injectToggle() {
+    const a = _mountScaleControl();
+    const b = _mountAdequacyField();
+    if (a && b) {
+      console.info('[absolute-scale] Scale control (legend) + adequacy metric (topbar) mounted.');
+      return true;
+    }
+    return false;
   }
 
   // Expose the hooks fairness.js looks for (window so they survive the IIFE).

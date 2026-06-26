@@ -163,10 +163,29 @@
   function buildLegend() {
     const w = document.createElement('div');
     w.className = 'shell-legend';
+    // Tabs choose the map color VARIABLE (Fairness vs 2SFCA Supply provision);
+    // both share the ramp below so the two views are directly comparable. The
+    // scale slot is filled by the experimental absolute-scale module
+    // (lib/absoluteColorScale.js) and stays empty/hidden when it's removed.
+    // Each tab carries a small "?" that toggles a plain-English explanation of
+    // that metric (text + behavior live in lib/supplyProvisionLens.js).
+    const help = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 1 1 5.5 1.7c-.6.6-1.6 1-1.6 2.3M12 17v.01"/></svg>';
+    const tab = (v, label, active) =>
+      `<span class="legend-tab-group">` +
+      `<button class="legend-tab" type="button" role="tab" data-colorvar="${v}" data-active="${active}">${label}</button>` +
+      `<button class="legend-tab-help" type="button" data-help="${v}" aria-label="About ${label}" aria-expanded="false">${help}</button>` +
+      `</span>`;
     w.innerHTML = `
-      <div class="legend-head">Fairness</div>
+      <div class="legend-tabs" role="tablist" aria-label="Map color variable">
+        ${tab('fairness', 'Fairness', 'true')}
+        ${tab('supply', 'Supply', 'false')}
+        ${tab('mismatch', 'Mismatch', 'false')}
+      </div>
       <div class="ramp"></div>
       <div class="ramp-labels"><span>Least fair</span><span>Medium</span><span>Most fair</span></div>
+      <div class="legend-scale" id="legendScaleSlot"></div>
+      <div class="legend-sub" id="legendNote">Building color = accessibility fairness (greener = fairer).</div>
+      <div class="legend-help" id="legendHelp" hidden></div>
     `;
     return w;
   }

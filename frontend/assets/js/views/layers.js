@@ -121,7 +121,24 @@ function createCityLayer(grayBackdrop) {
         return demoLensColorForFeature(f);
       }
 
-      // 5) Fairness coloring if active (per-category mix selected by user)
+      // 5) Map color variable = Mismatch: diverging color of proximity minus
+      // available supply, lighting up where the Fairness and Supply views disagree
+      // (see lib/supplyProvisionLens.js). Grey until both scores are stamped.
+      if (typeof mismatchActive === 'function' && mismatchActive()) {
+        return mismatchColorForFeature(f);
+      }
+
+      // 5b) Map color variable = Supply provision (2SFCA) instead of fairness.
+      // A lens like the demographic one above: it paints whenever the Supply tab
+      // is active, independent of the fairness analysis. Same green→purple ramp on
+      // the pre-stamped _supplyScore (see lib/supplyProvisionLens.js); grey where
+      // no baked 2SFCA row exists. The absolute adequacy mask is fairness-only, so
+      // it's intentionally skipped here.
+      if (typeof supplyActive === 'function' && supplyActive()) {
+        return supplyColorForFeature(f);
+      }
+
+      // 5b) Fairness coloring if active (per-category mix selected by user)
       if (fairActive && f.properties?.fair) {
         // EXPERIMENTAL adequacy map mask (removable — see lib/absoluteColorScale.js):
         // grey out buildings below the chosen absolute provision bar.
@@ -138,7 +155,7 @@ function createCityLayer(grayBackdrop) {
 
     updateTriggers: {
       getElevation:[heightScale],
-      getFillColor:[fairActive, fairCategory, fairRecolorTick, drSelectionTick, drHasSelection, buildingTypeTick, selectedBuildingType, transitionAnimTick, transitionAnimActive, changeLogTick, changeCompareBaseline, pinnedChangeId, (typeof demoLensField !== 'undefined' ? demoLensField : ''), (typeof demoLensTick !== 'undefined' ? demoLensTick : 0), (typeof priorityZonesActive !== 'undefined' ? priorityZonesActive : false), (typeof priorityZonesTick !== 'undefined' ? priorityZonesTick : 0)]
+      getFillColor:[fairActive, fairCategory, fairRecolorTick, drSelectionTick, drHasSelection, buildingTypeTick, selectedBuildingType, transitionAnimTick, transitionAnimActive, changeLogTick, changeCompareBaseline, pinnedChangeId, (typeof demoLensField !== 'undefined' ? demoLensField : ''), (typeof demoLensTick !== 'undefined' ? demoLensTick : 0), (typeof priorityZonesActive !== 'undefined' ? priorityZonesActive : false), (typeof priorityZonesTick !== 'undefined' ? priorityZonesTick : 0), (typeof mapColorVar !== 'undefined' ? mapColorVar : 'fairness'), (typeof supplyTick !== 'undefined' ? supplyTick : 0)]
     }
   });
 }

@@ -377,7 +377,7 @@ body[data-inspector-open="true"] .clear-selection-pill {
   position: fixed;
   bottom: 16px;
   left: calc(var(--rail-w) + 16px);
-  width: 220px;
+  width: 248px;
   padding: 12px;
   z-index: 1035;
   background: color-mix(in oklch, var(--surface) 92%, transparent);
@@ -415,6 +415,125 @@ body[data-inspector-open="true"] .clear-selection-pill {
   color: var(--ink-3);
   margin-top: 8px;
   line-height: 1.4;
+}
+
+/* Map color VARIABLE tabs (Fairness | Supply provision) — underline marks the
+   active view; the ramp below is shared so the two are directly comparable. */
+.shell-legend .legend-tabs {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.shell-legend .legend-tab {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 0 0 6px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.shell-legend .legend-tab:hover { color: var(--ink-1); }
+.shell-legend .legend-tab[data-active="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent, #2d7);
+}
+.shell-legend .legend-tab:focus-visible {
+  outline: 2px solid var(--accent, #2d7);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.shell-legend .legend-tab-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+/* Small "?" beside each tab — toggles that metric's explanation. */
+.shell-legend .legend-tab-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  margin-bottom: 5px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.shell-legend .legend-tab-help:hover,
+.shell-legend .legend-tab-help:focus-visible,
+.shell-legend .legend-tab-help[aria-expanded="true"] {
+  color: var(--ink);
+  background: color-mix(in oklch, var(--ink) 9%, transparent);
+  outline: none;
+}
+/* Plain-English explanation panel revealed by a "?". */
+.shell-legend .legend-help {
+  margin-top: 8px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--ink) 5%, transparent);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+.shell-legend .legend-help[hidden] { display: none; }
+.shell-legend .legend-help b { color: var(--ink); font-weight: 600; }
+
+/* Scale slot (Relative/Absolute, injected by the experimental absolute-scale
+   module). Collapses when empty (module removed) and greys out on the Supply
+   tab, where an absolute scale doesn't apply. */
+.shell-legend .legend-scale {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.shell-legend .legend-scale:empty { display: none; }
+.shell-legend .legend-scale[data-disabled="true"] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.shell-legend .legend-scale .legend-scale-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.shell-legend .segmented {
+  display: inline-flex;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.shell-legend .segmented button {
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.shell-legend .segmented button[data-active="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
 }
 
 .shell-zoom {
