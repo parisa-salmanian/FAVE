@@ -53,3 +53,8 @@ tools/osrm/
 
 # Local Playwright verify screenshots (debug artifacts)
 tools/_verify_*.png
+
+# --- Scratch / working artifacts (local-only) ---
+# Bake logs + intermediate file snapshots from dev sessions; duplicates of files
+# already versioned under frontend/ — not source.
+scratchpad_logs/
