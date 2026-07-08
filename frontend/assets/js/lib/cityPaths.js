@@ -161,6 +161,27 @@ const DR_RICH_FEATURES = [
   { json: 'demo_income',       key: 'richIncome',  label: 'Median income (dem)' }
 ];
 
+// Synthetic per-building demographic shares (stamped by lib/synthpop.js for ALL
+// cities, unlike the Växjö-only __drRich set above). Fed into the building-mode
+// DR matrix so UMAP/PCP can find demographic structure (elderly-heavy,
+// low-education, high-dependency neighbourhoods) instead of only built form.
+// Keys are demSyn* so both the (dem) label filter AND the ^dem[A-Z] key filter
+// in drFeatureMode.js treat them as "extra/demographic" features. NB these are a
+// synthetic spread around the real DESO mean — defensible at the CLUSTER level,
+// not as a per-building fact.
+const DR_SYNTH_DEMO_FEATURES = [
+  // `log: true` → log1p the value before z-score/color: these two are heavily
+  // right-skewed (a few outlier buildings reach 30×/80× the median), which would
+  // otherwise dominate the UMAP distance and crush the color ramp.
+  { prop: '__synthElder',         key: 'demSynElder',     label: 'Elderly share (dem)' },
+  { prop: '__synthChild',         key: 'demSynChild',     label: 'Child share (dem)' },
+  { prop: '__synthDependency',    key: 'demSynDep',       label: 'Dependency ratio (dem)', log: true },
+  { prop: '__synthHigherEd',      key: 'demSynHigherEd',  label: 'Higher education (dem)' },
+  { prop: '__synthNeet',          key: 'demSynNeet',      label: 'NEET share (dem)' },
+  { prop: '__synthIncomeSupport', key: 'demSynIncSup',    label: 'Income support (dem)', log: true },
+  { prop: '__synthMale',          key: 'demSynMale',      label: 'Male share (dem)' }
+];
+
 const GENDER_AGE_POP_URL_BY_CITY_KEY = {
   vaxjo: 'assets/data/gender-age-population.json',
   malmo: 'assets/data/malmo_age_gender.json',

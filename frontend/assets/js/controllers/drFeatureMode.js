@@ -6,13 +6,29 @@
 
   // Contrastive keys used in policy mode (service-first but still informative).
   const POLICY_CONTRAST_KEYS = new Set([
-    'overall',
+    // 'overall' EXCLUDED: it is a weighted composite of the per-category scores,
+    // so contrasting on it is circular. Per-category access only (all 10 services)
+    // so the panel attributes a selection's difference to specific services.
     'fairGrocery',
     'fairHospital',
     'fairPrimary',
     'fairPharmacy',
     'fairHealthcare',
     'fairKindergarten',
+    'fairSchoolHigh',
+    'fairUniversity',
+    'fairDentistry',
+    'fairVeterinary',
+    'distGrocery',
+    'distHospital',
+    'distHealthcare',
+    'distPharmacy',
+    'distVeterinary',
+    'distUniversity',
+    'distSchoolHigh',
+    'distPrimary',
+    'distKindergarten',
+    'distDentistry',
     'heights',
     'years',
     'areaLog',
@@ -22,19 +38,34 @@
 
   // Label fragments retained for DR matrix / EBM in policy mode.
   const POLICY_LABEL_MATCHERS = [
-    'overall fairness',
+    // 'overall fairness' EXCLUDED on purpose: it is a weighted composite of the
+    // per-category scores, so embedding/EBM-ing on it is circular. Keeping only
+    // the per-category access lets the EBM attribute a selection's difference
+    // (e.g. high child-share areas) to specific services such as university.
     'grocery fairness',
     'hospital fairness',
     'primary school fairness',
     'pharmacy fairness',
     'healthcare center fairness',
-    'kindergarten fairness'
+    'kindergarten fairness',
+    'high school fairness',
+    'university fairness',
+    'dentistry fairness',
+    'veterinary fairness',
+    // Raw network distance (m) per service — the DISTANCE model. Matches every
+    // 'X distance (m)' label so they enter the embedding/EBM as access features.
+    'distance (m)'
   ];
 
   // Feature SET (orthogonal to policy/legacy): which family of features to embed.
   const FS_ACCESS = 'access';        // accessibility only (default, original behaviour)
   const FS_ACCESS_DEMO = 'access_demo'; // accessibility + SCB demographics
   const FS_DEMO = 'demo';            // SCB demographics only
+  // Curated "equity profile": ONE accessibility anchor (overall) + demographics +
+  // modal-access gaps, dropping the ~9 collinear per-category fairness scores AND
+  // the (morph) built-form dims. Goal: clusters that mean "a type of underserved
+  // neighbourhood" instead of the 1-D accessibility filament or a built-form blob.
+  const FS_EQUITY = 'equity';
 
   function currentMode() {
     const sel = document.getElementById('drFeatureMode');
@@ -45,7 +76,7 @@
   function currentFeatureSet() {
     const sel = document.getElementById('drFeatureSet');
     const v = sel?.value || globalThis.DR_FEATURE_SET || FS_ACCESS_DEMO;
-    return [FS_ACCESS, FS_ACCESS_DEMO, FS_DEMO].includes(v) ? v : FS_ACCESS_DEMO;
+    return [FS_ACCESS, FS_ACCESS_DEMO, FS_DEMO, FS_EQUITY].includes(v) ? v : FS_ACCESS_DEMO;
   }
 
   function isPolicyLabel(label) {
@@ -64,8 +95,14 @@
   }
 
   // Should this feature be kept, given policy/legacy mode AND the feature set?
-  function keepFeature({ isDemo, isAccessBaseline }) {
+  function keepFeature({ isDemo, isAccessBaseline, label }) {
     const fs = currentFeatureSet();
+    if (fs === FS_EQUITY) {
+      const s = String(label || '').toLowerCase();
+      if (/\(morph\)/.test(s)) return false;   // drop built-form (height/area/density/multi)
+      if (s.includes('overall')) return true;  // keep ONE accessibility anchor
+      return isDemo;                            // keep demographics + modal-access gaps
+    }
     if (fs === FS_DEMO) return isDemo;
     if (fs === FS_ACCESS_DEMO) return isAccessBaseline || isDemo;
     return isAccessBaseline && !isDemo; // FS_ACCESS
@@ -79,7 +116,7 @@
     payload.featureLabels.forEach((label, idx) => {
       const demo = isDemoLabel(label);
       const accessBaseline = legacy ? !demo : isPolicyLabel(label);
-      if (keepFeature({ isDemo: demo, isAccessBaseline: accessBaseline })) keepIdx.push(idx);
+      if (keepFeature({ isDemo: demo, isAccessBaseline: accessBaseline, label })) keepIdx.push(idx);
     });
 
     // Fallback: never return an empty matrix (e.g. demo-only outside district mode).
@@ -102,7 +139,9 @@
     const filtered = diff.features.filter((f) => {
       const demo = isDemoKey(f.key);
       const accessBaseline = legacy ? !demo : POLICY_CONTRAST_KEYS.has(f.key);
-      return keepFeature({ isDemo: demo, isAccessBaseline: accessBaseline });
+      // For the contrastive panel we only have keys, not labels; pass the key so
+      // the equity branch can still spot the 'overall' accessibility anchor.
+      return keepFeature({ isDemo: demo, isAccessBaseline: accessBaseline, label: f.key });
     });
     // Never blank the panel out entirely.
     return { ...diff, features: filtered.length ? filtered : diff.features };
@@ -136,6 +175,7 @@
     const fs = currentFeatureSet();
     const fsLabel = fs === FS_DEMO ? 'SCB demographics only'
       : fs === FS_ACCESS_DEMO ? 'accessibility + SCB demographics'
+      : fs === FS_EQUITY ? 'equity profile (overall access + demographics + modal gaps)'
       : 'accessibility only';
     const note = (fs !== FS_ACCESS)
       ? ' — demographics apply in District mode (Växjö).'

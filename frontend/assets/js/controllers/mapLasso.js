@@ -105,15 +105,24 @@ function buildingCentroid(feature) {
 }
 
 function mezoHexForBuilding(feature) {
-  const coords = buildingCentroid(feature);
-  if (!Array.isArray(coords)) return null;
+  if (!feature) return null;
   const res = resolveMezoResolution();
   if (res == null) return null;
+  // Cache the resolved cell per building per resolution. Selection expansion can
+  // call this once per building (tens of thousands); recomputing centroid + h3
+  // every time is what froze the tab. Invalidated automatically when res changes.
+  const cached = feature.__mezoHexCache;
+  if (cached && cached.res === res) return cached.hex;
+  const coords = buildingCentroid(feature);
+  if (!Array.isArray(coords)) return null;
+  let hex = null;
   try {
-    return h3LatLngToCell(window.h3, coords[1], coords[0], res);
+    hex = h3LatLngToCell(window.h3, coords[1], coords[0], res);
   } catch (_) {
-    return null;
+    hex = null;
   }
+  feature.__mezoHexCache = { res, hex };
+  return hex;
 }
 
 function districtForBuilding(feature) {
@@ -139,33 +148,42 @@ function selectedBuildingsFromEntities(entities = []) {
   };
 
   const allBuildings = baseCityFC?.features || [];
+  if (!entities.length || !allBuildings.length) return selected;
+
+  // Bucket entities by type ONCE, then resolve hex-cell and polygon entities in a
+  // SINGLE pass over the buildings. The old code looped every building for every
+  // entity — O(entities × buildings), ~120M ops for a large hex selection, which
+  // froze the tab. Building references use a Set for O(1) membership.
+  const buildingRefSet = new Set(allBuildings);
+  const hexTargets = new Set();
+  const polyEntities = [];
   entities.forEach((entity) => {
     if (!entity) return;
-    if (allBuildings.includes(entity)) {
-      addBuilding(entity);
-      return;
-    }
-
+    if (buildingRefSet.has(entity)) { addBuilding(entity); return; }
     const maybeHex = entity?.hex || entity?.properties?.hex;
-    if (maybeHex) {
-      allBuildings.forEach((building) => {
-        if (mezoHexForBuilding(building) === maybeHex) addBuilding(building);
-      });
-      return;
-    }
-
-    const hasGeometry = !!entity?.geometry;
-    if (!hasGeometry) return;
-    allBuildings.forEach((building) => {
-      const c = buildingCentroid(building);
-      if (!Array.isArray(c)) return;
-      try {
-        if (turf.booleanPointInPolygon(turf.point(c), entity)) addBuilding(building);
-      } catch (_) {
-        /* ignore */
-      }
-    });
+    if (maybeHex) { hexTargets.add(maybeHex); return; }
+    if (entity?.geometry) polyEntities.push(entity);
   });
+
+  if (!hexTargets.size && !polyEntities.length) return selected;
+
+  for (const building of allBuildings) {
+    if (seen.has(building)) continue;
+    if (hexTargets.size) {
+      const hx = mezoHexForBuilding(building);
+      if (hx && hexTargets.has(hx)) { addBuilding(building); continue; }
+    }
+    if (polyEntities.length) {
+      const c = buildingCentroid(building);
+      if (!Array.isArray(c)) continue;
+      const pt = turf.point(c);
+      for (const poly of polyEntities) {
+        try {
+          if (turf.booleanPointInPolygon(pt, poly)) { addBuilding(building); break; }
+        } catch (_) { /* ignore */ }
+      }
+    }
+  }
 
   return selected;
 }
@@ -180,31 +198,41 @@ function setPersistentBuildingSelection(buildings = []) {
 
 function markAggregateSelectionsFromBuildings(selectedBuildings) {
   const selectedSet = new Set(Array.isArray(selectedBuildings) ? selectedBuildings : []);
-  const selectedDistricts = new Set();
-  selectedSet.forEach((building) => {
-    const district = districtForBuilding(building);
-    if (district) selectedDistricts.add(district);
-  });
+  // Only mark the ACTIVE aggregate. Marking both used to run districtForBuilding
+  // (point-in-polygon) over every selected building even in hex mode — ~680k turf
+  // calls for a large selection, a major freeze. The other scale re-marks itself
+  // from the _drSelected buildings when refreshDistrictScores/refreshMezoScores
+  // runs on a scale switch, so nothing is lost.
+  const mode = (typeof currentDRDataMode === 'function') ? currentDRDataMode() : null;
 
-  (districtFC?.features || []).forEach((district) => {
-    if (selectedDistricts.has(district)) {
-      if (!district.properties) district.properties = {};
-      district.properties._drSelected = true;
-      district.properties._drColor = [...DR_SELECTION_COLOR_DEFAULT];
-    }
-  });
+  if (mode === 'district') {
+    const selectedDistricts = new Set();
+    selectedSet.forEach((building) => {
+      const district = districtForBuilding(building);
+      if (district) selectedDistricts.add(district);
+    });
+    (districtFC?.features || []).forEach((district) => {
+      if (selectedDistricts.has(district)) {
+        if (!district.properties) district.properties = {};
+        district.properties._drSelected = true;
+        district.properties._drColor = [...DR_SELECTION_COLOR_DEFAULT];
+      }
+    });
+    return;
+  }
 
-  const selectedHexes = new Set();
-  selectedSet.forEach((building) => {
-    const cell = mezoHexForBuilding(building);
-    if (cell) selectedHexes.add(cell);
-  });
-
-  (mezoHexData || []).forEach((cell) => {
-    if (!selectedHexes.has(cell?.hex)) return;
-    cell._drSelected = true;
-    cell._drColor = [...DR_SELECTION_COLOR_DEFAULT];
-  });
+  if (mode === 'mezo') {
+    const selectedHexes = new Set();
+    selectedSet.forEach((building) => {
+      const cell = mezoHexForBuilding(building);
+      if (cell) selectedHexes.add(cell);
+    });
+    (mezoHexData || []).forEach((cell) => {
+      if (!selectedHexes.has(cell?.hex)) return;
+      cell._drSelected = true;
+      cell._drColor = [...DR_SELECTION_COLOR_DEFAULT];
+    });
+  }
 }
 
 function entitiesForSpatialModeFromBuildings(buildings, mode = currentDRDataMode()) {
@@ -268,8 +296,11 @@ function applyMapSelection(selected, opts = {}) {
   const nextSelected = selectedBuildingsFromEntities(existingSelected);
 
   if (Array.isArray(selected)) {
+    // Set-based dedup: Array.includes here was O(n²) and froze on large
+    // (tens-of-thousands) building selections.
+    const nextSet = new Set(nextSelected);
     selectedBuildingsFromEntities(selected).forEach((feat) => {
-      if (feat && !nextSelected.includes(feat)) nextSelected.push(feat);
+      if (feat && !nextSet.has(feat)) { nextSet.add(feat); nextSelected.push(feat); }
     });
   }
 
@@ -309,7 +340,10 @@ function applyMapLassoSelection(polygon, opts = {}) {
 
   const selected = [];
   for (const f of baseCityFC.features) {
-    const c = turf.centroid(f).geometry.coordinates;
+    // Cached ring-average centroid (was turf.centroid per building — a full
+    // polygon centroid over ~58k features on every map lasso).
+    const c = buildingCentroid(f);
+    if (!Array.isArray(c)) continue;
     const pt = map.project({ lng: c[0], lat: c[1] });
     if (!pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) continue;
     if (d3.polygonContains(polygon, [pt.x, pt.y])) selected.push(f);

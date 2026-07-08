@@ -5,6 +5,17 @@
 // name, so they resolve at call time — order is fine as long as the DOM
 // handlers that invoke them run after main.js has set those globals up.
 
+// Color-by options that map a #drColorBy value to a synthetic per-building
+// demographic share (keys stamped by synthpop.js / fed via DR_SYNTH_DEMO_FEATURES).
+// Lets a UMAP cluster be named by its dominant demographic.
+const DR_DEMO_COLOR_BY = {
+  elderly:       { key: 'demSynElder',    label: 'Elderly share',    dir: 'Fewer → More elderly' },
+  dependency:    { key: 'demSynDep',      label: 'Dependency ratio', dir: 'Low → High dependency' },
+  incomesupport: { key: 'demSynIncSup',   label: 'Income support',   dir: 'Low → High' },
+  higheredu:     { key: 'demSynHigherEd', label: 'Higher education', dir: 'Low → High' },
+  child:         { key: 'demSynChild',    label: 'Child share',      dir: 'Fewer → More children' }
+};
+
 /* ---- Library detection ---- */
 function hasUMAPGlobal() {
   if (window.UMAP && typeof window.UMAP === 'function') return true;
@@ -222,7 +233,63 @@ function zscore(arr) {
   const sd = Math.sqrt(vals.reduce((s,v)=>s+(v-mu)*(v-mu),0)/Math.max(1, vals.length));
   return arr.map(v => Number.isFinite(v) ? (sd>0 ? (v-mu)/sd : 0) : 0);
 }
+// Robust low/high bounds (percentile clamp) so a few outlier buildings don't
+// stretch a color ramp and crush all real variation into one end. Skewed
+// demographics (income-support, dependency) need this; min–max does not work.
+function robustLoHi(vals, pLo = 0.02, pHi = 0.98) {
+  const s = vals.filter(Number.isFinite).slice().sort((a, b) => a - b);
+  if (!s.length) return [0, 1];
+  const q = (p) => {
+    const i = (s.length - 1) * p, f = Math.floor(i);
+    return s[f] + (s[Math.min(f + 1, s.length - 1)] - s[f]) * (i - f);
+  };
+  let lo = q(pLo), hi = q(pHi);
+  if (hi <= lo) { lo = s[0]; hi = s[s.length - 1]; }
+  return [lo, hi];
+}
+function clamp01(v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 function logAreaOfFeature(f) { try { return Math.log(Math.max(1, turf.area(f))); } catch { return 0; } }
+
+// Per-building RAW network distance (metres) to the nearest facility of each
+// service, read from the baked routing matrices (the DISTANCE accessibility model
+// — the paper's companion to the gravity score). Cached on the feature so a DR
+// re-run is cheap. These let the multivariate views dissect distance composition,
+// where the child-share coupling is NON-tautological (child-heavy areas sit far
+// from university/hospital) — a structure the gravity score de-emphasises.
+// cat -> dr-row key for the 10 services in ALL_CATEGORIES.
+const DR_DIST_KEY_BY_CAT = {
+  grocery: 'distGrocery', hospital: 'distHospital', healthcare_center: 'distHealthcare',
+  pharmacy: 'distPharmacy', veterinary: 'distVeterinary', university: 'distUniversity',
+  school_high: 'distSchoolHigh', school_primary: 'distPrimary',
+  kindergarten: 'distKindergarten', dentistry: 'distDentistry'
+};
+function rawDistsForFeature(f) {
+  const p = f.properties || (f.properties = {});
+  if (p.__rawDist) return p.__rawDist;
+  const out = {};
+  if (typeof routingReady === 'function' && routingReady() && typeof routingRowForPoint === 'function') {
+    let lon = NaN, lat = NaN;
+    // Fast ring-average centroid (avoids turf.centroid overhead over ~100k
+    // buildings); the 45 m routing snap tolerance absorbs the small offset.
+    try {
+      const g = f.geometry; let cs = null;
+      if (g) { if (g.type === 'Polygon') cs = g.coordinates[0]; else if (g.type === 'MultiPolygon') cs = g.coordinates[0] && g.coordinates[0][0]; }
+      if (cs && cs.length) { let x = 0, y = 0, n = 0; for (const c of cs) { x += c[0]; y += c[1]; n++; } if (n) { lon = x / n; lat = y / n; } }
+    } catch {}
+    if (Number.isFinite(lon) && Number.isFinite(lat)) {
+      const row = routingRowForPoint(lon, lat);
+      if (row >= 0) {
+        for (const cat of Object.keys(DR_DIST_KEY_BY_CAT)) {
+          const d = (typeof routingDistsForRow === 'function') ? routingDistsForRow(cat, row) : null;
+          const m = d && d.dists ? Number(d.dists[0]) : NaN;
+          out[DR_DIST_KEY_BY_CAT[cat]] = Number.isFinite(m) ? m : null;
+        }
+      }
+    }
+  }
+  p.__rawDist = out;
+  return out;
+}
 
 function stableHashString(str) {
   let h = 2166136261;
@@ -355,16 +422,52 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         ? (Number.isFinite(r.richNeed) ? r.richNeed : r.demNeed)
         : (Number.isFinite(r.richIncome) ? r.richIncome : r.demIncome);
       const vals = pickedRows.map(get).filter(Number.isFinite);
-      const lo = vals.length ? Math.min(...vals) : 0;
-      const hi = vals.length ? Math.max(...vals) : 1;
+      const [lo, hi] = robustLoHi(vals);
       const span = (hi - lo) || 1;
       colors = pickedRows.map((r) => {
         const v = get(r);
-        return Number.isFinite(v) ? rampColor01((v - lo) / span) : grey(120);
+        return Number.isFinite(v) ? rampColor01(clamp01((v - lo) / span)) : grey(120);
       });
       const label = colorBy === 'need' ? 'SCB need (deprivation)' : 'SCB median income';
       const dir = colorBy === 'need' ? 'Low need → High need' : 'Low income → High income';
       updateLegend(colorBy, `Legend (${label})`, dir);
+    } else if (colorBy === 'childreal') {
+      // Color by the REAL SCB child share of each point's DESO (building mode:
+      // row.childReal via __deso → epiDesoProps). Measured data, not the synthetic
+      // per-building spread — this is the defensible "access composition vs who
+      // lives there" coupling. Robust percentile clamp so outliers don't crush it.
+      // Cells/buildings with no measured DESO child share (null) → NaN → grey, so
+      // empty rural mezo cells stay neutral (not miscoloured as "0% children") and
+      // the ramp spans only the real child range for a crisp family gradient.
+      const get = (r) => (r.childReal == null ? NaN : Number(r.childReal));
+      const vals = pickedRows.map(get).filter(Number.isFinite);
+      const [lo, hi] = robustLoHi(vals);
+      const span = (hi - lo) || 1;
+      colors = pickedRows.map((r) => {
+        const v = get(r);
+        // No measured DESO child share → HIDE the point (fully transparent) rather
+        // than draw a meaningless grey dot. These cells have accessibility data but
+        // no real child overlay (rural cells outside DESO coverage); hiding them
+        // keeps the child gradient clean. They stay in the sample (UMAP layout is
+        // unchanged); only the render is suppressed for this colour mode.
+        return Number.isFinite(v) ? rampColor01(clamp01((v - lo) / span)) : [0, 0, 0, 0];
+      });
+      updateLegend('childreal', 'Legend (Child share — SCB DESO, real)', 'Fewer → More children');
+    } else if (DR_DEMO_COLOR_BY[colorBy]) {
+      // Color by a synthetic per-building demographic share so each UMAP cluster
+      // can be NAMED (e.g. "this band is elderly-heavy"). Min–max normalised over
+      // the sample. NB synthetic spread around the DESO mean — read at the cluster
+      // level, not as a per-building fact.
+      const spec = DR_DEMO_COLOR_BY[colorBy];
+      const get = (r) => Number(r[spec.key]);
+      const vals = pickedRows.map(get).filter(Number.isFinite);
+      const [lo, hi] = robustLoHi(vals);
+      const span = (hi - lo) || 1;
+      colors = pickedRows.map((r) => {
+        const v = get(r);
+        return Number.isFinite(v) ? rampColor01(clamp01((v - lo) / span)) : grey(120);
+      });
+      updateLegend(colorBy, `Legend (${spec.label})`, spec.dir);
     } else if (colorBy === 'year') {
       colors = pickedRows.map((r) => Number.isFinite(r.yearLike) ? rampColor01(r.yearLike) : grey(110));
       updateLegend('year', `Legend (${mode} temporal proxy)`, 'Low (left) → High (right)');
@@ -380,10 +483,14 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       dims: X[0]?.length || 0,
       sample: pickedSample,
       metrics: {
-        heights: pickedRows.map(r => r.heightLike),
+        // Height/footprint are per-BUILDING facts only. In aggregate (mezo/district)
+        // modes these fields carry no real height/area (they held building count),
+        // so emit NaN → the contrastive/EBM drop them instead of showing a bar
+        // mislabeled "Height (m)" / "Footprint area".
+        heights: (mode === 'building') ? pickedRows.map(r => r.heightLike) : pickedRows.map(() => NaN),
         years: pickedRows.map(r => r.yearRaw),
         overall: pickedRows.map(r => r.overall),
-        areaLog: pickedRows.map(r => r.areaLike),
+        areaLog: (mode === 'building') ? pickedRows.map(r => r.areaLike) : pickedRows.map(() => NaN),
         changeScore: pickedRows.map(r => r.changeLike),
         fairGrocery: pickedRows.map(r => r.grocery),
         fairHospital: pickedRows.map(r => r.hospital),
@@ -392,6 +499,21 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         fairHealthcare:  pickedRows.map(r => r.healthcare),
         fairKindergarten:pickedRows.map(r => r.kindergarten),
         fairSchoolHigh:  pickedRows.map(r => r.schoolHigh),
+        fairUniversity:  pickedRows.map(r => r.university),
+        fairDentistry:   pickedRows.map(r => r.dentistry),
+        fairVeterinary:  pickedRows.map(r => r.veterinary),
+        // RAW network distance (m) per service — the distance model, where the
+        // child-share coupling is non-tautological (university/hospital lead).
+        distGrocery:     pickedRows.map(r => r.distGrocery),
+        distHospital:    pickedRows.map(r => r.distHospital),
+        distHealthcare:  pickedRows.map(r => r.distHealthcare),
+        distPharmacy:    pickedRows.map(r => r.distPharmacy),
+        distVeterinary:  pickedRows.map(r => r.distVeterinary),
+        distUniversity:  pickedRows.map(r => r.distUniversity),
+        distSchoolHigh:  pickedRows.map(r => r.distSchoolHigh),
+        distPrimary:     pickedRows.map(r => r.distPrimary),
+        distKindergarten:pickedRows.map(r => r.distKindergarten),
+        distDentistry:   pickedRows.map(r => r.distDentistry),
         categoryCode: pickedRows.map(r => r.categoryLike),
         isChange: pickedRows.map(r => r.isChangeLike),
         // Demographic metrics (district mode only; undefined elsewhere -> ignored
@@ -425,6 +547,9 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       const row = {
         overall: Number(props.__fairOverall),
         focused: Number(props.__score),
+        // Real DESO child share aggregated to the district (color-only, like the
+        // building path) — lets the macro DR colour districts by child share.
+        childReal: Number.isFinite(props.__childReal) ? props.__childReal : null,
         grocery: Number(byCat.grocery),
         hospital: Number(byCat.hospital),
         primary: Number(byCat.school_primary),
@@ -432,6 +557,9 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         healthcare: Number(byCat.healthcare_center),
         kindergarten: Number(byCat.kindergarten),
         schoolHigh: Number(byCat.school_high),
+        university: Number(byCat.university),
+        dentistry: Number(byCat.dentistry),
+        veterinary: Number(byCat.veterinary),
         areaLike: Number.isFinite(areaSqKm) ? Math.log1p(areaSqKm) : null,
         heightLike: Number(props.__count),
         yearLike: Number(props.__fairFocused),
@@ -457,6 +585,9 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       healthcare: 'healthcare center fairness (z)',
       kindergarten: 'kindergarten fairness (z)',
       schoolHigh: 'high school fairness (z)',
+      university: 'university fairness (z)',
+      dentistry: 'dentistry fairness (z)',
+      veterinary: 'veterinary fairness (z)',
       areaLike: 'log(area km²) (z)',
       heightLike: 'building count (z)'
     };
@@ -474,12 +605,65 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
 
   if (mode === 'mezo') {
     if (!mezoHexData?.length) throw new Error('No mezo cells available.');
-    const sample = mezoHexData;
+    // Only embed POPULATED cells (real accessibility data). Empty coverage cells
+    // (no buildings → all-null features) collapse to one degenerate blob, add no
+    // information, and inflate the UMAP cost. Dropping them declutters the DR and
+    // speeds it up — it discards NO real data (empty cells have no residents).
+    const sample = mezoHexData.filter(c => Number.isFinite(c?.__fairOverall) || Number.isFinite(c?.__score));
+    if (!sample.length) throw new Error('No populated mezo cells available.');
+    // Per-cell raw NETWORK distance (m): aggregate each building's own distance into
+    // its hex cell (one pass, on Run, ~0.2 s). Buildings resolve to their OWN matrix
+    // row (~100% coverage) — far better than snapping a 250 m cell centroid, which
+    // usually lands >45 m from any baked key (~36% coverage). This gives the everyday
+    // "nearer to family cells" tier accurately. (Note: the regional university/hospital
+    // "farther" tier is a BUILDING-scale finding — it averages out at 250 m cells.)
+    const h3lib = window.h3;
+    const mezoRes = (typeof resolveMezoResolution === 'function') ? resolveMezoResolution() : null;
+    const distReady = (typeof routingReady === 'function' && routingReady()
+      && typeof rawDistsForFeature === 'function' && typeof h3LatLngToCell === 'function'
+      && h3lib && mezoRes != null && baseCityFC?.features?.length);
+    const distAgg = new Map(); // hex -> { s:{key:sum}, c:{key:count} }
+    if (distReady) {
+      const distKeys = Object.values(DR_DIST_KEY_BY_CAT);
+      for (const f of baseCityFC.features) {
+        const rd = rawDistsForFeature(f);
+        let lon = NaN, lat = NaN;
+        try {
+          const g = f.geometry; let cs = null;
+          if (g) { if (g.type === 'Polygon') cs = g.coordinates[0]; else if (g.type === 'MultiPolygon') cs = g.coordinates[0] && g.coordinates[0][0]; }
+          if (cs && cs.length) { let x = 0, y = 0, n = 0; for (const c of cs) { x += c[0]; y += c[1]; n++; } if (n) { lon = x / n; lat = y / n; } }
+        } catch (_) {}
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+        let hx = null;
+        try { hx = h3LatLngToCell(h3lib, lat, lon, mezoRes); } catch (_) {}
+        if (!hx) continue;
+        let a = distAgg.get(hx);
+        if (!a) { a = { s: {}, c: {} }; distAgg.set(hx, a); }
+        for (const k of distKeys) {
+          const v = Number(rd[k]);
+          if (Number.isFinite(v)) { a.s[k] = (a.s[k] || 0) + v; a.c[k] = (a.c[k] || 0) + 1; }
+        }
+      }
+    }
+    const cellDists = (cell) => {
+      const out = {};
+      const a = distAgg.get(cell?.hex);
+      if (!a) return out;
+      for (const k of Object.values(DR_DIST_KEY_BY_CAT)) {
+        const c = a.c[k];
+        out[k] = c ? a.s[k] / c : null;
+      }
+      return out;
+    };
     const rows = sample.map((cell) => {
       const byCat = cell?.__fairByCat || {};
-      return {
+      const rd = cellDists(cell);
+      const row = {
         overall: Number(cell?.__fairOverall),
         focused: Number(cell?.__score),
+        // Real DESO child share aggregated to the cell (color-only, like the
+        // building/district paths) — lets the mezo DR colour cells by child share.
+        childReal: Number.isFinite(cell?.__childReal) ? cell.__childReal : null,
         grocery: Number(byCat.grocery),
         hospital: Number(byCat.hospital),
         primary: Number(byCat.school_primary),
@@ -487,16 +671,28 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         healthcare: Number(byCat.healthcare_center),
         kindergarten: Number(byCat.kindergarten),
         schoolHigh: Number(byCat.school_high),
-        areaLike: Number(cell?.__count),
-        heightLike: Number(cell?.__count),
+        // Full 10-service parity with building mode so the contrastive/EBM can show
+        // the two-tier (regional university/hospital vs everyday services) at hex scale.
+        university: Number(byCat.university),
+        dentistry: Number(byCat.dentistry),
+        veterinary: Number(byCat.veterinary),
+        // No per-cell building height/area: these fields used to hold building COUNT,
+        // which surfaced mislabeled as "Height (m)" / "Footprint area". Leave null.
+        areaLike: null,
+        heightLike: null,
         yearLike: Number(cell?.__fairFocused),
         yearRaw: null,
         categoryLike: Number(cell?.__count),
         changeLike: 0,
         isChangeLike: 0
       };
+      Object.values(DR_DIST_KEY_BY_CAT).forEach((k) => {
+        const v = Number(rd[k]);
+        row[k] = Number.isFinite(v) ? v : null;
+      });
+      return row;
     });
-    return makeMatrix(sample, rows, {
+    const mezoLabels = {
       overall: 'overall fairness (z)',
       focused: 'focused fairness (z)',
       grocery: 'grocery fairness (z)',
@@ -506,9 +702,23 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       healthcare: 'healthcare center fairness (z)',
       kindergarten: 'kindergarten fairness (z)',
       schoolHigh: 'high school fairness (z)',
-      areaLike: 'building count (z)',
-      heightLike: 'cell density proxy (z)'
-    });
+      university: 'university fairness (z)',
+      dentistry: 'dentistry fairness (z)',
+      veterinary: 'veterinary fairness (z)'
+    };
+    // Raw-distance (m) dims — added only if routing matrices resolved (else the
+    // matrix never gains dead all-null columns). The " distance (m)" suffix is how
+    // drFeatureMode.js keeps them classed as access features.
+    const DR_DIST_LABELS_MEZO = {
+      distGrocery: 'grocery distance (m)', distHospital: 'hospital distance (m)',
+      distHealthcare: 'healthcare distance (m)', distPharmacy: 'pharmacy distance (m)',
+      distVeterinary: 'veterinary distance (m)', distUniversity: 'university distance (m)',
+      distSchoolHigh: 'high school distance (m)', distPrimary: 'primary school distance (m)',
+      distKindergarten: 'kindergarten distance (m)', distDentistry: 'dentistry distance (m)'
+    };
+    const hasRawDist = rows.some(r => Object.keys(DR_DIST_LABELS_MEZO).some(k => Number.isFinite(r[k])));
+    if (hasRawDist) Object.entries(DR_DIST_LABELS_MEZO).forEach(([k, lab]) => { mezoLabels[k] = lab; });
+    return makeMatrix(sample, rows, mezoLabels);
   }
 
   if (!baseCityFC?.features?.length) throw new Error('No buildings loaded.');
@@ -521,6 +731,7 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     ? baseCityFC.features.filter(f => !isAccessoryBuilding(f.properties))
     : baseCityFC.features;
   const richFeats = (typeof DR_RICH_FEATURES !== 'undefined') ? DR_RICH_FEATURES : [];
+  const synthDemoFeats = (typeof DR_SYNTH_DEMO_FEATURES !== 'undefined') ? DR_SYNTH_DEMO_FEATURES : [];
   const rows = sample.map((f) => {
     const props = f.properties || {};
     const built = getBuiltYear(props);
@@ -536,6 +747,9 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       healthcare: Number(fm.healthcare_center?.score),
       kindergarten: Number(fm.kindergarten?.score),
       schoolHigh: Number(fm.school_high?.score),
+      university: Number(fm.university?.score),
+      dentistry: Number(fm.dentistry?.score),
+      veterinary: Number(fm.veterinary?.score),
       areaLike: logAreaOfFeature(f),
       heightLike: clampElev(props.height_m ?? props._mean ?? props.hojd ?? props.Hojd),
       yearLike: Number.isFinite(built) ? built : null,
@@ -549,6 +763,26 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     richFeats.forEach((rf) => {
       const v = rich ? Number(rich[rf.json]) : NaN;
       row[rf.key] = Number.isFinite(v) ? v : null;
+    });
+    synthDemoFeats.forEach((sf) => {
+      const v = Number(props[sf.prop]);
+      row[sf.key] = Number.isFinite(v) ? (sf.log ? Math.log1p(Math.max(0, v)) : v) : null;
+    });
+    // REAL SCB child share of the building's DESO (color-only — deliberately NOT
+    // added to buildingLabels, so it never enters the embedding/EBM matrix and
+    // selecting high-child areas can't trivially "explain itself"). This is the
+    // measured DESO value, not the synthetic per-building spread (__synthChild).
+    let childReal = NaN;
+    if (typeof epiDesoProps === 'function' && props.__deso != null) {
+      const dp = epiDesoProps(props.__deso);
+      childReal = dp ? Number(dp.child_frac) : NaN;
+    }
+    row.childReal = Number.isFinite(childReal) ? childReal : null;
+    // RAW network distance (m) to nearest of each service — the distance model.
+    const rd = rawDistsForFeature(f);
+    Object.values(DR_DIST_KEY_BY_CAT).forEach((k) => {
+      const v = Number(rd[k]);
+      row[k] = Number.isFinite(v) ? v : null;
     });
     return row;
   });
@@ -565,11 +799,32 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     healthcare: 'healthcare center fairness (z)',
     kindergarten: 'kindergarten fairness (z)',
     schoolHigh: 'high school fairness (z)',
+    university: 'university fairness (z)',
+    dentistry: 'dentistry fairness (z)',
+    veterinary: 'veterinary fairness (z)',
     categoryLike: 'category code (z)'
   };
   // Add the baked rich dimensions only if at least one sampled building has them.
   const hasRich = rows.some(r => richFeats.some(rf => Number.isFinite(r[rf.key])));
   if (hasRich) richFeats.forEach((rf) => { buildingLabels[rf.key] = rf.label; });
+
+  // Add synthetic demographic shares only if present (all cities once synthpop
+  // is loaded). These give UMAP/PCP real equity-relevant structure.
+  const hasSynthDemo = rows.some(r => synthDemoFeats.some(sf => Number.isFinite(r[sf.key])));
+  if (hasSynthDemo) synthDemoFeats.forEach((sf) => { buildingLabels[sf.key] = sf.label; });
+
+  // Add the raw-distance (m) features only if routing matrices were loaded (so
+  // the matrix never gains dead all-null dims). The " distance (m)" suffix is how
+  // drFeatureMode.js keeps them as access features.
+  const DR_DIST_LABELS = {
+    distGrocery: 'grocery distance (m)', distHospital: 'hospital distance (m)',
+    distHealthcare: 'healthcare distance (m)', distPharmacy: 'pharmacy distance (m)',
+    distVeterinary: 'veterinary distance (m)', distUniversity: 'university distance (m)',
+    distSchoolHigh: 'high school distance (m)', distPrimary: 'primary school distance (m)',
+    distKindergarten: 'kindergarten distance (m)', distDentistry: 'dentistry distance (m)'
+  };
+  const hasRawDist = rows.some(r => Object.keys(DR_DIST_LABELS).some(k => Number.isFinite(r[k])));
+  if (hasRawDist) Object.entries(DR_DIST_LABELS).forEach(([k, lab]) => { buildingLabels[k] = lab; });
 
   return makeMatrix(sample, rows, buildingLabels);
 }
@@ -685,8 +940,13 @@ function redrawDR(selectedIdx = null) {
   const selectedHalf = Math.floor(selectedSize / 2);
 
   const baseAlpha = 0.35;
-  const [ur, ug, ub] = DR_UNSELECTED_COLOR; 
+  const [ur, ug, ub] = DR_UNSELECTED_COLOR;
+  // A fully-transparent colour (alpha 0) marks a HIDDEN point — e.g. a cell with
+  // no measured value under a demographic colour. Skip it here too, otherwise the
+  // base layer would still draw a faint dot for it.
+  const isHidden = (i) => { const c = drPlot.colors[i]; return !!c && c[3] === 0; };
   for (let i=0;i<drPlot.screenXY.length;i++) {
+    if (isHidden(i)) continue;
     const [cx, cy] = drPlot.screenXY[i];
     ctx.fillStyle = `rgba(${ur},${ug},${ub},${baseAlpha})`;
     ctx.fillRect(Math.round(cx) - normalHalf, Math.round(cy) - normalHalf, normalSize, normalSize);
@@ -1254,6 +1514,22 @@ const DR_FEATURE_CONFIG = [
   { key: 'fairHealthcare',   label: 'Healthcare center fairness' },
   { key: 'fairKindergarten', label: 'Kindergarten fairness' },
   { key: 'fairSchoolHigh',   label: 'High school fairness' },
+  { key: 'fairUniversity',   label: 'University access' },
+  { key: 'fairDentistry',    label: 'Dentistry access' },
+  { key: 'fairVeterinary',   label: 'Veterinary access' },
+  // Raw network distance (m) per service — the distance model. The child-share
+  // coupling is non-tautological here (university/hospital lead), unlike the
+  // gravity scores above which the everyday-service density dominates.
+  { key: 'distGrocery',      label: 'Grocery distance (m)' },
+  { key: 'distHospital',     label: 'Hospital distance (m)' },
+  { key: 'distHealthcare',   label: 'Healthcare distance (m)' },
+  { key: 'distPharmacy',     label: 'Pharmacy distance (m)' },
+  { key: 'distVeterinary',   label: 'Veterinary distance (m)' },
+  { key: 'distUniversity',   label: 'University distance (m)' },
+  { key: 'distSchoolHigh',   label: 'High school distance (m)' },
+  { key: 'distPrimary',      label: 'Primary school distance (m)' },
+  { key: 'distKindergarten', label: 'Kindergarten distance (m)' },
+  { key: 'distDentistry',    label: 'Dentistry distance (m)' },
   { key: 'areaLog',      label: 'Footprint area (log m²)' },
   { key: 'changeScore',  label: 'Change score (S1)' },
   // Demographic features (district mode). Generated from DEMOGRAPHIC_FEATURES so
@@ -1358,6 +1634,12 @@ function computeFeatureDifferences(selectionIdx) {
     const meanCity = mean1(cityVals);
     const meanSel  = mean1(selVals);
     const stdCity  = std1(cityVals, meanCity);
+
+    // Skip constant columns (no variance across the city): they carry no
+    // contrastive signal and only render an empty 0-effect bar. This is what
+    // "Change score (S1)" is with no what-if edits — a per-building what-if delta,
+    // hard-0 in hex/district and 0 in building mode until something is changed.
+    if (!(stdCity > 0)) continue;
 
     const medCity  = medianFromSorted(citySorted);
     const medSel   = medianFromSorted(selSorted);
@@ -4077,10 +4359,31 @@ function initExplainModeUI() {
 
 // ======================= Engine-level plots: EBM vs Contrastive =======================
 
+// True when the lasso covers every DR point. Both engines compare the selection
+// against the rest of the city, so a full selection has nothing to contrast —
+// every effect size collapses to ~0 (a misleading near-zero chart).
+function isEntireSampleSelected(selection) {
+  const total = Array.isArray(drPlot.sample) ? drPlot.sample.length : 0;
+  const n = Array.isArray(selection) ? new Set(selection).size : 0;
+  return total > 0 && n >= total;
+}
+
+// Message payload shown by both engines when there's nothing to contrast.
+function allSelectedEngineMessage(mode) {
+  return {
+    mode,
+    ranked: [],
+    message: 'Everything is selected — there is no subset to contrast against the ' +
+      'rest of the city. Lasso a smaller group to compare it against the whole.',
+    note: ''
+  };
+}
+
 // Small helper: build unsupervised contrastive engine data
 function buildContrastiveEngineExplanation() {
   const selection = drPlot.lastSelectionIdx || [];
   if (!selection.length) return null;
+  if (isEntireSampleSelected(selection)) return allSelectedEngineMessage('contrast');
 
   // Recompute fresh (do NOT reuse drPlot.lastFeatureDiff): the cached diff was
   // computed for whatever feature set was active earlier, which froze the bar
@@ -4091,21 +4394,30 @@ function buildContrastiveEngineExplanation() {
   const feats = diff && diff.features ? diff.features : [];
   if (!feats.length) return null;
 
-  // Take top features by |effect| (show the full set, was capped at 8).
-  const top = feats.slice(0, 16);
+  // Show every feature (was capped at 16, which silently dropped services with a
+  // tiny effect — e.g. Hospital, which barely varies at hex scale in rural
+  // Kalmar). 30 is comfortably above the ~20 access features.
+  const top = feats.slice(0, 30);
 
   return {
     mode: 'contrast',
-    ranked: top.map(f => ({
-      label: f.label,
-      score: Math.abs(f.effect || 0),
-      direction: (f.effect || 0) >= 0
-        ? 'higher-in-cluster'
-        : 'lower-in-cluster'
-   })),
-    note: 'Unsupervised: contrastive distribution between selection and city ' +
-          'using standardized mean differences (effect sizes). ' +
-          'Green = higher in selection, red = lower in selection.'
+    ranked: top.map(f => {
+      const effect = f.effect || 0;
+      // Colour by GOOD/BAD for the selection, not raw direction: for distance
+      // features LOWER is better (closer); for fairness/access HIGHER is better.
+      // So "closer" reads green and "farther" reads red — the intuitive mapping.
+      const lowerIsBetter = /distance/i.test(f.label || '');
+      const better = lowerIsBetter ? effect < 0 : effect > 0;
+      return {
+        label: f.label,
+        score: Math.abs(effect),
+        direction: effect >= 0 ? 'higher-in-cluster' : 'lower-in-cluster',
+        better
+      };
+    }),
+    note: 'Unsupervised: contrastive distribution between the selection and the ' +
+          'wider city (standardized mean differences). Green = the selection is ' +
+          'BETTER served (closer / fairer); red = worse served (farther / less fair).'
   };
 }
 
@@ -4113,6 +4425,7 @@ function buildContrastiveEngineExplanation() {
 async function buildEBMEngineExplanation() {
   const selection = drPlot.lastSelectionIdx || [];
   if (!selection.length) return null;
+  if (isEntireSampleSelected(selection)) return allSelectedEngineMessage('ebm');
 
   const Xall = drPlot.features;
   const featureNames = drPlot.featureLabels || [];
@@ -4257,7 +4570,7 @@ function drawEngineBarChart(engineData) {
     return;
   }
 
- const top = engineData.ranked.slice(0, 16); // show full ranking (was capped at 7)
+ const top = engineData.ranked.slice(0, 30); // show full ranking (all services, no silent cap)
   const width = enginePlotEl.clientWidth || 260;
   const margin = { top: 26, right: 12, bottom: 52, left: 170 };
   const minInnerHeight = top.length * 24;
@@ -4320,6 +4633,9 @@ function drawEngineBarChart(engineData) {
     .attr('width', d => x(d.score) - x(0))
     .attr('fill', d => {
       if (engineData.mode === 'ebm') return '#6c6c6c';
+      // Green = better for the selection (closer / fairer), red = worse. `better`
+      // already accounts for distance polarity; fall back to raw direction if absent.
+      if (typeof d.better === 'boolean') return d.better ? '#2ecc71' : '#e74c3c';
       return d.direction === 'higher-in-cluster' ? '#2ecc71' : '#e74c3c';
     });
 
@@ -4378,6 +4694,16 @@ async function refreshEnginePlot() {
 
   if (!engineData) {
     enginePlotEl.textContent = engineNeedsCalculationMessage(drPlot.engineMode);
+    const noteEl = document.getElementById('drEngineNote');
+    if (noteEl) noteEl.textContent = '';
+    return;
+  }
+
+  // Degenerate case (e.g. everything selected): show the guidance message instead
+  // of an empty / near-zero bar chart.
+  if (engineData.message && (!engineData.ranked || !engineData.ranked.length)) {
+    if (typeof d3 !== 'undefined') d3.select(enginePlotEl).selectAll('*').remove();
+    enginePlotEl.textContent = engineData.message;
     const noteEl = document.getElementById('drEngineNote');
     if (noteEl) noteEl.textContent = '';
     return;

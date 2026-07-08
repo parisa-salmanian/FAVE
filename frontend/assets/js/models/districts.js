@@ -482,7 +482,12 @@ async function refreshDistrictScores() {
       const tSec = estimateTravelTimeSecondsFromMeters(dMeters, fairnessTravelMode);
       focusedScore = scoreFromTimeSeconds(focusedPOICat, tSec, fairnessTravelMode);
     }
-    pts.push(turf.point(c, { score: s, overall: overallScore, cats: catScores, focused: focusedScore }));
+    // Real SCB child share of the building's DESO — aggregated to the district
+    // below so the macro DR / map can colour districts by "who lives there".
+    const childRaw = (typeof epiDesoProps === 'function' && props?.__deso != null)
+      ? Number(epiDesoProps(props.__deso)?.child_frac) : NaN;
+    pts.push(turf.point(c, { score: s, overall: overallScore, cats: catScores, focused: focusedScore,
+      childReal: Number.isFinite(childRaw) ? childRaw : null }));
   }
   const ptsFC = turf.featureCollection(pts);
 
@@ -512,12 +517,15 @@ async function refreshDistrictScores() {
       fairByCat[cat] = counts[cat] ? sums[cat] / counts[cat] : 0;
     }
     const mean = scores.length ? scores.reduce((a,b)=>a+b,0)/scores.length : null;
+    const childVals = within.features.map(p => p.properties?.childReal).filter(Number.isFinite);
+    const childMean = childVals.length ? childVals.reduce((a, b) => a + b, 0) / childVals.length : null;
     const overallMean = overallScores.length ? overallScores.reduce((a, b) => a + b, 0) / overallScores.length : null;
     const focusedMean = focusedScores.length ? focusedScores.reduce((a, b) => a + b, 0) / focusedScores.length : null;
     feat.properties = {
       ...(feat.properties || {}),
       __districtName: name,
       __score: mean,
+      __childReal: childMean,
       __count: scores.length,
       __fairOverall: overallMean,
       __fairByCat: fairByCat,
@@ -787,12 +795,23 @@ async function refreshMezoScores() {
         catCounts: Object.fromEntries(catList.map(cat => [cat, 0])),
         focusedSum: 0,
         focusedCount: 0,
+        childSum: 0,
+        childCount: 0,
         prevSum: 0,
         prevCount: 0
       });
     }
     const entry = hexMap.get(cell);
     entry.total += 1;
+    // Real SCB child share of the building's DESO — aggregated to the hex cell
+    // below so the mezo DR / map can colour cells by "who lives there" (same as
+    // the district path). Color-only; never enters the fairness matrix.
+    const childRaw = (typeof epiDesoProps === 'function' && props?.__deso != null)
+      ? Number(epiDesoProps(props.__deso)?.child_frac) : NaN;
+    if (Number.isFinite(childRaw)) {
+      entry.childSum += childRaw;
+      entry.childCount += 1;
+    }
     if (Number.isFinite(score)) {
       entry.sum += score;
       entry.count += 1;
@@ -828,6 +847,7 @@ async function refreshMezoScores() {
     const mean = entry.count ? entry.sum / entry.count : null;
     const overallMean = entry.overallCount ? entry.overallSum / entry.overallCount : null;
     const focusedMean = entry.focusedCount ? entry.focusedSum / entry.focusedCount : null;
+    const childMean = entry.childCount ? entry.childSum / entry.childCount : null;
     const prevMean = entry.prevCount ? entry.prevSum / entry.prevCount : null;
     return {
       hex: entry.hex,
@@ -837,6 +857,7 @@ async function refreshMezoScores() {
       __fairByCat: fairByCat,
       __fairFocused: focusedMean,
       __fairFocusedCat: focusedMean != null ? focusedPOICat : null,
+      __childReal: childMean,
       __prevScore: prevMean
     };
   };
