@@ -16,7 +16,7 @@ const DISTRICT_URL_BY_CITY_KEY = {
   norrkoping: 'assets/data/norrkoping_regso.geojson',
   stockholm: 'assets/data/stockholm_regso.geojson',
   uppsala: 'assets/data/uppsala_regso.geojson',
-  kalmar: 'assets/data/kalmar.geojson'
+  kalmar: 'assets/data/kalmar_regso.geojson'
 };
 
 const BUILDING_URL_BY_CITY_KEY = {

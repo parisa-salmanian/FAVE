@@ -1778,7 +1778,8 @@ function districtCityKeyFromInput(city) {
     goteborg: ['goteborg', 'gothenburg'],
     norrkoping: ['norrkoping', 'norrkoeping'],
     stockholm: ['stockholm'],
-    uppsala: ['uppsala']
+    uppsala: ['uppsala'],
+    kalmar: ['kalmar']
   };
 
   for (const [cityKey, cityAliases] of Object.entries(aliases)) {
