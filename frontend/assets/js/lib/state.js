@@ -205,6 +205,7 @@ let whatIfSuggestionOut;
 let whatIfMockTypeList;
 let whatIfLassoBtn;
 let whatIfLassoClearBtn;
+let whatIfFromSelectionBtn;
 let whatIfLassoStatus;
 let selectedBuildingType = '';
 let buildingTypeTick = 0;
@@ -793,6 +794,7 @@ function wireUI() {
   whatIfMockTypeList = document.getElementById('whatIfMockTypeList');
   whatIfLassoBtn = document.getElementById('whatIfLassoBtn');
   whatIfLassoClearBtn = document.getElementById('whatIfLassoClearBtn');
+  whatIfFromSelectionBtn = document.getElementById('whatIfFromSelectionBtn');
   whatIfLassoStatus = document.getElementById('whatIfLassoStatus');
   const districtPopulationBtn = document.getElementById('districtPopulationBtn');
   const districtPopulationClose = document.getElementById('districtPopulationClose');
@@ -1117,6 +1119,10 @@ function wireUI() {
   if (whatIfLassoClearBtn && !whatIfLassoClearBtn.__bound) {
     whatIfLassoClearBtn.addEventListener('click', keepOpen(() => clearWhatIfMockBuildings()));
     whatIfLassoClearBtn.__bound = true;
+  }
+  if (whatIfFromSelectionBtn && !whatIfFromSelectionBtn.__bound) {
+    whatIfFromSelectionBtn.addEventListener('click', keepOpen(() => seedWhatIfFromSelection()));
+    whatIfFromSelectionBtn.__bound = true;
   }
   setWhatIfLassoButtonState();
   setWhatIfLassoClearDisabled(true);

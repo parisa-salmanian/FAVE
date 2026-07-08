@@ -1853,6 +1853,8 @@ async function clearWhatIfMockBuildings() {
   }
   refreshBuildingTypeDropdown();
   updateLayers();
+  if (typeof clearWhatIfSeededRing === 'function') clearWhatIfSeededRing();
+  if (typeof whatIfLasso !== 'undefined' && whatIfLasso) whatIfLasso.selectionRing = null;
   setWhatIfLassoClearDisabled(true);
   setWhatIfLassoStatus('Mock buildings cleared.');
   showGlobalSpinner('Clearing & recomputing…');

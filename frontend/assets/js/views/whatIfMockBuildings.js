@@ -73,6 +73,7 @@ function clearWhatIfLassoGraphics() {
   whatIfLasso.marqueeDrawing = false;
   if (whatIfLasso.path) { whatIfLasso.path.remove(); whatIfLasso.path = null; }
   if (whatIfLasso.marqueeRect) { whatIfLasso.marqueeRect.remove(); whatIfLasso.marqueeRect = null; }
+  if (typeof clearWhatIfSeededRing === 'function') clearWhatIfSeededRing();
 }
 
 function setWhatIfLassoActive(active) {
@@ -102,6 +103,112 @@ function setWhatIfLassoActive(active) {
 }
 
 function toggleWhatIfLasso() { setWhatIfLassoActive(!whatIfLasso.active); }
+
+/* ============ Bridge: DR/map selection → what-if region ====================
+ * Closes the analytical loop "select an underserved area in the DR view → see
+ * WHY it is underserved (EBM/contrastive) → act on it". Instead of re-drawing
+ * the same region by hand in the what-if tool, this loads the current selection
+ * (buildings flagged _drSelected by the DR or Map lasso) as the what-if region,
+ * so the planner only has to enter POI counts and place them. This is the link
+ * that makes the multivariate views decision-driving rather than descriptive.
+ * ------------------------------------------------------------------------- */
+let _whatIfSeededRingMoveHandler = null;
+
+function getSelectedBuildingFeaturesForWhatIf() {
+  const out = [];
+  const scan = (fc) => (fc?.features || []).forEach((f) => {
+    if (f?.properties?._drSelected) out.push(f);
+  });
+  if (typeof baseCityFC !== 'undefined') scan(baseCityFC);
+  if (!out.length && typeof districtFC !== 'undefined') scan(districtFC);
+  return out;
+}
+
+// Build a closed lng/lat ring enclosing the selected features: convex hull of
+// their centroids, buffered outward a little so placed POIs land inside the
+// served area. Falls back to a buffered bbox for <3 / collinear points.
+function ringFromSelectedFeatures(feats, bufferKm = 0.04) {
+  try {
+    const pts = turf.featureCollection(
+      feats.map((f) => { try { return turf.centroid(f); } catch { return null; } }).filter(Boolean)
+    );
+    if (!pts.features.length) return null;
+    let poly = pts.features.length >= 3 ? turf.convex(pts) : null;
+    if (!poly) poly = turf.bboxPolygon(turf.bbox(pts));
+    const buffered = turf.buffer(poly, bufferKm, { units: 'kilometers' }) || poly;
+    const ring = buffered?.geometry?.coordinates?.[0];
+    return (Array.isArray(ring) && ring.length >= 4) ? ring : null;
+  } catch (e) {
+    console.warn('[whatif-bridge] ring build failed', e);
+    return null;
+  }
+}
+
+function drawWhatIfSeededRing(ring) {
+  const svg = ensureWhatIfLassoOverlay();
+  if (!svg || !map || !Array.isArray(ring)) return;
+  svg.selectAll('.whatif-seeded-ring').remove();
+  const pts = ring
+    .map(([lng, lat]) => { const p = map.project({ lng, lat }); return p ? [p.x, p.y] : null; })
+    .filter(Boolean);
+  if (pts.length < 3) return;
+  const d = 'M' + pts.map((p) => p.join(',')).join('L') + 'Z';
+  svg.append('path')
+    .attr('class', 'whatif-seeded-ring')
+    .attr('d', d)
+    .style('fill', 'rgba(240,173,78,0.12)')
+    .style('stroke', '#f0ad4e')
+    .style('stroke-width', 2)
+    .style('stroke-dasharray', '6 4')
+    .style('pointer-events', 'none');
+}
+
+function clearWhatIfSeededRing() {
+  if (typeof d3 !== 'undefined') {
+    const svg = d3.select('#whatIfLassoOverlay');
+    if (svg && svg.node()) svg.selectAll('.whatif-seeded-ring').remove();
+  }
+  if (map && _whatIfSeededRingMoveHandler) {
+    map.off('move', _whatIfSeededRingMoveHandler);
+    _whatIfSeededRingMoveHandler = null;
+  }
+}
+
+function seedWhatIfFromSelection() {
+  const feats = getSelectedBuildingFeaturesForWhatIf();
+  if (!feats.length) {
+    setWhatIfLassoStatus('Select an area first (DR lasso or Map lasso), then click "Use map selection".', true);
+    return;
+  }
+  const ring = ringFromSelectedFeatures(feats);
+  if (!ring) {
+    setWhatIfLassoStatus('Could not build a region from the selection — select a few more buildings.', true);
+    return;
+  }
+  if (whatIfLasso.active) setWhatIfLassoActive(false); // avoid a stale freehand lasso
+  setWhatIfLassoClearDisabled(false);
+  // Detach any previous move handler, then draw and attach a fresh one so the
+  // outline stays aligned while the planner pans/zooms.
+  if (map && _whatIfSeededRingMoveHandler) {
+    map.off('move', _whatIfSeededRingMoveHandler);
+    _whatIfSeededRingMoveHandler = null;
+  }
+  drawWhatIfSeededRing(ring);
+  _whatIfSeededRingMoveHandler = () => drawWhatIfSeededRing(ring);
+  if (map) map.on('move', _whatIfSeededRingMoveHandler);
+
+  // Place POIs now if counts are set (the decision payoff: select → act →
+  // recompute); otherwise applyWhatIfLassoFromRing just saves the region and
+  // prompts for counts. Re-clicking the button after entering counts places them.
+  const counts = (typeof getWhatIfMockTypeCounts === 'function') ? getWhatIfMockTypeCounts() : { total: 0 };
+  applyWhatIfLassoFromRing(ring);
+  if (!counts.total) {
+    setWhatIfLassoStatus(
+      `What-if region loaded from ${feats.length} selected building${feats.length !== 1 ? 's' : ''}. ` +
+      'Set POI counts above and click again to place them (or ask the LLM).'
+    );
+  }
+}
 
 async function applyWhatIfLassoFromRing(lassoRing, { countsOverride = null } = {}) {
   if (!Array.isArray(lassoRing) || lassoRing.length < 3) return;
@@ -255,7 +362,12 @@ async function applyWhatIfLassoFromRing(lassoRing, { countsOverride = null } = {
   if (result.features.length) {
     if (!baseCityFC?.features) baseCityFC = { type: 'FeatureCollection', features: [] };
     baseCityFC.features.push(...result.features);
-    if (newbuildsFC?.features) newbuildsFC.features.push(...result.features);
+    // newbuildsFC can alias baseCityFC (same FC object — see loaders.js, which
+    // guards with `newbuildsFC !== baseCityFC`). Push again only if it's a
+    // distinct array, otherwise every mock building is added twice.
+    if (newbuildsFC?.features && newbuildsFC.features !== baseCityFC.features) {
+      newbuildsFC.features.push(...result.features);
+    }
   }
   refreshBuildingTypeDropdown();
   updateLayers();

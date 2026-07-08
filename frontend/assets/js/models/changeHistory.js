@@ -851,7 +851,10 @@ function createWhatIfBuilding(lngLat, categoryOverride = null) {
   };
   applyPOITags(polygon.properties, canonical);
   baseCityFC.features.push(polygon);
-  if (newbuildsFC?.features) newbuildsFC.features.push(polygon);
+  // Avoid a double-add when newbuildsFC aliases baseCityFC (same array).
+  if (newbuildsFC?.features && newbuildsFC.features !== baseCityFC.features) {
+    newbuildsFC.features.push(polygon);
+  }
   refreshBuildingTypeDropdown();
   return polygon;
 }
