@@ -1562,9 +1562,10 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
       const benefit = Math.max(0, benefitRaw) * equityWeight * demandWeight * needWeight * socioWeight;
       benefits.push(benefit);
 
-      if (updateUI) {
-        props.fair_multi = fm;
-      }
+      // FIX: always expose per-category data. fm holds {access, score} per category;
+      // the headline (setOverall) path used to skip this assignment, so the
+      // DR/PCP/contrastive/district views read a missing fair_multi → dead axes.
+      props.fair_multi = fm;
       props.__ifcity = { utility, benefit, equity_weight: equityWeight,
         demand_weight: demandWeight, need_weight: needWeight,
         need_z: Number.isFinite(needZ) ? needZ : null,
@@ -1587,7 +1588,10 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
     // and clamps to 0..1, so it is a safe drop-in for raw IF-City access.
     normByCat[cat] = normalizeBenefitsToScores(raw, fairnessTravelMode);
   }
-  if (updateUI) {
+  // FIX: always normalize per-category access into .score (0..1). Previously gated
+  // behind updateUI, so the headline setOverall compute left every per-category
+  // score unset — making the multivariate views' 7 service axes dead constants.
+  {
     for (let i = 0; i < len; i++) {
       const props = baseCityFC.features[i]?.properties;
       if (!props?.fair_multi) continue;
@@ -1628,6 +1632,10 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
     : benefits;
   const inequality = generalizedEntropy(benefitsForInequality, IF_CITY_ALPHA);
   const giniCoeff = inequality;
+  // True bounded Gini (0..1) on the same benefits — shown beside GE(2) in the UI.
+  // NB the model OPTIMISES GE(2) (more sensitive to deep deficits); Gini is a
+  // familiar companion readout, not what the policy reasoning uses.
+  const giniTrue = (typeof gini === 'function') ? gini(benefitsForInequality) : NaN;
   // Bump the recolor tick on every compute (overall *or* per-category) so
   // deck.gl's updateTriggers re-evaluate getFillColor.
   fairRecolorTick++;
@@ -1657,10 +1665,11 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
   // Update per-selection Gini for the inspector strip, then refresh it.
   if (updateUI) {
     currentCategoryGini = Number.isFinite(giniCoeff) ? giniCoeff : null;
+    currentCategoryGiniTrue = Number.isFinite(giniTrue) ? giniTrue : null;
   }
   window.faveInspector?.refresh?.();
 
-  return { inequality, giniCoeff, poiCount: updateUI ? currentPOIsFC.features.length : poiCount };
+  return { inequality, giniCoeff, giniTrue, poiCount: updateUI ? currentPOIsFC.features.length : poiCount };
 }
 
 /* ---------- Single category (kept, still usable internally) ---------- */
@@ -1897,6 +1906,7 @@ async function computeOverallFairness(catList) {
     }, {});
     const res = await computeIfCityFairness(catList, weightsByCat, { setOverall: true });
     overallGini = Number.isFinite(res.giniCoeff) ? res.giniCoeff : res.inequality;
+    overallGiniTrue = Number.isFinite(res.giniTrue) ? res.giniTrue : null;
     districtScoresSuppressed = false;
     if (overallGiniOut) overallGiniOut.textContent = formatFairnessBadgeValue(overallGini);
     if (parallelCoordsOpen) {

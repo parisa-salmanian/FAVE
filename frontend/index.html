@@ -1059,7 +1059,8 @@
 
   <div id="metricStrip" aria-hidden="false">
     <div class="metric" data-metric-tip="Overall Fairness — mean of per-building fairness scores (0 = unfair, 1 = fully fair). ↑ higher is better."><span class="metric-label">Overall <svg class="metric-dir metric-dir-up" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="14" x2="8" y2="3"/><polyline points="3,8 8,3 13,8"/></svg></span><span class="metric-value" id="metricOverall">—</span></div>
-    <div class="metric" data-metric-tip="Gini Inequality — how unevenly fairness is distributed across the city (0 = perfectly equal, 1 = maximum inequality). ↓ lower is better."><span class="metric-label">Gini <svg class="metric-dir metric-dir-down" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="3" x2="8" y2="14"/><polyline points="3,9 8,14 13,9"/></svg></span><span class="metric-value" id="metricGini">—</span></div>
+    <div class="metric" data-metric-tip="GE(2) inequality (Generalized Entropy, α=2) — how unevenly accessibility is distributed across the city. 0 = perfectly equal; unbounded above (more sensitive to deep deficits than Gini). ↓ lower is better."><span class="metric-label">GE(2) <svg class="metric-dir metric-dir-down" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="3" x2="8" y2="14"/><polyline points="3,9 8,14 13,9"/></svg></span><span class="metric-value" id="metricGini">—</span></div>
+    <div class="metric" data-metric-tip="Gini coefficient — the classic inequality measure (0 = perfectly equal, 1 = maximum inequality). Bounded companion to GE(2). ↓ lower is better."><span class="metric-label">Gini <svg class="metric-dir metric-dir-down" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="3" x2="8" y2="14"/><polyline points="3,9 8,14 13,9"/></svg></span><span class="metric-value" id="metricGiniTrue">—</span></div>
     <div class="metric" data-metric-tip="Total POIs across the currently selected categories."><span class="metric-label">POIs</span><span class="metric-value" id="metricPois">0</span></div>
     <div class="metric" id="metricUnitsBox" data-metric-tip="Macro = districts, Meso = hex cells, Micro = buildings. The label and count follow the active scale."><span class="metric-label" id="metricUnitsLabel">Cells</span><span class="metric-value" id="metricCells">0</span></div>
   </div>
@@ -1108,7 +1109,7 @@
         <div class="kv-list">
           <div class="kv">
             <span class="kv-key">Overall fairness</span>
-            <span class="kv-val"><span id="inspOverallFairness">—</span><span class="insp-pill">Gini</span></span>
+            <span class="kv-val"><span id="inspOverallFairness">—</span><span class="insp-pill">GE(2)</span></span>
           </div>
           <div class="kv">
             <span class="kv-key">Inequality (Gini)</span>

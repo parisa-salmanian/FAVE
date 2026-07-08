@@ -618,6 +618,10 @@
 
     setText('metricOverall', meanFair != null ? fmt(meanFair) : '—');
     setText('metricGini', giniVal != null ? fmt(giniVal) : '—');
+    const catGiniTrue = (typeof currentCategoryGiniTrue !== 'undefined' && Number.isFinite(currentCategoryGiniTrue))
+      ? currentCategoryGiniTrue : null;
+    const giniTrueVal = (isFairActive && catGiniTrue != null) ? catGiniTrue : null;
+    setText('metricGiniTrue', giniTrueVal != null ? fmt(giniTrueVal) : '—');
     setText('metricPois', String(poiCount));
     setText('metricUnitsLabel', unitsLabel);
     setText('metricCells', String(unitsCount));
