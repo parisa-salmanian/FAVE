@@ -38,8 +38,12 @@ var ALL_CATEGORIES = window.ALL_CATEGORIES || [
   'grocery',
   'hospital','pharmacy','dentistry','healthcare_center','veterinary',
   'university',
-  'kindergarten','school_primary','school_high',
-  ...(window.POI_EXTRA_KEYS || [])   // EpiCity-derived categories (poiCategories.js)
+  'kindergarten','school_primary','school_high'
+  // These 10 real services are the ONLY POI categories in FAVE. The 20
+  // EpiCity-derived amenity categories were dropped from the fairness mix on
+  // 2026-06-29 (they 404'd on routing → haversine fallback, and diluted the
+  // equity signal) and removed entirely on 2026-06-30 (the poiCategories.js
+  // registry + its consumers + the bake POI_QUERIES extras were deleted).
 ];
 window.ALL_CATEGORIES = ALL_CATEGORIES;
 const WHATIF_MOCK_TYPE_OPTIONS = ['residential', ...ALL_CATEGORIES];

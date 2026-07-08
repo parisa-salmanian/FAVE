@@ -18,7 +18,6 @@ function prettyPOIName(cat) {
     healthcare_center:'HC Center', veterinary:'Veterinary', university:'University',
     kindergarten:'Kindergarten', school_primary:'Primary.S',
     school_high:'High.S', mix:'Custom mix',
-    ...(window.POI_EXTRA_LABELS || {})
     };
 return dict[cat] || cat;
 }

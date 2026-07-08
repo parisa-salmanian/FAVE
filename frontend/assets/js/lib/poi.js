@@ -22,7 +22,6 @@ const POI_QUERIES = {
   // pre-split baked geojsons directly in fetchPOIs.
   school_primary: ['nwr["amenity"="school"]'],
   school_high:    ['nwr["amenity"="school"]'],
-  ...(window.POI_EXTRA_QUERIES || {})   // EpiCity-derived categories (poiCategories.js)
 };
 
 function tagsText(...vals) {
