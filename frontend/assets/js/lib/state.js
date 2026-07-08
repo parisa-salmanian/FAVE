@@ -614,7 +614,13 @@ function featureMatchesSelectedType(f) {
   return buildingTypeOf(f) === selectedBuildingType;
 }
 
-function setDistrictView(on) {
+function setDistrictView(on, opts = {}) {
+  // skipDRRefresh: the caller owns the single DR rerun. When macro→meso runs
+  // setMezoView, it calls setDistrictView(false) AND then refreshes itself — two
+  // runDR calls race on the preserved selection (the first wipes
+  // persistentBuildingSelection before the second captures it, so the DR loses
+  // the selection while the map keeps it). Let the outer toggle own the rerun.
+  const { skipDRRefresh = false } = opts;
   const prevMode = currentDRDataMode();
   districtView = !!on;
   if (districtView && mezoView) {
@@ -632,12 +638,12 @@ function setDistrictView(on) {
       .catch(() => updateLayers())
       .finally(() => {
         updateParallelCoordsPanel();
-        maybeRefreshDROnSpatialModeChange(prevMode);
+        if (!skipDRRefresh) maybeRefreshDROnSpatialModeChange(prevMode);
       });
   } else {
     updateLayers();
     updateParallelCoordsPanel();
-    maybeRefreshDROnSpatialModeChange(prevMode);
+    if (!skipDRRefresh) maybeRefreshDROnSpatialModeChange(prevMode);
   }
 }
 
@@ -646,7 +652,9 @@ function setMezoView(on) {
   mezoView = !!on;
   syncSpatialToggleButtons();
   updateDRAndPCBadges();
-  if (mezoView && districtView) setDistrictView(false);
+  // Turn macro off WITHOUT letting it fire its own DR rerun — this setMezoView
+  // call owns the single rerun below (avoids the double-runDR selection race).
+  if (mezoView && districtView) setDistrictView(false, { skipDRRefresh: true });
   window.faveInspector?.refresh?.();
   if (mezoView) {
     refreshMezoScores()
@@ -685,6 +693,63 @@ function snapshotCity() {
   };
 }
 
+// Apply a POI mix ([{cat, weight}, ...]) to the checklist UI — checkboxes,
+// weight sliders, badges — and to selectedPOIMix. Shared by restoreCity (cache
+// hit) and the cross-city sticky-selection carry in triggerCityLoad.
+function applyPOIMixToUI(mix) {
+  selectedPOIMix = (Array.isArray(mix) ? mix : []).map(e => ({ ...e }));
+  document.querySelectorAll('.poi-check').forEach(chk => {
+    const cat = chk.getAttribute('data-cat');
+    chk.checked = selectedPOIMix.some(e => e.cat === cat);
+  });
+  document.querySelectorAll('.poi-weight').forEach(el => {
+    const cat = el.getAttribute('data-cat');
+    const entry = selectedPOIMix.find(e => e.cat === cat);
+    if (entry && Number.isFinite(entry.weight)) el.value = entry.weight;
+    const badge = document.querySelector(`.poi-weight-val[data-cat="${cat}"]`);
+    if (badge) badge.textContent = el.value;
+  });
+  // Programmatic .checked writes don't fire 'change', so sync the rail accent.
+  window.syncPOIRailActive?.();
+}
+
+// Order-independent signature of a POI mix, for cheap equality checks.
+function poiMixSignature(mix) {
+  return (Array.isArray(mix) ? mix : [])
+    .map(e => `${e.cat}:${e.weight}`)
+    .sort()
+    .join('|');
+}
+function poiMixChanged(a, b) {
+  return poiMixSignature(a) !== poiMixSignature(b);
+}
+
+// Carry a POI mix onto the just-loaded city: sync the checklist, then recolor
+// the map to that mix (or clear the fairness view if the carry is empty). No
+// change-log entry — this is a city switch, not a user edit. Mirrors the
+// compute branch of onPOIUIChange.
+async function applyCarriedPOISelection(mix) {
+  const list = Array.isArray(mix) ? mix.filter(Boolean) : [];
+  applyPOIMixToUI(list);
+  if (!list.length) {
+    if (districtView && typeof clearDistrictFairnessView === 'function') clearDistrictFairnessView();
+    else if (typeof clearFairness === 'function') clearFairness(false);
+    return;
+  }
+  try {
+    if (list.length === 1) {
+      const res = await computeFairnessFast(list[0].cat);
+      if (giniOut) giniOut.textContent =
+        `${prettyPOIName(list[0].cat)} Gini: ${formatFairnessBadgeValue(res.gini)}`;
+    } else {
+      const res = await computeFairnessWeighted(list);
+      if (giniOut) giniOut.textContent = `Mix Gini: ${formatFairnessBadgeValue(res.gini)}`;
+    }
+  } catch (e) {
+    console.error('sticky POI fairness recompute failed', e);
+  }
+}
+
 function restoreCity(snap) {
   baseCityFC                = snap.baseCityFC;
   newbuildsFC               = snap.newbuildsFC;
@@ -713,20 +778,7 @@ function restoreCity(snap) {
       ? formatFairnessBadgeValue(overallGini)
       : (Number.isFinite(overallGini) ? overallGini.toFixed(3) : '—');
   }
-  document.querySelectorAll('.poi-check').forEach(chk => {
-    const cat = chk.getAttribute('data-cat');
-    chk.checked = selectedPOIMix.some(e => e.cat === cat);
-  });
-  document.querySelectorAll('.poi-weight').forEach(el => {
-    const cat = el.getAttribute('data-cat');
-    const entry = selectedPOIMix.find(e => e.cat === cat);
-    if (entry && Number.isFinite(entry.weight)) el.value = entry.weight;
-    const badge = document.querySelector(`.poi-weight-val[data-cat="${cat}"]`);
-    if (badge) badge.textContent = el.value;
-  });
-  // Programmatic chk.checked = ... above doesn't fire 'change', so the
-  // shell's rail-poi listener wouldn't catch this restore on its own.
-  window.syncPOIRailActive?.();
+  applyPOIMixToUI(selectedPOIMix);
 
   refreshBuildingTypeDropdown?.();
   fitToData?.(baseCityFC);
@@ -1460,6 +1512,13 @@ function wireUI() {
     const cityKey = citySelect?.value || 'vaxjo';
     const displayName = LOCAL_CITY_NAMES[cityKey] || cityKey;
 
+    // Sticky POI selection: snapshot the live selection so it carries to the
+    // destination city (kept selected + recolored there) regardless of whether
+    // the city is a cache hit or a fresh load.
+    const carriedPOIMix = (typeof readPOIMixFromUI === 'function')
+      ? readPOIMixFromUI()
+      : (Array.isArray(selectedPOIMix) ? selectedPOIMix.map(e => ({ ...e })) : []);
+
     // Stash the city we're leaving BEFORE anything mutates it, then disconnect
     // baseCityFC so the upcoming resetUIState → clearFairness(true) doesn't wipe
     // fair_* props off the cached FC (which is the same object reference the
@@ -1482,6 +1541,12 @@ function wireUI() {
       try {
         restoreCity(cached);
         lastCityKeyLoaded = cityKey;
+        // The live selection wins over the city's remembered one, so switching
+        // cities keeps the same POIs active (recompute only if it differs, to
+        // preserve the instant-restore fast path).
+        if (poiMixChanged(carriedPOIMix, selectedPOIMix)) {
+          await applyCarriedPOISelection(carriedPOIMix);
+        }
         if (jobStatusEl) {
           jobStatusEl.textContent = '';
         }
@@ -1516,6 +1581,11 @@ function wireUI() {
       }
       await autoComputeOverall();
       lastCityKeyLoaded = cityKey;
+      // resetUIState() wiped the checklist above — re-apply the carried
+      // selection to the fresh city and recolor the map to it.
+      if (carriedPOIMix.length) {
+        await applyCarriedPOISelection(carriedPOIMix);
+      }
     } catch (err) {
       console.error('city load failed', err);
       if (jobStatusEl) jobStatusEl.textContent = 'Failed';

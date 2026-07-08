@@ -1977,7 +1977,10 @@ function maybeRefreshDROnSpatialModeChange(prevMode) {
   if (!drPlot?.points) return;
   const { statusEl } = ensureDRUI();
   if (statusEl) statusEl.textContent = `Spatial mode switched to ${nextMode}; recomputing DR…`;
-  runDR();
+  // Keep the current selection when the spatial scale changes: runDR re-projects
+  // it (buildings → new-mode entities) so DR/PCP/Map stay consistent across the
+  // macro/meso/micro switch instead of clearing on rerun.
+  runDR({ preserveSelection: true });
 }
 
 function setParallelCoordsPending(isPending) {
@@ -5023,10 +5026,14 @@ function clearDRProjection(showMessage = true) {
 
 
 
-  async function runDR() {
-    // By default, re-running DR/UMAP should start with a clean selection state.
-    // Set `globalThis.DR_PRESERVE_SELECTION_ON_RERUN = true` to keep prior map selection.
-    const preserveSelectionOnRerun = !!globalThis.DR_PRESERVE_SELECTION_ON_RERUN;
+  async function runDR(opts = {}) {
+    // By default, re-running DR/UMAP starts with a clean selection state (the
+    // manual "Run" button). Passing { preserveSelection: true } — or setting
+    // `globalThis.DR_PRESERVE_SELECTION_ON_RERUN` — keeps the current selection
+    // and re-projects it onto the new sample. Used on a spatial-scale change so
+    // the DR/PCP/Map views stay consistent (see maybeRefreshDROnSpatialModeChange).
+    const preserveSelectionOnRerun =
+      !!globalThis.DR_PRESERVE_SELECTION_ON_RERUN || !!opts.preserveSelection;
     const pendingMapSelection = preserveSelectionOnRerun ? getCurrentMapSelection() : [];
 
     showDRSpinner();
