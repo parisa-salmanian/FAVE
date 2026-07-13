@@ -782,6 +782,13 @@ function restoreCity(snap) {
 
   refreshBuildingTypeDropdown?.();
   fitToData?.(baseCityFC);
+  // Cache-hit restore swaps baseCityFC without recomputing fairness, so nothing
+  // else reloads the per-building demographic layer — it would stay bound to the
+  // city we switched away from (stale/empty DR + inspector demographics). Rebind
+  // it to the restored city's buildings. This only refreshes the demographic
+  // maps; the restored fairness values come from the snapshot and are untouched.
+  if (typeof ensureEpicityDemographics === 'function') { try { ensureEpicityDemographics(); } catch {} }
+  if (typeof ensureSynthpop === 'function') { try { ensureSynthpop(); } catch {} }
   updateLayers?.();
   // Only re-aggregate district/mezo scores if those views are actually on —
   // refreshDistrictScores walks every building polygon, which is exactly the

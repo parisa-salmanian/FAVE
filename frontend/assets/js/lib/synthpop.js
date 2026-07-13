@@ -18,6 +18,7 @@
 let SYNTHPOP = null;                 // { city, keyToRow, coords, grid, pop, lv, ar, zn }
 let synthBuildingPopMap = null;      // Map<featIdx, residents>
 let _synMappedCity = null;
+let _synMappedFC = null;             // baseCityFC identity the maps were built against
 let _synLoadCity = null;
 let _synLoadPromise = null;
 
@@ -148,16 +149,24 @@ function buildSynthpopMaps() {
 async function ensureSynthpop(cityKey) {
   const key = cityKey || _synCurrentCity();
   await loadSynthpop(key);
-  if (SYNTHPOP && (!synthBuildingPopMap || SYNTHPOP.city !== _synMappedCity)) {
+  // Rebuild when missing, the city changed, OR the building set (baseCityFC) was
+  // swapped under the maps (see the matching note in ensureEpicityDemographics —
+  // the city-name-only guard left synthetic pop/demographics bound to the old
+  // city after a switch). Track the baseCityFC identity so any building-set
+  // change rebinds.
+  const fc = (typeof baseCityFC !== 'undefined') ? baseCityFC : null;
+  if (SYNTHPOP && (!synthBuildingPopMap || SYNTHPOP.city !== _synMappedCity || fc !== _synMappedFC)) {
     buildSynthpopMaps();
     _synMappedCity = SYNTHPOP.city;
+    _synMappedFC = fc;
+    _SYN_CENTROIDS = null;   // meso-aggregation cache is keyed on the old city — drop it
   } else if (!SYNTHPOP) {
     synthBuildingPopMap = null;
   }
   return SYNTHPOP;
 }
 
-function resetSynthpopMaps() { synthBuildingPopMap = null; _synMappedCity = null; }
+function resetSynthpopMaps() { synthBuildingPopMap = null; _synMappedCity = null; _synMappedFC = null; _SYN_CENTROIDS = null; }
 
 // ---- Read helpers for views (inspector / parallel-coords) ----
 // Per-building synthetic record. Prefers stamped props (O(1)); else snaps.

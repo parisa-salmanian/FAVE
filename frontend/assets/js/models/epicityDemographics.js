@@ -148,16 +148,26 @@ async function ensureEpicityDemographics(cityKey) {
   if (typeof EPI_DEMOGRAPHICS_ENABLED !== 'undefined' && !EPI_DEMOGRAPHICS_ENABLED) return null;
   const key = cityKey || _epiCurrentCityKey();
   await loadEpicityDemographics(key);
-  // (Re)build building maps if missing or the city changed under them.
-  if (EPI_DEMO && (!epiBuildingNeedMap || EPI_DEMO.city !== _epiMappedCity)) {
+  // (Re)build building maps if missing, the city changed, OR the building set
+  // (baseCityFC) was swapped under them. Keying on the city NAME alone missed
+  // city switches: the dropdown flips to the new city before the async building
+  // load swaps baseCityFC (which is briefly null mid-switch), and the cache-hit
+  // restore reassigns baseCityFC without a recompute — in both cases the maps got
+  // built against a stale/empty building set, then the name guard latched and
+  // never rebuilt, leaving demographics unbound. Tracking the baseCityFC identity
+  // makes the rebuild self-heal on any building-set change.
+  const fc = (typeof baseCityFC !== 'undefined') ? baseCityFC : null;
+  if (EPI_DEMO && (!epiBuildingNeedMap || EPI_DEMO.city !== _epiMappedCity || fc !== _epiMappedFC)) {
     buildEpicityBuildingMaps();
     _epiMappedCity = EPI_DEMO.city;
+    _epiMappedFC = fc;
   } else if (!EPI_DEMO) {
     epiBuildingNeedMap = null; epiBuildingPopMap = null; epiBuildingDesoMap = null;
   }
   return EPI_DEMO;
 }
 let _epiMappedCity = null;
+let _epiMappedFC = null;
 
 // DESO code -> baked socioeconomic props (income, needZ, child/elder/dependency,
 // higher_ed, neet, income_support, male_frac). One shared lookup so every view
@@ -181,5 +191,5 @@ function epiDesoProps(code) {
 function resetEpicityBuildingMaps() {
   _epiDesoByCode = null;
   epiBuildingNeedMap = null; epiBuildingPopMap = null;
-  epiBuildingDesoMap = null; _epiMappedCity = null;
+  epiBuildingDesoMap = null; _epiMappedCity = null; _epiMappedFC = null;
 }
