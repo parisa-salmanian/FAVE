@@ -95,6 +95,21 @@ CATCHMENT_WALK_M = {
 }
 MODE_CATCHMENT_FACTOR = {"walking": 1.0, "cycling": 3.0, "driving": 8.0}
 
+# Absolute per-mode catchment ceilings (metres) — a mode-REALISM gate applied on
+# top of the base×factor scaling. Without it a regional service's long base
+# catchment scaled up claims an implausible reach for the mode (e.g. hospital =
+# 6 km ON FOOT, 18 km by bike), which then reads as high 2SFCA "provision" for a
+# building the gravity model correctly calls far — the two views contradict each
+# other. Capping keeps each mode's reach realistic: ~2.5 km is a 30-min walk,
+# ~8 km a ~30-min cycle. driving is uncapped (a ~48 km drive to a regional
+# hospital IS realistic). Local services already sit under these caps, so only
+# the regional/heritage categories are affected.
+MODE_CATCHMENT_CAP_M = {"walking": 2500.0, "cycling": 8000.0, "driving": None}
+# transit is capped in EFFECTIVE metres (= travel-time-equivalent at the 5 km/h
+# reference, so 5000 eff-m ≈ 60 min) — a sane transit budget for a regional
+# service, and barely changes the current transit values (base factor 1.0).
+TRANSIT_CATCHMENT_CAP_M = 5000.0
+
 CATS_ALL = list(CATCHMENT_WALK_M.keys())
 
 # The two big metros keep a lean 2SFCA set: a value is stored per building per
@@ -308,6 +323,9 @@ def bake_mode(city: str, mode: str, cats: list[str], lons, lats, P, meta) -> dic
         if not pois:
             continue
         catch = CATCHMENT_WALK_M.get(cat, 1500) * factor
+        cap = MODE_CATCHMENT_CAP_M.get(mode)
+        if cap is not None:
+            catch = min(catch, cap)
         sigma = catch / 3.0
         p_lon = [p["lon"] for p in pois]
         p_lat = [p["lat"] for p in pois]
@@ -464,6 +482,8 @@ def bake_transit_mode(city: str, cats: list[str], lons, lats, P, net) -> dict:
         if not pois:
             continue
         catch = CATCHMENT_WALK_M.get(cat, 1500) * factor   # effective metres
+        if TRANSIT_CATCHMENT_CAP_M is not None:
+            catch = min(catch, TRANSIT_CATCHMENT_CAP_M)
         sigma = catch / 3.0
 
         poi_pairs = []   # per POI: (bidx_array, eff_dist_m_array)
