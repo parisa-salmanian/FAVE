@@ -66,6 +66,31 @@
   // the (morph) built-form dims. Goal: clusters that mean "a type of underserved
   // neighbourhood" instead of the 1-D accessibility filament or a built-form blob.
   const FS_EQUITY = 'equity';
+  // Supply-anchored sets. Proximity/gravity access is ~1-D (near-descriptive DR);
+  // the 2SFCA supply provision is genuinely multivariate and decorrelates from
+  // proximity, so these give the coordinated views a real, map-invisible job.
+  const FS_SUPPLY = 'supply';               // 2SFCA supply provision only
+  const FS_ACCESS_SUPPLY = 'access_supply'; // per-category access + 2SFCA supply
+  // 11-D "Supply + Mismatch": the 10 multivariate supply dims + ONE overall
+  // mismatch residual (proximity − supply). Overall-access is NOT a projection
+  // dim (gate: redundant, strongest PC1 loader → re-shows the map); it stays a
+  // COLOR overlay and its non-redundant residual enters via mismatch. This makes
+  // the layout driven by the map-invisible signal — the R1 answer.
+  const FS_SUPPLY_PLUS = 'supply_plus';
+
+  // Supply features are tagged with a 'supply (2sfca)' label suffix and a
+  // supply* key. Detect from either a label or a bare key (the contrastive path
+  // only has keys), so they can be kept for the supply sets and dropped elsewhere.
+  function isSupplyFeature(s) {
+    const t = String(s || '').toLowerCase();
+    return /^supply[a-z]/.test(t) || t.includes('supply (2sfca)');
+  }
+
+  // Mismatch dims (overall + per-category): key 'mismatch*' or a label containing
+  // 'mismatch'. Matches both the bare contrastive keys and the DR labels.
+  function isMismatchFeature(s) {
+    return String(s || '').toLowerCase().includes('mismatch');
+  }
 
   function currentMode() {
     const sel = document.getElementById('drFeatureMode');
@@ -76,7 +101,7 @@
   function currentFeatureSet() {
     const sel = document.getElementById('drFeatureSet');
     const v = sel?.value || globalThis.DR_FEATURE_SET || FS_ACCESS_DEMO;
-    return [FS_ACCESS, FS_ACCESS_DEMO, FS_DEMO, FS_EQUITY].includes(v) ? v : FS_ACCESS_DEMO;
+    return [FS_ACCESS, FS_ACCESS_DEMO, FS_DEMO, FS_EQUITY, FS_SUPPLY, FS_ACCESS_SUPPLY, FS_SUPPLY_PLUS].includes(v) ? v : FS_ACCESS_DEMO;
   }
 
   function isPolicyLabel(label) {
@@ -97,6 +122,24 @@
   // Should this feature be kept, given policy/legacy mode AND the feature set?
   function keepFeature({ isDemo, isAccessBaseline, label }) {
     const fs = currentFeatureSet();
+    const isSupply = isSupplyFeature(label);
+    const isMismatch = isMismatchFeature(label);
+    // Supply sets: only the 2SFCA supply dims (FS_SUPPLY), or per-category access
+    // plus supply (FS_ACCESS_SUPPLY). Supply dims are never access/demo baseline,
+    // so they're correctly excluded from all the other sets below.
+    if (fs === FS_SUPPLY) return isSupply;
+    if (fs === FS_ACCESS_SUPPLY) return isSupply || (isAccessBaseline && !isDemo);
+    if (fs === FS_SUPPLY_PLUS) {
+      // Projection = 10 supply dims + the mismatch residual (overall in the
+      // projection, per-cat in the contrastive). Overall-access is DELIBERATELY
+      // NOT a projection dim: the gate showed it's the strongest PC1 loader and
+      // partly redundant (r≈0.78 with mean supply), so as a dim it just re-shows
+      // the choropleth's central↔peripheral gradient. It stays available as a
+      // COLOR overlay, and its NON-redundant part (access − supply) already
+      // enters via mismatch. So the layout is driven by the map-invisible signal.
+      return isSupply || isMismatch;
+    }
+    if (isSupply || isMismatch) return false; // keep supply/mismatch out of access/demo/equity
     if (fs === FS_EQUITY) {
       const s = String(label || '').toLowerCase();
       if (/\(morph\)/.test(s)) return false;   // drop built-form (height/area/density/multi)
@@ -176,10 +219,13 @@
     const fsLabel = fs === FS_DEMO ? 'SCB demographics only'
       : fs === FS_ACCESS_DEMO ? 'accessibility + SCB demographics'
       : fs === FS_EQUITY ? 'equity profile (overall access + demographics + modal gaps)'
+      : fs === FS_SUPPLY ? '2SFCA supply provision only'
+      : fs === FS_ACCESS_SUPPLY ? 'per-category access + 2SFCA supply'
+      : fs === FS_SUPPLY_PLUS ? 'supply + mismatch (11-D) — colour by overall access'
       : 'accessibility only';
-    const note = (fs !== FS_ACCESS)
-      ? ' — demographics apply in District mode (Växjö).'
-      : '';
+    // The demographics note only applies to the demographic-bearing sets.
+    const demoSets = (fs === FS_ACCESS_DEMO || fs === FS_DEMO || fs === FS_EQUITY);
+    const note = demoSets ? ' — demographics apply in District mode (Växjö).' : '';
     infoEl.textContent = `Features: ${fsLabel}${note}`;
   }
 

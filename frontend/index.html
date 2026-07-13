@@ -1440,6 +1440,9 @@
               <option value="access_demo" selected>All dimensions (rich)</option>
               <option value="demo">Extra dims only</option>
               <option value="equity">Equity profile (curated)</option>
+              <option value="supply">Supply (2SFCA)</option>
+              <option value="access_supply">Access + Supply</option>
+              <option value="supply_plus">Supply + Mismatch</option>
             </select>
             <label class="tiny muted" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap" title="Weight fairness by SCB deprivation (need) — changes the Gini/overall fairness, not the DR plot">
               <input type="checkbox" id="drNeedWeightToggle"> Need-weighted
@@ -1448,6 +1451,8 @@
             <select id="drColorBy" class="control">
               <option value="overall">Overall fairness</option>
               <option value="poi">Selected fairness</option>
+              <option value="supply">Supply provision (2SFCA)</option>
+              <option value="mismatch">Mismatch (proximity − supply)</option>
               <option value="need">SCB need (deprivation)</option>
               <option value="income">SCB median income</option>
               <option value="childreal">Child share — SCB DESO (real)</option>

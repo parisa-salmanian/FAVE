@@ -267,7 +267,7 @@ function rawDistsForFeature(f) {
   const p = f.properties || (f.properties = {});
   if (p.__rawDist) return p.__rawDist;
   const out = {};
-  if (typeof routingReady === 'function' && routingReady() && typeof routingRowForPoint === 'function') {
+  if (typeof routingReady === 'function' && routingReady() && typeof routingDistsForPoint === 'function') {
     let lon = NaN, lat = NaN;
     // Fast ring-average centroid (avoids turf.centroid overhead over ~100k
     // buildings); the 45 m routing snap tolerance absorbs the small offset.
@@ -277,17 +277,127 @@ function rawDistsForFeature(f) {
       if (cs && cs.length) { let x = 0, y = 0, n = 0; for (const c of cs) { x += c[0]; y += c[1]; n++; } if (n) { lon = x / n; lat = y / n; } }
     } catch {}
     if (Number.isFinite(lon) && Number.isFinite(lat)) {
-      const row = routingRowForPoint(lon, lat);
-      if (row >= 0) {
-        for (const cat of Object.keys(DR_DIST_KEY_BY_CAT)) {
-          const d = (typeof routingDistsForRow === 'function') ? routingDistsForRow(cat, row) : null;
-          const m = d && d.dists ? Number(d.dists[0]) : NaN;
-          out[DR_DIST_KEY_BY_CAT[cat]] = Number.isFinite(m) ? m : null;
-        }
+      // Resolve per category by point — each category's own key order (see the
+      // routing-matrix row-aliasing fix), so distUniversity/distHospital aren't
+      // read from the wrong building.
+      for (const cat of Object.keys(DR_DIST_KEY_BY_CAT)) {
+        const d = routingDistsForPoint(cat, lon, lat);
+        const m = d && d.dists ? Number(d.dists[0]) : NaN;
+        out[DR_DIST_KEY_BY_CAT[cat]] = Number.isFinite(m) ? m : null;
       }
     }
   }
   p.__rawDist = out;
+  return out;
+}
+
+// ---- 2SFCA SUPPLY features for the DR ---------------------------------------
+// Proximity/gravity access is ~1-D (essentially one "how close is town" axis, so
+// UMAP/contrastive/EBM on it are near-descriptive). The E2SFCA supply-to-demand
+// provision is genuinely MULTI-dimensional and decorrelates from proximity: an
+// area can be CLOSE to a service yet under-supplied (crowded), or far yet
+// adequately supplied. These per-category provision values (0..1, the SAME
+// normalisation as the inspector's Supply panel — access2sfca.js) feed the
+// "Supply (2SFCA)" / "Access + Supply" feature sets so the coordinated views can
+// surface supply patterns no single map layer shows.
+const DR_SUPPLY_KEY_BY_CAT = {
+  grocery: 'supplyGrocery', hospital: 'supplyHospital', healthcare_center: 'supplyHealthcare',
+  pharmacy: 'supplyPharmacy', veterinary: 'supplyVeterinary', university: 'supplyUniversity',
+  school_high: 'supplySchoolHigh', school_primary: 'supplyPrimary',
+  kindergarten: 'supplyKindergarten', dentistry: 'supplyDentistry'
+};
+const DR_SUPPLY_LABELS = {
+  supplyGrocery: 'grocery supply (2sfca)', supplyHospital: 'hospital supply (2sfca)',
+  supplyHealthcare: 'healthcare supply (2sfca)', supplyPharmacy: 'pharmacy supply (2sfca)',
+  supplyVeterinary: 'veterinary supply (2sfca)', supplyUniversity: 'university supply (2sfca)',
+  supplySchoolHigh: 'high school supply (2sfca)', supplyPrimary: 'primary school supply (2sfca)',
+  supplyKindergarten: 'kindergarten supply (2sfca)', supplyDentistry: 'dentistry supply (2sfca)'
+};
+// Map an ACCESS2SFCA per-category object ({cat:{norm|normMean,...}}) onto DR row
+// keys. `field` = 'norm' (per building) or 'normMean' (hex/district aggregate).
+function supplyRowFromCats(cats, field) {
+  const out = {};
+  for (const cat of Object.keys(DR_SUPPLY_KEY_BY_CAT)) {
+    const cd = cats ? cats[cat] : null;
+    const v = cd ? Number(cd[field]) : NaN;
+    out[DR_SUPPLY_KEY_BY_CAT[cat]] = Number.isFinite(v) ? v : null;
+  }
+  return out;
+}
+// Per-building provision (norm 0..1), fast ring-average centroid, cached on the
+// feature keyed by travel mode (so a mode change re-reads the right layer). Needs
+// ensureAccess2sfca() to have loaded the layer (runDR preloads it — see below).
+function supplyValsForFeature(f) {
+  const p = f.properties || (f.properties = {});
+  const mode = (document.getElementById('fairnessTravelMode')?.value || 'walking');
+  if (p.__supplyVals && p.__supplyMode === mode) return p.__supplyVals;
+  let out = {};
+  if (typeof access2sfcaForPoint === 'function') {
+    let lon = NaN, lat = NaN;
+    try {
+      const g = f.geometry; let cs = null;
+      if (g) { if (g.type === 'Polygon') cs = g.coordinates[0]; else if (g.type === 'MultiPolygon') cs = g.coordinates[0] && g.coordinates[0][0]; }
+      if (cs && cs.length) { let x = 0, y = 0, n = 0; for (const c of cs) { x += c[0]; y += c[1]; n++; } if (n) { lon = x / n; lat = y / n; } }
+    } catch {}
+    if (Number.isFinite(lon) && Number.isFinite(lat)) {
+      const s = access2sfcaForPoint(lon, lat);
+      if (s && s.cats) out = supplyRowFromCats(s.cats, 'norm');
+    }
+  }
+  p.__supplyVals = out; p.__supplyMode = mode;
+  return out;
+}
+
+// ---- MISMATCH (proximity − 2SFCA supply) features for the DR ----------------
+// Proximity and supply are POSITIVELY correlated on average (central areas are
+// both close AND well-supplied — verified r≈+0.24..+0.67 across the 7 cities),
+// so the decision-relevant signal is where they DISAGREE: close-but-crowded
+// (positive) vs supply-rich-for-its-distance (negative). This is the same
+// quantity the "Mismatch" map layer paints (supplyProvisionLens.js), computed
+// here per service + overall so the DR projection carries the overall residual
+// axis while the contrastive/EBM attribute a selection's crowding to specific
+// services. Both terms are the SAME 0..1 city-relative normalisation (fairness
+// score vs 2SFCA provision), so the difference is meaningful; the DR z-scores
+// the column anyway. Absent pairs → null (ignored downstream).
+const DR_MISMATCH_PAIRS = {
+  mismatchGrocery:      ['grocery',      'supplyGrocery'],
+  mismatchHospital:     ['hospital',     'supplyHospital'],
+  mismatchHealthcare:   ['healthcare',   'supplyHealthcare'],
+  mismatchPharmacy:     ['pharmacy',     'supplyPharmacy'],
+  mismatchVeterinary:   ['veterinary',   'supplyVeterinary'],
+  mismatchUniversity:   ['university',   'supplyUniversity'],
+  mismatchSchoolHigh:   ['schoolHigh',   'supplySchoolHigh'],
+  mismatchPrimary:      ['primary',      'supplyPrimary'],
+  mismatchKindergarten: ['kindergarten', 'supplyKindergarten'],
+  mismatchDentistry:    ['dentistry',    'supplyDentistry']
+};
+const DR_MISMATCH_LABELS = {
+  mismatchGrocery: 'grocery mismatch (prox−supply)', mismatchHospital: 'hospital mismatch (prox−supply)',
+  mismatchHealthcare: 'healthcare mismatch (prox−supply)', mismatchPharmacy: 'pharmacy mismatch (prox−supply)',
+  mismatchVeterinary: 'veterinary mismatch (prox−supply)', mismatchUniversity: 'university mismatch (prox−supply)',
+  mismatchSchoolHigh: 'high school mismatch (prox−supply)', mismatchPrimary: 'primary school mismatch (prox−supply)',
+  mismatchKindergarten: 'kindergarten mismatch (prox−supply)', mismatchDentistry: 'dentistry mismatch (prox−supply)'
+};
+// From a built DR row (proximity per-cat + supply per-cat already populated),
+// derive per-category mismatch (access − supply, both 0..1) plus ONE overall
+// mismatch (overall access − mean per-cat supply). Called at the end of every
+// scale's row builder.
+function mismatchRowFromRow(row) {
+  const out = {};
+  let supSum = 0, supN = 0;
+  for (const mk of Object.keys(DR_MISMATCH_PAIRS)) {
+    const [ak, sk] = DR_MISMATCH_PAIRS[mk];
+    const a = Number(row[ak]);
+    const s = Number(row[sk]);
+    out[mk] = (Number.isFinite(a) && Number.isFinite(s)) ? (a - s) : null;
+    if (Number.isFinite(s)) { supSum += s; supN++; }
+  }
+  const ov = Number(row.overall);
+  const supOverall = supN ? supSum / supN : NaN;
+  out.mismatch = (Number.isFinite(ov) && Number.isFinite(supOverall)) ? (ov - supOverall) : null;
+  // Overall 2SFCA supply (mean per-cat provision) — for the "Supply provision"
+  // colour option (not a matrix/metrics column).
+  out.supplyOverall = Number.isFinite(supOverall) ? supOverall : null;
   return out;
 }
 
@@ -415,6 +525,38 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     } else if (colorBy === 'poi') {
       colors = pickedRows.map((r) => Number.isFinite(r.focused) ? rampColor01(r.focused) : grey(100));
       updateLegend('poi', `Legend (${prettyPOIName(fairCategory) || 'Selected fairness'})`, 'Most fair (left) → Least fair (right)');
+    } else if (colorBy === 'mismatch') {
+      // Diverging red↔blue on the overall mismatch (proximity − supply). Red =
+      // close-but-crowded (the map overstates provision), blue = supply-rich for
+      // its distance, pale = the two agree. This is THE colour that reveals the
+      // supply_plus layout's residual structure. Robust symmetric clamp (p95 of
+      // |mismatch|) so outliers don't wash out the gradient. No-data → hidden.
+      const get = (r) => (r.mismatch == null ? NaN : Number(r.mismatch));
+      const absSorted = pickedRows.map(get).filter(Number.isFinite).map(Math.abs).sort((a, b) => a - b);
+      const M = absSorted.length ? (quantileFromSorted(absSorted, 0.95) || 1) : 1;
+      colors = pickedRows.map((r) => {
+        const v = get(r);
+        if (!Number.isFinite(v)) return [0, 0, 0, 0];
+        const d = Math.max(-M, Math.min(M, v));
+        const t = 0.5 - d / (2 * M);   // +M → 0 (red), −M → 1 (blue)
+        if (typeof d3 !== 'undefined' && d3.interpolateRdBu && d3.color) {
+          const c = d3.color(d3.interpolateRdBu(t));
+          if (c) return [Math.round(c.r), Math.round(c.g), Math.round(c.b)];
+        }
+        return rampColor01(clamp01(1 - t));
+      });
+      updateLegend('mismatch', 'Legend (Mismatch: proximity − supply)', 'Supply-rich (blue) → Close-but-crowded (red)');
+    } else if (colorBy === 'supply') {
+      // Sequential on overall 2SFCA supply provision (mean per-cat norm 0..1).
+      const get = (r) => (r.supplyOverall == null ? NaN : Number(r.supplyOverall));
+      const vals = pickedRows.map(get).filter(Number.isFinite);
+      const [lo, hi] = robustLoHi(vals);
+      const span = (hi - lo) || 1;
+      colors = pickedRows.map((r) => {
+        const v = get(r);
+        return Number.isFinite(v) ? rampColor01(clamp01((v - lo) / span)) : grey(120);
+      });
+      updateLegend('supply', 'Legend (2SFCA supply provision)', 'Least → Most supply');
     } else if (colorBy === 'need' || colorBy === 'income') {
       // Color by an SCB axis (district need or median income). Min–max normalise
       // across the sample so the ramp spans the actual value range.
@@ -516,6 +658,15 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         distDentistry:   pickedRows.map(r => r.distDentistry),
         categoryCode: pickedRows.map(r => r.categoryLike),
         isChange: pickedRows.map(r => r.isChangeLike),
+        // Per-category 2SFCA SUPPLY provision (0..1) — the genuinely multivariate
+        // supply signal (proximity above is ~1-D). Populated in every scale's row
+        // builder; absent rows fall to null → ignored by the contrastive/EBM.
+        ...Object.fromEntries(Object.values(DR_SUPPLY_KEY_BY_CAT).map(k => [k, pickedRows.map(r => r[k])])),
+        // Mismatch (proximity − supply): overall feeds the DR projection + EBM;
+        // per-category feed the contrastive so a selection's crowding can be
+        // attributed to specific services. Absent rows are null → ignored.
+        mismatch: pickedRows.map(r => r.mismatch),
+        ...Object.fromEntries(Object.keys(DR_MISMATCH_PAIRS).map(k => [k, pickedRows.map(r => r[k])])),
         // Demographic metrics (district mode only; undefined elsewhere -> ignored
         // by computeFeatureDifferences' Number.isFinite filter). Includes the
         // composite need index used by need-weighted fairness.
@@ -573,6 +724,11 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         const v = Number(demo[d.json]);
         row[d.key] = Number.isFinite(v) ? v : null;
       });
+      // 2SFCA supply provision aggregated over the district's baked buildings.
+      const supAgg = (typeof access2sfcaAggregateForPolygon === 'function') ? access2sfcaAggregateForPolygon(f) : null;
+      Object.assign(row, supplyRowFromCats(supAgg && supAgg.cats, 'normMean'));
+      // Mismatch (proximity − supply) per service + overall — the residual axis.
+      Object.assign(row, mismatchRowFromRow(row));
       return row;
     });
     const districtLabels = {
@@ -599,6 +755,11 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       if (rows.some(r => Number.isFinite(r.demNeed))) {
         districtLabels.demNeed = 'Need index (dem)';
       }
+    }
+    const hasSupply = rows.some(r => Object.values(DR_SUPPLY_KEY_BY_CAT).some(k => Number.isFinite(r[k])));
+    if (hasSupply) {
+      Object.entries(DR_SUPPLY_LABELS).forEach(([k, lab]) => { districtLabels[k] = lab; });
+      if (rows.some(r => Number.isFinite(r.mismatch))) districtLabels.mismatch = 'overall mismatch (prox−supply)';
     }
     return makeMatrix(sample, rows, districtLabels);
   }
@@ -690,6 +851,11 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         const v = Number(rd[k]);
         row[k] = Number.isFinite(v) ? v : null;
       });
+      // 2SFCA supply provision aggregated over the cell's baked buildings.
+      const supAgg = (typeof access2sfcaAggregateForHex === 'function' && cell?.hex) ? access2sfcaAggregateForHex(cell.hex) : null;
+      Object.assign(row, supplyRowFromCats(supAgg && supAgg.cats, 'normMean'));
+      // Mismatch (proximity − supply) per service + overall — the residual axis.
+      Object.assign(row, mismatchRowFromRow(row));
       return row;
     });
     const mezoLabels = {
@@ -718,6 +884,11 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     };
     const hasRawDist = rows.some(r => Object.keys(DR_DIST_LABELS_MEZO).some(k => Number.isFinite(r[k])));
     if (hasRawDist) Object.entries(DR_DIST_LABELS_MEZO).forEach(([k, lab]) => { mezoLabels[k] = lab; });
+    const hasSupply = rows.some(r => Object.values(DR_SUPPLY_KEY_BY_CAT).some(k => Number.isFinite(r[k])));
+    if (hasSupply) {
+      Object.entries(DR_SUPPLY_LABELS).forEach(([k, lab]) => { mezoLabels[k] = lab; });
+      if (rows.some(r => Number.isFinite(r.mismatch))) mezoLabels.mismatch = 'overall mismatch (prox−supply)';
+    }
     return makeMatrix(sample, rows, mezoLabels);
   }
 
@@ -784,6 +955,10 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       const v = Number(rd[k]);
       row[k] = Number.isFinite(v) ? v : null;
     });
+    // 2SFCA supply provision (0..1) per service for this building.
+    Object.assign(row, supplyValsForFeature(f));
+    // Mismatch (proximity − supply) per service + overall — the residual axis.
+    Object.assign(row, mismatchRowFromRow(row));
     return row;
   });
 
@@ -825,6 +1000,15 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
   };
   const hasRawDist = rows.some(r => Object.keys(DR_DIST_LABELS).some(k => Number.isFinite(r[k])));
   if (hasRawDist) Object.entries(DR_DIST_LABELS).forEach(([k, lab]) => { buildingLabels[k] = lab; });
+
+  // Add the 2SFCA supply dims only if the layer resolved (else no dead columns).
+  const hasSupply = rows.some(r => Object.values(DR_SUPPLY_KEY_BY_CAT).some(k => Number.isFinite(r[k])));
+  if (hasSupply) {
+    Object.entries(DR_SUPPLY_LABELS).forEach(([k, lab]) => { buildingLabels[k] = lab; });
+    // Overall mismatch = the map-invisible residual axis for the "Supply +
+    // Mismatch" (supply_plus) set; per-category mismatch stays in the contrastive.
+    if (rows.some(r => Number.isFinite(r.mismatch))) buildingLabels.mismatch = 'overall mismatch (prox−supply)';
+  }
 
   return makeMatrix(sample, rows, buildingLabels);
 }
@@ -1530,6 +1714,35 @@ const DR_FEATURE_CONFIG = [
   { key: 'distPrimary',      label: 'Primary school distance (m)' },
   { key: 'distKindergarten', label: 'Kindergarten distance (m)' },
   { key: 'distDentistry',    label: 'Dentistry distance (m)' },
+  // Per-category 2SFCA SUPPLY provision (0..1; higher = better supplied). Unlike
+  // the ~1-D proximity above, supply is genuinely multivariate and decorrelates
+  // from proximity — the "Supply (2SFCA)" / "Access + Supply" feature sets embed
+  // these so the contrastive/EBM can attribute a selection to specific services.
+  { key: 'supplyGrocery',      label: 'Grocery supply (2SFCA)' },
+  { key: 'supplyHospital',     label: 'Hospital supply (2SFCA)' },
+  { key: 'supplyHealthcare',   label: 'Healthcare supply (2SFCA)' },
+  { key: 'supplyPharmacy',     label: 'Pharmacy supply (2SFCA)' },
+  { key: 'supplyVeterinary',   label: 'Veterinary supply (2SFCA)' },
+  { key: 'supplyUniversity',   label: 'University supply (2SFCA)' },
+  { key: 'supplySchoolHigh',   label: 'High school supply (2SFCA)' },
+  { key: 'supplyPrimary',      label: 'Primary school supply (2SFCA)' },
+  { key: 'supplyKindergarten', label: 'Kindergarten supply (2SFCA)' },
+  { key: 'supplyDentistry',    label: 'Dentistry supply (2SFCA)' },
+  // Mismatch (proximity − 2SFCA supply): overall (also the DR projection residual
+  // axis + EBM feature) + per-category, so the contrastive can name which service
+  // looks close but is under-supplied (positive) or is supply-rich for its
+  // distance (negative) — the map-invisible signal answering R1.
+  { key: 'mismatch',             label: 'Overall mismatch (proximity−supply)' },
+  { key: 'mismatchGrocery',      label: 'Grocery mismatch (prox−supply)' },
+  { key: 'mismatchHospital',     label: 'Hospital mismatch (prox−supply)' },
+  { key: 'mismatchHealthcare',   label: 'Healthcare mismatch (prox−supply)' },
+  { key: 'mismatchPharmacy',     label: 'Pharmacy mismatch (prox−supply)' },
+  { key: 'mismatchVeterinary',   label: 'Veterinary mismatch (prox−supply)' },
+  { key: 'mismatchUniversity',   label: 'University mismatch (prox−supply)' },
+  { key: 'mismatchSchoolHigh',   label: 'High school mismatch (prox−supply)' },
+  { key: 'mismatchPrimary',      label: 'Primary school mismatch (prox−supply)' },
+  { key: 'mismatchKindergarten', label: 'Kindergarten mismatch (prox−supply)' },
+  { key: 'mismatchDentistry',    label: 'Dentistry mismatch (prox−supply)' },
   { key: 'areaLog',      label: 'Footprint area (log m²)' },
   { key: 'changeScore',  label: 'Change score (S1)' },
   // Demographic features (district mode). Generated from DEMOGRAPHIC_FEATURES so
@@ -5053,6 +5266,18 @@ function clearDRProjection(showMessage = true) {
     // so the matrix carries the extra independent dimensions. One-time per city.
     if (currentDRDataMode() === 'building' && typeof ensureRichBuildingFeatures === 'function') {
       try { await ensureRichBuildingFeatures(); } catch (_) { /* optional */ }
+    }
+    // Preload the 2SFCA supply layer when a supply feature set is active, so the
+    // synchronous collectDRData below finds it. Mode follows the fairness travel
+    // mode, exactly like the inspector's Supply panel.
+    const fsNow = document.getElementById('drFeatureSet')?.value || '';
+    const colorNow = document.getElementById('drColorBy')?.value || '';
+    const needsSupply = fsNow === 'supply' || fsNow === 'access_supply' || fsNow === 'supply_plus'
+      || colorNow === 'mismatch' || colorNow === 'supply';
+    if (needsSupply && typeof ensureAccess2sfca === 'function') {
+      const a2sMode = (document.getElementById('fairnessTravelMode')?.value || 'walking').toLowerCase();
+      const a2sCity = (typeof a2sCurrentCity === 'function') ? a2sCurrentCity() : undefined;
+      try { await ensureAccess2sfca(a2sCity, a2sMode); } catch (_) { /* supply is best-effort */ }
     }
     const { X, colors, sampleCount, sample, metrics, featureLabels, dims } =
       collectDRData(maxPts, normalize, colorBy, drPlot.runNonce);
