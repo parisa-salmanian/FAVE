@@ -52,7 +52,48 @@ function _buildIndex(keyList) {
     let bucket = grid.get(gk); if (!bucket) { bucket = []; grid.set(gk, bucket); }
     bucket.push(i);
   }
-  return { coords, keyToRow, grid };
+  return { coords, keyToRow, grid, rowCache: new Map() };
+}
+
+// Cheap signature of a key array so categories that share the SAME building
+// order reuse one index (they usually do), while a category baked with a
+// different order/length (e.g. Kalmar walking hospital/university/veterinary =
+// 85 745 rows vs 108 604 for the rest) gets its OWN index. This is the fix for
+// the row-aliasing bug: a single shared index built from the first category
+// silently mapped the wrong building's distances for any category whose key
+// order differed.
+function _sigOfKeys(keyList) {
+  const n = keyList.length;
+  if (!n) return '0';
+  return `${n}|${keyList[0]}|${keyList[n >> 1]}|${keyList[n - 1]}`;
+}
+
+// Resolve a point to a row WITHIN a specific index (exact key, else nearest-key
+// snap within tolerance). Per-index rowCache so the fairness hot-path pays the
+// snap once per building per distinct key order.
+function _rowInIndex(idx, lon, lat) {
+  if (!idx) return -1;
+  const k = _rkey(lon, lat);
+  const exact = idx.keyToRow.get(k);
+  if (exact !== undefined) return exact;
+  const cached = idx.rowCache.get(k);
+  if (cached !== undefined) return cached;
+  const cx = Math.floor(lon / _ROUTING_CELL), cy = Math.floor(lat / _ROUTING_CELL);
+  let best = -1, bestD = Infinity;
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      const bucket = idx.grid.get(`${cx + dx}_${cy + dy}`);
+      if (!bucket) continue;
+      for (const i of bucket) {
+        const c = idx.coords[i];
+        const d = _rhav(lon, lat, c[0], c[1]);
+        if (d < bestD) { bestD = d; best = i; }
+      }
+    }
+  }
+  const row = bestD <= ROUTING_SNAP_TOL_M ? best : -1;
+  idx.rowCache.set(k, row);
+  return row;
 }
 
 // Load matrices for (city, mode) covering `cats`. Rebuilds when city/mode changes.
@@ -63,7 +104,7 @@ async function ensureRoutingMatrices(cityKey, mode, cats) {
   if (need) await need;
   if (!ROUTING || ROUTING.sig !== sig) {
     ROUTING = { sig, city, mode, coords: null, keyToRow: null, grid: null, cell: _ROUTING_CELL,
-                cats: {}, rowCache: new Map() };
+                cats: {}, rowCache: new Map(), indexBySig: new Map(), sharedIdx: null };
   }
   const missing = cats.filter(c => !(c in ROUTING.cats));
   if (!missing.length) return ROUTING;
@@ -71,11 +112,20 @@ async function ensureRoutingMatrices(cityKey, mode, cats) {
   _routingLoadPromise = (async () => {
     const loaded = await Promise.all(missing.map(c => _fetchCat(city, mode, c).then(j => [c, j])));
     for (const [c, j] of loaded) {
-      ROUTING.cats[c] = j ? { m: j.m, v: j.v, key: j.key } : null;
-      // Build the shared index from the first matrix that has a key list.
-      if (j && j.key && !ROUTING.keyToRow) {
-        const idx = _buildIndex(j.key);
-        ROUTING.coords = idx.coords; ROUTING.keyToRow = idx.keyToRow; ROUTING.grid = idx.grid;
+      ROUTING.cats[c] = j ? { m: j.m, v: j.v, key: j.key, idx: null } : null;
+      if (j && j.key) {
+        // Give this category the index matching ITS OWN key order — reused across
+        // categories that share the same order (deduped by signature), a fresh one
+        // otherwise. This is what makes routingDistsForPoint read the RIGHT row.
+        const s = _sigOfKeys(j.key);
+        let idx = ROUTING.indexBySig.get(s);
+        if (!idx) { idx = _buildIndex(j.key); ROUTING.indexBySig.set(s, idx); }
+        ROUTING.cats[c].idx = idx;
+        // Keep the first index as the shared default (routingReady/routingRowForPoint).
+        if (!ROUTING.keyToRow) {
+          ROUTING.coords = idx.coords; ROUTING.keyToRow = idx.keyToRow; ROUTING.grid = idx.grid;
+          ROUTING.sharedIdx = idx;
+        }
       }
     }
     return ROUTING;
@@ -87,37 +137,35 @@ async function ensureRoutingMatrices(cityKey, mode, cats) {
 function routingHasCat(cat) { return !!(ROUTING && ROUTING.cats[cat]); }
 function routingReady() { return !!(ROUTING && ROUTING.keyToRow); }
 
-// Resolve a building centroid to its matrix row: exact key, else nearest-key snap.
+// Resolve a building centroid to a row in the SHARED (first-loaded) index. Kept
+// for backward compat / callers that don't need per-category correctness. NB: a
+// row from here is only valid to pass to routingDistsForRow for categories that
+// share the shared index's key order — prefer routingDistsForPoint (below), which
+// resolves per category and is always correct.
 function routingRowForPoint(lon, lat) {
-  if (!ROUTING || !ROUTING.keyToRow) return -1;
-  const k = _rkey(lon, lat);
-  const exact = ROUTING.keyToRow.get(k);
-  if (exact !== undefined) return exact;
-  const cached = ROUTING.rowCache.get(k);
-  if (cached !== undefined) return cached;
-  // snap: scan 3x3 grid neighborhood for nearest baked key within tolerance
-  const cx = Math.floor(lon / ROUTING.cell), cy = Math.floor(lat / ROUTING.cell);
-  let best = -1, bestD = Infinity;
-  for (let dx = -1; dx <= 1; dx++) {
-    for (let dy = -1; dy <= 1; dy++) {
-      const bucket = ROUTING.grid.get(`${cx + dx}_${cy + dy}`);
-      if (!bucket) continue;
-      for (const i of bucket) {
-        const c = ROUTING.coords[i];
-        const d = _rhav(lon, lat, c[0], c[1]);
-        if (d < bestD) { bestD = d; best = i; }
-      }
-    }
-  }
-  const row = bestD <= ROUTING_SNAP_TOL_M ? best : -1;
-  ROUTING.rowCache.set(k, row);
-  return row;
+  if (!ROUTING || !ROUTING.sharedIdx) return -1;
+  return _rowInIndex(ROUTING.sharedIdx, lon, lat);
 }
 
-// Network distances (metres) + opportunity values for a category at a row.
+// Network distances (metres) + opportunity values for a category at a row that
+// was resolved against THAT category's own index. Correct regardless of whether
+// categories share a key order.
 function routingDistsForRow(cat, row) {
   if (row < 0 || !ROUTING) return null;
   const mat = ROUTING.cats[cat];
   if (!mat || !mat.m || row >= mat.m.length) return null;
+  return { dists: mat.m[row], vals: mat.v ? mat.v[row] : null };
+}
+
+// PREFERRED accessor: resolve a point to the category's own row, then return its
+// distances. This is the fix for the row-aliasing bug — a building's row is looked
+// up in the index built from `cat`'s key array, so `mat.m[row]` is always this
+// building's real distances even when categories were baked in different orders.
+function routingDistsForPoint(cat, lon, lat) {
+  if (!ROUTING) return null;
+  const mat = ROUTING.cats[cat];
+  if (!mat || !mat.m) return null;
+  const row = _rowInIndex(mat.idx || ROUTING.sharedIdx, lon, lat);
+  if (row < 0 || row >= mat.m.length) return null;
   return { dists: mat.m[row], vals: mat.v ? mat.v[row] : null };
 }

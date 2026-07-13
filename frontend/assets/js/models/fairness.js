@@ -948,7 +948,11 @@ function ifCityEquityWeightForFeature(feature) {
   return weight;
 }
 
-function ifCityAccessibilityForBuilding(cB, poiArr, cat, mode = FAIRNESS_TRAVEL_MODE_DEFAULT, transitCtx = null, netCtx = null) {
+function ifCityAccessibilityForBuilding(cB, poiArr, cat, mode = FAIRNESS_TRAVEL_MODE_DEFAULT, transitCtx = null, netCtx = null, out = null) {
+  // `out` (optional): if provided, out.distM is set to the raw distance to the
+  // nearest POI of this category — network metres in the routing branch, straight-
+  // line metres otherwise — so callers can surface "how far is the nearest one"
+  // (the inspector distance line) without a second pass over the POIs.
   // Only the nearest 3 POIs contribute, to prevent city-centre accumulation effect.
   // Hot path: this runs ~N_buildings × N_categories times during a fairness compute,
   // so we avoid the previous map().sort() (O(P log P) + 1 alloc per call) and pick
@@ -958,9 +962,9 @@ function ifCityAccessibilityForBuilding(cB, poiArr, cat, mode = FAIRNESS_TRAVEL_
 
   // Network branch: use baked REAL network distances (walk/cycle/drive) when a
   // routing matrix is loaded for this category and it has no what-if edits.
-  if (netCtx && netCtx.row >= 0 && netCtx.cats && netCtx.cats.has(cat)
-      && typeof routingDistsForRow === 'function') {
-    const r = routingDistsForRow(cat, netCtx.row);
+  if (netCtx && netCtx.pt && netCtx.cats && netCtx.cats.has(cat)
+      && typeof routingDistsForPoint === 'function') {
+    const r = routingDistsForPoint(cat, netCtx.pt[0], netCtx.pt[1]);
     if (r && r.dists && r.dists.length) {
       let sum = 0;
       const k = Math.min(3, r.dists.length);
@@ -970,6 +974,7 @@ function ifCityAccessibilityForBuilding(cB, poiArr, cat, mode = FAIRNESS_TRAVEL_
         const v = Number.isFinite(r.vals?.[i]) ? r.vals[i] : 1;
         sum += rho * v * Math.exp(-kappa * ifCityNetworkDistanceForMode(dm / 1000, mode));
       }
+      if (out) out.distM = Number.isFinite(r.dists[0]) ? r.dists[0] : NaN;
       return sum;
     }
     // no baked row for this building → fall through to haversine
@@ -1011,6 +1016,7 @@ function ifCityAccessibilityForBuilding(cB, poiArr, cat, mode = FAIRNESS_TRAVEL_
     const v = Number.isFinite(p2.v) ? p2.v : 1;
     sum += rho * v * Math.exp(-kappa * effKm(p2, d2));
   }
+  if (out) out.distM = Number.isFinite(d0) ? d0 : NaN;
   return sum;
 }
 
@@ -1494,10 +1500,10 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
       const transitCtx = transitNetReadyFlag
         ? { ready: true, originStops: transitNearestStops(cB) }
         : null;
-      // Per-building routing-matrix row (real network distances), reused across cats.
-      const netCtx = netCats
-        ? { row: routingRowForPoint(cB[0], cB[1]), cats: netCats }
-        : null;
+      // Per-building routing context: carry the POINT (not a single shared row) so
+      // each category resolves its own matrix row — categories can be baked in
+      // different building orders (see routingDistsForPoint).
+      const netCtx = netCats ? { pt: cB, cats: netCats } : null;
 
       const fm = {};
       if (updateUI) delete props.fair;
@@ -1506,10 +1512,13 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
       for (const cat of catList) {
         const arr = catToPOI[cat] || [];
         if (!arr.length) continue;
-        const access = ifCityAccessibilityForBuilding(cB, arr, cat, fairnessTravelMode, transitCtx, netCtx);
+        const distOut = {};
+        const access = ifCityAccessibilityForBuilding(cB, arr, cat, fairnessTravelMode, transitCtx, netCtx, distOut);
         // Keep the raw access available, but score is filled in by the
         // city-wide normalisation pass below so it always lands in 0..1.
-        fm[cat] = { access, score: 0 };
+        // dist_m = raw distance to the nearest POI (network metres for walk/cycle/
+        // drive, straight-line otherwise) → feeds the inspector distance line.
+        fm[cat] = { access, score: 0, dist_m: Number.isFinite(distOut.distM) ? distOut.distM : null };
         accessByCat[cat][featIdx] = access;
         const weight = Number.isFinite(weightsByCat[cat]) ? weightsByCat[cat] : 1;
         utility += weight * access;
