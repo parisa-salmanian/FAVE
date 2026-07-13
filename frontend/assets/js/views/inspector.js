@@ -49,6 +49,18 @@
     return Number.isFinite(n) ? n.toFixed(digits) : '—';
   }
 
+  // Raw network distance to the nearest service, human-readable. Metres under
+  // 1 km (rounded to 10 m), km above. This is the literal "how far to the
+  // nearest one" that the gravity score compresses into 0..1 — surfacing it lets
+  // a planner see e.g. "school 380 m but hospital 2.4 km" directly, and reconciles
+  // the fairness bars with the 2SFCA supply card (which answers a different,
+  // crowding-adjusted question).
+  function fmtDist(m) {
+    if (!Number.isFinite(m)) return '';
+    if (m >= 1000) return `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km`;
+    return `${Math.round(m / 10) * 10} m`;
+  }
+
   // Inline "?" help glyph (matches the shell's `help` icon) + a leading button
   // that toggles an adjacent explanation. Used by the demographic rows below.
   const HELP_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 1 1 5.5 1.7c-.6.6-1.6 1-1.6 2.3M12 17v.01"/></svg>';
@@ -284,7 +296,7 @@
       }
     }
 
-    renderCategoryBars(selected.byCat || null);
+    renderCategoryBars(selected.byCat || null, selected.byCatDist || null);
     renderAccess2sfcaBars();
     renderDemographics();
     restoreScroll();
@@ -446,7 +458,7 @@
       </div>` + rowsHtml.join('');
   }
 
-  function renderCategoryBars(byCat) {
+  function renderCategoryBars(byCat, byCatDist) {
     const host = document.getElementById('inspCategoryBars');
     if (!host) return;
     const cats = pickActiveCategories();
@@ -460,13 +472,20 @@
       const w = v != null ? Math.max(2, Math.min(100, v * 100)) : 0;
       const num = v != null ? v.toFixed(2) : '—';
       const fillBg = v != null ? rampColor(v) : 'var(--insp-surface-2)';
+      // Raw network distance to the nearest of this service (per-building only;
+      // for hex/district aggregates byCatDist is null → column stays empty).
+      const dm = byCatDist && Number.isFinite(byCatDist[cat]) ? byCatDist[cat] : null;
+      const distStr = dm != null ? fmtDist(dm) : '';
+      const distTitle = dm != null
+        ? ` title="Nearest ${label.toLowerCase()} is ${distStr} away over the network"` : '';
       // Use the legend SVGs (already coloured circle + white glyph baked
       // in) so the per-category row matches the POIs & Weights menu and
       // the map's POI markers.
       return `
-        <div class="bar-row">
+        <div class="bar-row cat-row">
           <span class="label"><img src="assets/icons/legend-${cat}.svg" alt="" class="label-icon" aria-hidden="true">${label}</span>
           <div class="bar-track"><div class="bar-fill" style="width:${w}%;background:${fillBg}"></div></div>
+          <span class="dist"${distTitle}>${distStr}</span>
           <span class="num">${num}</span>
         </div>`;
     }).join('');
@@ -711,10 +730,12 @@
       else if (props.fair && Number.isFinite(props.fair.score)) score = props.fair.score;
       // Per-category breakdown — fair_multi has shape { cat: { score, dist_m, time_min } }
       const byCat = {};
+      const byCatDist = {};   // raw network distance (m) to nearest of each cat
       if (props.fair_multi && typeof props.fair_multi === 'object') {
         for (const k of Object.keys(props.fair_multi)) {
           const v = props.fair_multi[k];
           if (v && Number.isFinite(v.score)) byCat[k] = v.score;
+          if (v && Number.isFinite(v.dist_m)) byCatDist[k] = v.dist_m;
         }
       }
       const name = props.name || props.namn
@@ -728,6 +749,7 @@
         count: 1,
         gravity: props.__ifcity?.utility,
         byCat: Object.keys(byCat).length ? byCat : null,
+        byCatDist: Object.keys(byCatDist).length ? byCatDist : null,
         a2s: null,
         a2sPending: true,
         a2sSource: buildingFeat,

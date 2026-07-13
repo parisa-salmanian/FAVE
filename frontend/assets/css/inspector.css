@@ -303,6 +303,19 @@ body[data-theme="dark"] #inspector[data-open="true"] {
   color: var(--insp-ink);
   font-weight: 500;
 }
+/* Per-category fairness rows carry an extra raw-distance column between the bar
+   and the 0..1 score. Scoped to .cat-row so the 2SFCA supply rows (.a2s-row),
+   which share .bar-row, keep their 3-column layout. */
+#inspector .bar-row.cat-row {
+  grid-template-columns: 92px 1fr auto 34px;
+}
+#inspector .bar-row.cat-row .dist {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--insp-ink-3);
+  font-size: 10px;
+  white-space: nowrap;
+}
 
 /* Supply provision (2SFCA) — rendered as its own card so planners read it as a
    separate metric, not a duplicate of the "By category" fairness bars above.
