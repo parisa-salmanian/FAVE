@@ -98,20 +98,37 @@ def run_ebm_ranking(
         y_small = df_small["_y"].values
         df_small = df_small.drop(columns=["_y"])
 
-        # Train EBM
-        ebm = ExplainableBoostingClassifier(random_state=42, interactions=0)
+        # Train EBM with pairwise interactions ON. This is the whole point of an
+        # EBM over a linear model: coupled feature PAIRS (e.g. an everyday-service
+        # distance × a regional-service distance — the "two-tier" pattern) surface
+        # as their own ranked terms, not just per-POI main effects. Interaction
+        # terms are usually secondary in magnitude here (the service distances are
+        # collinear), so we keep them in the ranking but tag them so the UI can
+        # show them as coupled features rather than pretend they're single POIs.
+        ebm = ExplainableBoostingClassifier(random_state=42, interactions=10)
         ebm.fit(df_small, y_small)
 
         # Global explanation via EBM term attributes (more reliable than explain_global)
-        term_names = ebm.term_names_
         term_scores = ebm.term_importances()
         term_features = ebm.term_features_
 
         importances = []
-        for tname, tscore, tfeats in zip(term_names, term_scores, term_features):
-            if len(tfeats) != 1:   # skip interaction terms
+        for tscore, tfeats in zip(term_scores, term_features):
+            # Build the label straight from the feature indices so BOTH main
+            # effects and interaction pairs are named (robust to interpret
+            # versions whose term_names_ are generic "feature N"). A 2-index
+            # term becomes "A × B" and is tagged kind="interaction".
+            try:
+                parts = [feature_names[i] for i in tfeats]
+            except Exception:
+                parts = []
+            if not parts:
                 continue
-            importances.append({"label": tname, "score": float(abs(tscore))})
+            importances.append({
+                "label": " × ".join(parts),
+                "score": float(abs(tscore)),
+                "kind": "interaction" if len(tfeats) > 1 else "main",
+            })
 
         importances.sort(key=lambda d: d["score"], reverse=True)
 

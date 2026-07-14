@@ -4721,7 +4721,8 @@ async function buildEBMEngineExplanation() {
       return {
         label,
         score: Math.abs(baseScore),
-        direction: f.direction || 'higher-in-cluster'
+        direction: f.direction || 'higher-in-cluster',
+        kind: f.kind || (typeof label === 'string' && label.includes(' × ') ? 'interaction' : 'main')
       };
     });
 
