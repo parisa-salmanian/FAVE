@@ -1000,6 +1000,14 @@
               <input class="form-check-input" type="checkbox" role="switch" id="priorityZonesToggle">
               <label class="form-check-label control-label mb-0" for="priorityZonesToggle">Priority zones</label>
             </div>
+            <select id="priorityNeedField" class="form-select form-select-sm ms-2" style="width:auto" disabled
+                    title="Which need drives priority = need × poor access">
+              <option value="needZ" selected>Deprivation</option>
+              <option value="child_frac">Children</option>
+              <option value="elder_frac">Elderly</option>
+              <option value="income">Low income</option>
+              <option value="higher_ed">Low education</option>
+            </select>
           </li>
           <li class="nav-item d-flex align-items-center ms-3">
             <div class="dropdown">

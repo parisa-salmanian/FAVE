@@ -90,6 +90,13 @@ const TAB_HELP = {
     + 'supply (crowding); <b>blue</b> = more supply than proximity implies; pale = '
     + 'the two agree. Red zones are typically dense central blocks — near services, '
     + 'but many residents share each one.',
+  priority:
+    '<b>Priority — where to intervene first.</b> Highlights the worst 20% of '
+    + 'buildings by <b>need × poor access</b>: high social need (pick the need '
+    + 'signal above — deprivation, children, elderly, low income, low education) '
+    + 'AND far from services. Grey = not a priority. Needs a fairness compute first '
+    + '(it reads the overall accessibility score). Lasso a red pocket to explain it '
+    + 'in the DR / EBM panel.',
 };
 let _openHelpKey = null;   // which tab's explanation is currently shown (or null)
 
@@ -120,6 +127,12 @@ function _supplyLegendMode() {
 function updateLegendRamp() {
   const leg = document.querySelector('.shell-legend');
   if (!leg) return;
+  // The priority overlay owns the legend while active — let it keep it, even if
+  // another module fires refreshLegend() (e.g. the absolute-scale hook).
+  if (mapColorVar === 'priority') {
+    if (typeof _pzUpdateShellLegend === 'function') _pzUpdateShellLegend();
+    return;
+  }
   const conf = SUPPLY_LEGEND_TEXT[_supplyLegendMode()];
   const spans = leg.querySelectorAll('.ramp-labels span');
   if (spans.length >= 3) conf.labels.forEach((t, i) => { if (spans[i]) spans[i].textContent = t; });
@@ -232,12 +245,21 @@ function mismatchColorForFeature(feature) {
 
 // Switch the active map color variable (legend tab click). Repaints immediately,
 // then (for supply) stamps the 2SFCA scores async and repaints again once ready.
+// 'priority' is the need × poor-access overlay (lib/priorityZones.js): it owns
+// the legend while active, so we hand off to priorityEnter/priorityLeave instead
+// of refreshLegend().
 async function setMapColorVar(v) {
-  const next = (v === 'supply' || v === 'mismatch') ? v : 'fairness';
+  const next = (v === 'supply' || v === 'mismatch' || v === 'priority') ? v : 'fairness';
   if (next === mapColorVar) return;
+  const leavingPriority = (mapColorVar === 'priority');
   mapColorVar = next;
   supplyTick++;
-  refreshLegend();
+  if (next === 'priority') {
+    if (typeof priorityEnter === 'function') priorityEnter();   // recompute cutoff + own the legend
+  } else {
+    if (leavingPriority && typeof priorityLeave === 'function') priorityLeave();
+    refreshLegend();
+  }
   if (typeof updateLayers === 'function') updateLayers();   // immediate (grey while stamping)
   if (_needsSupplyStamp()) {
     const ok = await ensureSupplyStamped();

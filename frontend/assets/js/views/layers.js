@@ -155,7 +155,7 @@ function createCityLayer(grayBackdrop) {
 
     updateTriggers: {
       getElevation:[heightScale],
-      getFillColor:[fairActive, fairCategory, fairRecolorTick, drSelectionTick, drHasSelection, buildingTypeTick, selectedBuildingType, transitionAnimTick, transitionAnimActive, changeLogTick, changeCompareBaseline, pinnedChangeId, (typeof demoLensField !== 'undefined' ? demoLensField : ''), (typeof demoLensTick !== 'undefined' ? demoLensTick : 0), (typeof priorityZonesActive !== 'undefined' ? priorityZonesActive : false), (typeof priorityZonesTick !== 'undefined' ? priorityZonesTick : 0), (typeof mapColorVar !== 'undefined' ? mapColorVar : 'fairness'), (typeof supplyTick !== 'undefined' ? supplyTick : 0)]
+      getFillColor:[fairActive, fairCategory, fairRecolorTick, drSelectionTick, drHasSelection, buildingTypeTick, selectedBuildingType, transitionAnimTick, transitionAnimActive, changeLogTick, changeCompareBaseline, pinnedChangeId, (typeof demoLensField !== 'undefined' ? demoLensField : ''), (typeof demoLensTick !== 'undefined' ? demoLensTick : 0), (typeof priorityZonesActive !== 'undefined' ? priorityZonesActive : false), (typeof priorityZonesTick !== 'undefined' ? priorityZonesTick : 0), (typeof priorityNeedField !== 'undefined' ? priorityNeedField : ''), (typeof mapColorVar !== 'undefined' ? mapColorVar : 'fairness'), (typeof supplyTick !== 'undefined' ? supplyTick : 0)]
     }
   });
 }

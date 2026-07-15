@@ -482,12 +482,19 @@ async function refreshDistrictScores() {
       const tSec = estimateTravelTimeSecondsFromMeters(dMeters, fairnessTravelMode);
       focusedScore = scoreFromTimeSeconds(focusedPOICat, tSec, fairnessTravelMode);
     }
-    // Real SCB child share of the building's DESO — aggregated to the district
-    // below so the macro DR / map can colour districts by "who lives there".
-    const childRaw = (typeof epiDesoProps === 'function' && props?.__deso != null)
-      ? Number(epiDesoProps(props.__deso)?.child_frac) : NaN;
+    // Real SCB DESO socioeconomics of the building's DESO — aggregated to the
+    // district below so the macro DR / map can colour by "who lives there".
+    // One epiDesoProps lookup, four fields (null → NaN so a missing higher_ed
+    // doesn't read as 0). Color-only; never enters the fairness matrix.
+    const dp = (typeof epiDesoProps === 'function' && props?.__deso != null) ? epiDesoProps(props.__deso) : null;
+    const nOrNaN = (x) => (x == null ? NaN : Number(x));
+    const fOrNull = (x) => (Number.isFinite(x) ? x : null);
     pts.push(turf.point(c, { score: s, overall: overallScore, cats: catScores, focused: focusedScore,
-      childReal: Number.isFinite(childRaw) ? childRaw : null }));
+      childReal:    dp ? fOrNull(nOrNaN(dp.child_frac)) : null,
+      elderReal:    dp ? fOrNull(nOrNaN(dp.elder_frac)) : null,
+      incomeReal:   dp ? fOrNull(nOrNaN(dp.income))     : null,
+      higherEdReal: dp ? fOrNull(nOrNaN(dp.higher_ed))  : null,
+      needReal:     dp ? fOrNull(nOrNaN(dp.needZ))      : null }));
   }
   const ptsFC = turf.featureCollection(pts);
 
@@ -517,8 +524,15 @@ async function refreshDistrictScores() {
       fairByCat[cat] = counts[cat] ? sums[cat] / counts[cat] : 0;
     }
     const mean = scores.length ? scores.reduce((a,b)=>a+b,0)/scores.length : null;
-    const childVals = within.features.map(p => p.properties?.childReal).filter(Number.isFinite);
-    const childMean = childVals.length ? childVals.reduce((a, b) => a + b, 0) / childVals.length : null;
+    const meanReal = (key) => {
+      const v = within.features.map(p => p.properties?.[key]).filter(Number.isFinite);
+      return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+    };
+    const childMean    = meanReal('childReal');
+    const elderMean    = meanReal('elderReal');
+    const incomeMean   = meanReal('incomeReal');
+    const higherEdMean = meanReal('higherEdReal');
+    const needMean     = meanReal('needReal');
     const overallMean = overallScores.length ? overallScores.reduce((a, b) => a + b, 0) / overallScores.length : null;
     const focusedMean = focusedScores.length ? focusedScores.reduce((a, b) => a + b, 0) / focusedScores.length : null;
     feat.properties = {
@@ -526,6 +540,10 @@ async function refreshDistrictScores() {
       __districtName: name,
       __score: mean,
       __childReal: childMean,
+      __elderReal: elderMean,
+      __incomeReal: incomeMean,
+      __higherEdReal: higherEdMean,
+      __needZ: needMean,
       __count: scores.length,
       __fairOverall: overallMean,
       __fairByCat: fairByCat,
@@ -535,6 +553,9 @@ async function refreshDistrictScores() {
   });
 
   districtScoreTick++;
+  // Priority overlay is scale-relative — recompute its cutoff against the fresh
+  // district aggregates (no-op when the overlay is off).
+  if (typeof notifyPriorityDataChanged === 'function') notifyPriorityDataChanged();
   markAggregateSelectionsFromBuildings((baseCityFC?.features || []).filter(f => f?.properties?._drSelected));
   if (parallelCoordsOpen && currentParallelCoordsMode() === 'district') {
     updateParallelCoordsPanel();
@@ -797,21 +818,34 @@ async function refreshMezoScores() {
         focusedCount: 0,
         childSum: 0,
         childCount: 0,
+        elderSum: 0,
+        elderCount: 0,
+        incomeSum: 0,
+        incomeCount: 0,
+        higherEdSum: 0,
+        higherEdCount: 0,
+        needSum: 0,
+        needCount: 0,
         prevSum: 0,
         prevCount: 0
       });
     }
     const entry = hexMap.get(cell);
     entry.total += 1;
-    // Real SCB child share of the building's DESO — aggregated to the hex cell
-    // below so the mezo DR / map can colour cells by "who lives there" (same as
-    // the district path). Color-only; never enters the fairness matrix.
-    const childRaw = (typeof epiDesoProps === 'function' && props?.__deso != null)
-      ? Number(epiDesoProps(props.__deso)?.child_frac) : NaN;
-    if (Number.isFinite(childRaw)) {
-      entry.childSum += childRaw;
-      entry.childCount += 1;
-    }
+    // Real SCB DESO socioeconomics of the building's DESO — aggregated to the hex
+    // cell below so the mezo DR / map can colour cells by "who lives there" (same
+    // as the district path). Color-only; never enters the fairness matrix. One
+    // epiDesoProps lookup, four fields (null → NaN so a missing value isn't 0).
+    const dp = (typeof epiDesoProps === 'function' && props?.__deso != null) ? epiDesoProps(props.__deso) : null;
+    const accumReal = (sumKey, cntKey, raw) => {
+      const v = (raw == null) ? NaN : Number(raw);
+      if (Number.isFinite(v)) { entry[sumKey] += v; entry[cntKey] += 1; }
+    };
+    accumReal('childSum',    'childCount',    dp ? dp.child_frac : null);
+    accumReal('elderSum',    'elderCount',    dp ? dp.elder_frac : null);
+    accumReal('incomeSum',   'incomeCount',   dp ? dp.income     : null);
+    accumReal('higherEdSum', 'higherEdCount', dp ? dp.higher_ed  : null);
+    accumReal('needSum',     'needCount',     dp ? dp.needZ      : null);
     if (Number.isFinite(score)) {
       entry.sum += score;
       entry.count += 1;
@@ -848,6 +882,10 @@ async function refreshMezoScores() {
     const overallMean = entry.overallCount ? entry.overallSum / entry.overallCount : null;
     const focusedMean = entry.focusedCount ? entry.focusedSum / entry.focusedCount : null;
     const childMean = entry.childCount ? entry.childSum / entry.childCount : null;
+    const elderMean = entry.elderCount ? entry.elderSum / entry.elderCount : null;
+    const incomeMean = entry.incomeCount ? entry.incomeSum / entry.incomeCount : null;
+    const higherEdMean = entry.higherEdCount ? entry.higherEdSum / entry.higherEdCount : null;
+    const needMean = entry.needCount ? entry.needSum / entry.needCount : null;
     const prevMean = entry.prevCount ? entry.prevSum / entry.prevCount : null;
     return {
       hex: entry.hex,
@@ -858,6 +896,10 @@ async function refreshMezoScores() {
       __fairFocused: focusedMean,
       __fairFocusedCat: focusedMean != null ? focusedPOICat : null,
       __childReal: childMean,
+      __elderReal: elderMean,
+      __incomeReal: incomeMean,
+      __higherEdReal: higherEdMean,
+      __needZ: needMean,
       __prevScore: prevMean
     };
   };
@@ -907,6 +949,9 @@ async function refreshMezoScores() {
 
   mezoHexData = data;
   mezoScoreTick++;
+  // Priority overlay flags the top-fraction of the ACTIVE scale — recompute its
+  // cutoff against the freshly-aggregated cells (no-op when the overlay is off).
+  if (typeof notifyPriorityDataChanged === 'function') notifyPriorityDataChanged();
   markAggregateSelectionsFromBuildings((baseCityFC?.features || []).filter(f => f?.properties?._drSelected));
   if (parallelCoordsOpen && currentParallelCoordsMode() === 'mezo') {
     updateParallelCoordsPanel();

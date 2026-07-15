@@ -179,6 +179,17 @@
         ${tab('fairness', 'Fairness', 'true')}
         ${tab('supply', 'Supply', 'false')}
         ${tab('mismatch', 'Mismatch', 'false')}
+        ${tab('priority', 'Priority', 'false')}
+      </div>
+      <div class="legend-priority-need" id="legendPriorityNeed" hidden>
+        <label for="priorityNeedSel">Need</label>
+        <select id="priorityNeedSel" class="form-select form-select-sm">
+          <option value="needZ">Deprivation</option>
+          <option value="child_frac">Children</option>
+          <option value="elder_frac">Elderly</option>
+          <option value="income">Low income</option>
+          <option value="higher_ed">Low education</option>
+        </select>
       </div>
       <div class="ramp"></div>
       <div class="ramp-labels"><span>Least fair</span><span>Medium</span><span>Most fair</span></div>

@@ -642,6 +642,9 @@ function setDistrictView(on, opts = {}) {
       });
   } else {
     updateLayers();
+    // Back to micro: refresh the scale-relative priority cutoff against buildings
+    // (no-op when the overlay is off).
+    if (typeof notifyPriorityDataChanged === 'function') notifyPriorityDataChanged();
     updateParallelCoordsPanel();
     if (!skipDRRefresh) maybeRefreshDROnSpatialModeChange(prevMode);
   }
@@ -666,6 +669,9 @@ function setMezoView(on) {
       });
   } else {
     updateLayers();
+    // Back to micro: no aggregation runs, so refresh the (scale-relative)
+    // priority cutoff against the building set (no-op when the overlay is off).
+    if (typeof notifyPriorityDataChanged === 'function') notifyPriorityDataChanged();
     updateParallelCoordsPanel();
     maybeRefreshDROnSpatialModeChange(prevMode);
   }
@@ -973,6 +979,9 @@ function wireUI() {
         // The Supply provision map coloring is per-mode too — re-stamp it if it's
         // the active map color variable (no-op on the Fairness tab).
         if (typeof notifySupplyDataChanged === 'function') notifySupplyDataChanged();
+        // Priority zones score = need × (1 − fairness), so the new mode's fairness
+        // shifts the cutoff — refresh it if the overlay is on (no-op otherwise).
+        if (typeof notifyPriorityDataChanged === 'function') notifyPriorityDataChanged();
       }
     });
   }

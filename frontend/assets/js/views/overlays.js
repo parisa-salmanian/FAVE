@@ -1491,6 +1491,11 @@ function districtOverlayColor(props = {}) {
     // unchanged features are white, changed features carry red↔blue _changeColor.
     return [255, 255, 255, 160];
   }
+  // Priority overlay (need × poor access) replaces the fairness fill for the
+  // district polygons, using each district's aggregated demographics + fairness.
+  if (typeof priorityZonesOn === 'function' && priorityZonesOn() && typeof priorityColorFromProps === 'function') {
+    return priorityColorFromProps(props);
+  }
   const score = districtOverlayScore(props);
   if (!Number.isFinite(score)) return [80, 80, 80, 25];
   const [r, g, b] = colorFromScore(score);
@@ -1522,7 +1527,11 @@ function createDistrictFairnessLayer() {
         selectedPOIId,
         selectedPOIFeature?.properties?.__cat || selectedPOIFeature?.properties?.category || '',
         transitionAnimTick,
-        transitionAnimActive
+        transitionAnimActive,
+        (typeof priorityZonesActive !== 'undefined' ? priorityZonesActive : false),
+        (typeof priorityZonesTick !== 'undefined' ? priorityZonesTick : 0),
+        (typeof priorityNeedField !== 'undefined' ? priorityNeedField : ''),
+        (typeof mapColorVar !== 'undefined' ? mapColorVar : 'fairness')
       ]
     }
   });
@@ -1568,6 +1577,12 @@ function mezoOverlayColor(props = {}) {
     // Match building-level change-map behavior:
     // unchanged features are white, changed features carry red↔blue _changeColor.
     return [255, 255, 255, 160];
+  }
+  // Priority overlay (need × poor access) replaces the fairness fill for the hex
+  // cells, using each cell's aggregated demographics + fairness. Scale-relative
+  // top-fraction cutoff is kept fresh by refreshMezoScores → notifyPriorityDataChanged.
+  if (typeof priorityZonesOn === 'function' && priorityZonesOn() && typeof priorityColorFromProps === 'function') {
+    return priorityColorFromProps(props);
   }
   const score = mezoOverlayScore(props);
   if (!Number.isFinite(score)) return [80, 80, 80, 25];
@@ -1657,6 +1672,10 @@ function createMezoHexLayer() {
         selectedPOIId,
         selectedPOIFeature?.properties?.__cat || selectedPOIFeature?.properties?.category || '',
         transitionAnimTick,
+        (typeof priorityZonesActive !== 'undefined' ? priorityZonesActive : false),
+        (typeof priorityZonesTick !== 'undefined' ? priorityZonesTick : 0),
+        (typeof priorityNeedField !== 'undefined' ? priorityNeedField : ''),
+        (typeof mapColorVar !== 'undefined' ? mapColorVar : 'fairness'),
         transitionAnimActive
       ]
     }
