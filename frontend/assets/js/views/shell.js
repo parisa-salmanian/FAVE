@@ -1524,8 +1524,51 @@
     });
   }
 
+  // The DR Explorer is a LEFT side-panel — it gets a right-edge WIDTH handle
+  // (updates --dr-panel-w) instead of the bottom drawer's top-edge height handle.
+  function installDrPanelWidthHandle(panelEl) {
+    if (!panelEl || panelEl.querySelector('.dr-panel-resize')) return;
+    const handle = document.createElement('div');
+    handle.className = 'dr-panel-resize';
+    handle.title = 'Drag to widen';
+    handle.innerHTML = '<span class="grip"></span>';
+    panelEl.appendChild(handle);
+
+    let dragging = false;
+    let startX = 0;
+    let startW = 0;
+    const railW = () => {
+      const v = getComputedStyle(document.documentElement).getPropertyValue('--rail-w').trim();
+      return parseFloat(v) || 56;
+    };
+    const onMove = (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const maxW = window.innerWidth - railW() - 40;
+      const next = Math.max(360, Math.min(maxW, startW + dx));
+      document.documentElement.style.setProperty('--dr-panel-w', `${next}px`);
+      try { if (typeof scheduleMapResize === 'function') scheduleMapResize(); } catch (_) {}
+    };
+    const onUp = () => {
+      dragging = false;
+      handle.removeAttribute('data-dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      dragging = true;
+      startX = e.clientX;
+      const cssVal = getComputedStyle(document.documentElement).getPropertyValue('--dr-panel-w').trim();
+      startW = parseFloat(cssVal) || panelEl.getBoundingClientRect().width;
+      handle.setAttribute('data-dragging', 'true');
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+
   function ensureDrawerHandles() {
-    installDrawerHandle(document.getElementById('drOffcanvas'));
+    installDrPanelWidthHandle(document.getElementById('drOffcanvas'));
     installDrawerHandle(document.getElementById('parallelCoordsPanel'));
   }
 
@@ -1555,13 +1598,12 @@
   function syncDrawerBar() {
     const bar = document.getElementById('shellDrawerBar');
     if (!bar) return;
-    const drOpen = document.body.getAttribute('data-dr-open') === 'true';
+    // The bottom drawer bar belongs to the Parallel-Coords bottom drawer only.
+    // The DR Explorer is now a left side-panel and manages its own chrome.
     const pcOpen = document.body.getAttribute('data-pc-open') === 'true';
-    const open = drOpen || pcOpen;
-    bar.setAttribute('data-shown', open ? 'true' : 'false');
-    const count = (drOpen ? 1 : 0) + (pcOpen ? 1 : 0);
+    bar.setAttribute('data-shown', pcOpen ? 'true' : 'false');
     const lbl = bar.querySelector('#shellDrawerCount');
-    if (lbl) lbl.textContent = count ? `${count} pane${count > 1 ? 's' : ''}` : '';
+    if (lbl) lbl.textContent = pcOpen ? '1 pane' : '';
   }
 
   function watchDrawers() {

@@ -46,6 +46,7 @@
   --rail-w: 56px;
   --inspector-w: 320px;
   --drawer-h: 380px;
+  --dr-panel-w: 460px;   /* DR Explorer left side-panel width (drag-resizable) */
 }
 
 [data-theme="dark"] {
@@ -1477,46 +1478,45 @@ body[data-theme="dark"] .equity-status.text-danger { color: #ff8580; }
    and clean separators.
    ============================================================ */
 
-/* DR offcanvas — reposition as a bottom drawer. When the parallel-coords
-   panel is also visible, DR takes the right half so they sit side-by-side
-   like the design's AnalyticsDrawer. */
+/* DR Explorer — docked as a LEFT vertical side-panel (mirrors the inspector,
+   which docks right). Sits just right of the rail, spans from below the topbar
+   to the bottom of the viewport, and scrolls its whole body top→bottom. Its
+   width is drag-resizable via --dr-panel-w (grip on the right edge). It floats
+   over the map's left strip; the bottom-left legend is shifted right to clear
+   it (see the .shell-legend rule below) so it never covers it. */
 #drOffcanvas {
-  top: auto !important;
-  right: 0 !important;
-  bottom: 0 !important;
+  top: var(--topbar-h, 52px) !important;
   left: var(--rail-w, 56px) !important;
-  width: auto !important;
-  height: var(--drawer-h, 380px) !important;
-  max-height: calc(100vh - var(--topbar-h, 52px) - 80px) !important;
+  right: auto !important;
+  bottom: 0 !important;
+  width: var(--dr-panel-w, 460px) !important;
+  height: auto !important;
+  max-height: none !important;
   background: var(--surface) !important;
   color: var(--ink) !important;
-  border-top: 1px solid var(--line) !important;
-  border-right: 0 !important;
+  border-top: 0 !important;
+  border-right: 1px solid var(--line) !important;
   border-left: 0 !important;
   border-bottom: 0 !important;
-  border-radius: 12px 12px 0 0 !important;
-  box-shadow: 0 -4px 16px rgba(28, 25, 22, 0.06) !important;
+  border-radius: 0 !important;
+  box-shadow: 4px 0 16px rgba(28, 25, 22, 0.08) !important;
   font-family: var(--font-sans) !important;
-  /* Slide animation (Bootstrap drives it via transform on .show). */
-  transform: translateY(100%) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  /* Slide in from the left (Bootstrap toggles .show). */
+  transform: translateX(-100%) !important;
   transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
-  z-index: 1055 !important;
+  /* Above map + rail (1040); the shell-legend is raised above this so it
+     stays clickable if they ever visually overlap. */
+  z-index: 1042 !important;
 }
 #drOffcanvas.show {
-  transform: translateY(0) !important;
+  transform: translateX(0) !important;
 }
-body[data-inspector-open="true"] #drOffcanvas {
-  right: var(--inspector-w, 320px) !important;
-}
-/* Side-by-side split: when parallel coords is also open, PC takes the
-   left ~60% (its long horizontal axes need room) and DR the right ~40%
-   (DR has its own internal grid that splits scatter ↔ explanation). */
-body[data-pc-open="true"] #drOffcanvas {
-  left: calc(var(--rail-w, 56px) + (100vw - var(--rail-w, 56px)) * 0.6) !important;
-}
-body[data-pc-open="true"][data-inspector-open="true"] #drOffcanvas {
-  left: calc(var(--rail-w, 56px) + (100vw - var(--rail-w, 56px) - var(--inspector-w, 320px)) * 0.6) !important;
-}
+/* The DR panel stays full-height on the left even when the Parallel-Coords
+   bottom drawer is open — PC starts to the RIGHT of it (see the
+   #parallelCoordsPanel rule below), so the two sit side-by-side without
+   overlapping and without leaving an empty gap under the DR panel. */
 
 /* DR offcanvas pane chrome — collapsed to the design's compact pane-header
    (icon + title + sub + close icon). Locked to the same fixed height as
@@ -1569,75 +1569,45 @@ body[data-pc-open="true"][data-inspector-open="true"] #drOffcanvas {
      [.dr-plot-col] toolbar → scatter → feature bar → engine bar
      [.dr-explain-col.dr-explain-stacked] scrollable explanation column
    ============================================================ */
+/* The body is the single vertical scroll container for the whole panel. */
 #drOffcanvas .offcanvas-body[data-fave-design="dr"] {
   padding: 0 !important;
-  overflow: hidden !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
 }
-/* Two-column layout: scatter on the left (min 300px, ~40% of pane),
-   explanation column on the right (min 450px, ~60%) so the
-   Stats/Model + Top-features sections actually have room. The
-   explanation column is always wider than the scatter. */
-.dr-explorer {
-  display: grid;
-  grid-template-columns: minmax(300px, 1fr) minmax(450px, 1.5fr);
-  grid-template-rows: 100%;
-  height: 100%;
-  overflow: hidden;
+/* Single-column vertical stack (toolbar → scatter → feature bar → engine bar,
+   then the explanation column below), so the panel reads top→bottom like the
+   inspector. The old side-by-side grid / .dr-explorer-stacked split-pane
+   variants are collapsed into this one layout regardless of the PC state. */
+#drOffcanvas .dr-explorer,
+#drOffcanvas .dr-explorer.dr-explorer-stacked {
+  display: flex !important;
+  flex-direction: column !important;
+  grid-template-columns: none !important;
+  height: auto !important;
+  overflow: visible !important;
 }
-.dr-explorer .dr-plot-col,
-.dr-explorer .dr-explain-col {
-  min-height: 0;
-  height: 100%;
-}
-.dr-explorer.dr-explorer-stacked {
-  display: flex;
-  flex-direction: column;
-  grid-template-columns: none;
-  height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-.dr-explorer-stacked .dr-plot-col {
-  border-right: none;
+#drOffcanvas .dr-explorer .dr-plot-col {
+  height: auto !important;
+  min-height: 0 !important;
+  border-right: none !important;
   border-bottom: 1px solid var(--line);
-  flex-shrink: 0;
+  overflow: visible !important;
+  flex: none !important;
 }
-.dr-explorer-stacked .dr-scatter {
-  height: 280px;
-  flex: none;
+#drOffcanvas .dr-explorer .dr-scatter {
+  height: 300px !important;
+  flex: none !important;
 }
-.dr-explorer-stacked .dr-explain-col {
-  overflow: visible;
-  flex-shrink: 0;
-}
-
-/* When DR is alone in the drawer (no Parallel Coords pane open) the
-   stacked layout would force the scatter to be very wide and short,
-   which the user reports as "skewed horizontally". Switch back to the
-   design's default grid layout: scatter takes 1fr on the left, the
-   scrollable explanation column is 380px on the right — same as
-   panels.jsx default `.dr-explorer { grid-template-columns: 1fr 380px; }`. */
-body[data-pc-open="false"] #drOffcanvas .dr-explorer.dr-explorer-stacked {
-  display: grid !important;
-  grid-template-columns: 1fr 380px !important;
-  overflow: hidden !important;
-}
-body[data-pc-open="false"] #drOffcanvas .dr-explorer.dr-explorer-stacked .dr-plot-col {
-  border-right: 1px solid var(--line);
-  border-bottom: 0;
-  flex-shrink: 1;
-  min-height: 0;
-  height: 100%;
-}
-body[data-pc-open="false"] #drOffcanvas .dr-explorer.dr-explorer-stacked .dr-scatter {
-  height: auto;
-  flex: 1;
-  min-height: 200px;
-}
-body[data-pc-open="false"] #drOffcanvas .dr-explorer.dr-explorer-stacked .dr-explain-col {
-  overflow-y: auto;
-  height: 100%;
-  flex-shrink: 0;
+#drOffcanvas .dr-explorer .dr-explain-col {
+  height: auto !important;
+  overflow: visible !important;
+  flex: none !important;
+  border-top: 1px solid var(--line);
+  /* Clear the bottom-left legend when it sits alongside the panel foot. */
+  padding-bottom: 24px;
 }
 .dr-plot-col {
   display: flex;
@@ -2067,12 +2037,10 @@ body[data-pc-open="false"] #drOffcanvas .dr-explorer.dr-explorer-stacked .dr-exp
 body[data-inspector-open="true"] #parallelCoordsPanel {
   right: var(--inspector-w, 320px) !important;
 }
-/* Side-by-side: when DR is also open, PC takes the left ~60%. */
+/* DR is now a LEFT side-panel; when it's open the PC bottom drawer starts to
+   the right of it so the two don't overlap in the lower-left corner. */
 body[data-dr-open="true"] #parallelCoordsPanel {
-  right: calc((100vw - var(--rail-w, 56px)) * 0.4) !important;
-}
-body[data-dr-open="true"][data-inspector-open="true"] #parallelCoordsPanel {
-  right: calc(var(--inspector-w, 320px) + (100vw - var(--rail-w, 56px) - var(--inspector-w, 320px)) * 0.4) !important;
+  left: calc(var(--rail-w, 56px) + var(--dr-panel-w, 460px)) !important;
 }
 #parallelCoordsPanel * {
   font-family: var(--font-sans) !important;
@@ -2092,16 +2060,23 @@ body[data-dr-open="true"][data-inspector-open="true"] #parallelCoordsPanel {
    most evergreen browsers but the explicit body class is bulletproof
    and lets these buttons (which are critical app controls) always
    stay reachable. */
-body[data-dr-open="true"] .shell-travel,
+/* PC is a bottom drawer → push the bottom controls UP above it. The DR
+   Explorer is now a LEFT side-panel, so it does NOT push the bottom-center
+   travel strip or bottom-right zoom up (they sit clear of a 460px left panel). */
 body[data-pc-open="true"] .shell-travel {
   bottom: calc(var(--drawer-h, 380px) + 12px) !important;
 }
-body[data-dr-open="true"] .shell-legend,
-body[data-pc-open="true"] .shell-legend {
+body[data-pc-open="true"] .shell-zoom {
   bottom: calc(var(--drawer-h, 380px) + 12px) !important;
 }
-body[data-dr-open="true"] .shell-zoom,
-body[data-pc-open="true"] .shell-zoom {
+/* The DR left panel overlaps the bottom-left legend horizontally, so shift the
+   legend RIGHT to sit just past the panel's right edge — it's never covered and
+   follows the panel when it's widened. PC (bottom drawer) still pushes it UP;
+   with both open, the legend shifts right AND up. */
+body[data-dr-open="true"] .shell-legend {
+  left: calc(var(--rail-w, 56px) + var(--dr-panel-w, 460px) + 16px) !important;
+}
+body[data-pc-open="true"] .shell-legend {
   bottom: calc(var(--drawer-h, 380px) + 12px) !important;
 }
 /* Travel-mode strip must always sit above the drawer chrome. */
@@ -2137,6 +2112,35 @@ body[data-pc-open="true"] .shell-zoom {
   height: 4px;
 }
 
+/* DR left side-panel right-edge resize handle. Dragging it widens the panel
+   to the right by updating --dr-panel-w (installed by shell.js). */
+#drOffcanvas .dr-panel-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  user-select: none;
+}
+#drOffcanvas .dr-panel-resize .grip {
+  width: 3px;
+  height: 32px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  transition: background 0.15s, width 0.15s;
+}
+#drOffcanvas .dr-panel-resize:hover .grip,
+#drOffcanvas .dr-panel-resize[data-dragging="true"] .grip {
+  background: var(--accent);
+  width: 4px;
+}
+
 /* Drawer toolbar that floats just above the active bottom drawer with
    a single collapse/expand toggle and a "X panes" indicator. Only shows
    while at least one drawer is open. */
@@ -2161,6 +2165,11 @@ body[data-pc-open="true"] .shell-zoom {
 }
 body[data-inspector-open="true"] .shell-drawer-bar {
   right: var(--inspector-w, 320px);
+}
+/* When the DR left side-panel is open, the drawer bar (which belongs to the PC
+   bottom drawer) starts at the panel's right edge so it doesn't cut across it. */
+body[data-dr-open="true"] .shell-drawer-bar {
+  left: calc(var(--rail-w, 56px) + var(--dr-panel-w, 460px)) !important;
 }
 .shell-drawer-bar[data-shown="true"] { display: flex; }
 .shell-drawer-bar .icon-btn {
@@ -2190,20 +2199,16 @@ body[data-drawer-collapsed="true"] .shell-drawer-bar #shellDrawerCollapse svg {
   transform: rotate(180deg);
 }
 
-/* Collapsed state: drawers slide partly off-screen leaving only the
-   drawer bar visible at the bottom edge. */
-body[data-drawer-collapsed="true"] #drOffcanvas.show,
+/* Collapsed state applies only to the PC bottom drawer now — the DR Explorer
+   is a left side-panel and is closed via its own X, not the drawer bar. */
 body[data-drawer-collapsed="true"] #parallelCoordsPanel:not(.d-none) {
   transform: translateY(calc(100% - 8px)) !important;
 }
 body[data-drawer-collapsed="true"] .shell-drawer-bar {
   bottom: 0;
 }
-body[data-drawer-collapsed="true"][data-dr-open="true"] .shell-travel,
 body[data-drawer-collapsed="true"][data-pc-open="true"] .shell-travel,
-body[data-drawer-collapsed="true"][data-dr-open="true"] .shell-legend,
 body[data-drawer-collapsed="true"][data-pc-open="true"] .shell-legend,
-body[data-drawer-collapsed="true"][data-dr-open="true"] .shell-zoom,
 body[data-drawer-collapsed="true"][data-pc-open="true"] .shell-zoom {
   bottom: 40px !important;
 }
