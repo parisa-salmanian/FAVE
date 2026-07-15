@@ -877,28 +877,42 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     const distReady = (typeof routingReady === 'function' && routingReady()
       && typeof rawDistsForFeature === 'function' && typeof h3LatLngToCell === 'function'
       && h3lib && mezoRes != null && baseCityFC?.features?.length);
-    const distAgg = new Map(); // hex -> { s:{key:sum}, c:{key:count} }
-    if (distReady) {
-      const distKeys = Object.values(DR_DIST_KEY_BY_CAT);
-      for (const f of baseCityFC.features) {
-        const rd = rawDistsForFeature(f);
-        let lon = NaN, lat = NaN;
-        try {
-          const g = f.geometry; let cs = null;
-          if (g) { if (g.type === 'Polygon') cs = g.coordinates[0]; else if (g.type === 'MultiPolygon') cs = g.coordinates[0] && g.coordinates[0][0]; }
-          if (cs && cs.length) { let x = 0, y = 0, n = 0; for (const c of cs) { x += c[0]; y += c[1]; n++; } if (n) { lon = x / n; lat = y / n; } }
-        } catch (_) {}
-        if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
-        let hx = null;
-        try { hx = h3LatLngToCell(h3lib, lat, lon, mezoRes); } catch (_) {}
-        if (!hx) continue;
-        let a = distAgg.get(hx);
-        if (!a) { a = { s: {}, c: {} }; distAgg.set(hx, a); }
-        for (const k of distKeys) {
-          const v = Number(rd[k]);
-          if (Number.isFinite(v)) { a.s[k] = (a.s[k] || 0) + v; a.c[k] = (a.c[k] || 0) + 1; }
+    // Cache the building→hex distance aggregation: it depends only on the city +
+    // travel mode + mezo resolution, NOT on the DR colour or re-runs. Recomputing
+    // it every Run looped over ALL ~60k buildings (routing + centroid + h3) on the
+    // main thread and froze the tab ("page unresponsive"). Memoise it on drPlot.
+    const _travelMode = document.getElementById('fairnessTravelMode')?.value || 'walking';
+    const _cityTok = (typeof lastCityKeyLoaded !== 'undefined' && lastCityKeyLoaded) ? lastCityKeyLoaded : '';
+    const _distAggKey = distReady ? `${_cityTok}|${_travelMode}|${mezoRes}|${baseCityFC.features.length}` : null;
+    let distAgg; // hex -> { s:{key:sum}, c:{key:count} }
+    if (distReady && drPlot.__mezoDistAggKey === _distAggKey && drPlot.__mezoDistAgg) {
+      distAgg = drPlot.__mezoDistAgg;
+    } else {
+      distAgg = new Map();
+      if (distReady) {
+        const distKeys = Object.values(DR_DIST_KEY_BY_CAT);
+        for (const f of baseCityFC.features) {
+          const rd = rawDistsForFeature(f);
+          let lon = NaN, lat = NaN;
+          try {
+            const g = f.geometry; let cs = null;
+            if (g) { if (g.type === 'Polygon') cs = g.coordinates[0]; else if (g.type === 'MultiPolygon') cs = g.coordinates[0] && g.coordinates[0][0]; }
+            if (cs && cs.length) { let x = 0, y = 0, n = 0; for (const c of cs) { x += c[0]; y += c[1]; n++; } if (n) { lon = x / n; lat = y / n; } }
+          } catch (_) {}
+          if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+          let hx = null;
+          try { hx = h3LatLngToCell(h3lib, lat, lon, mezoRes); } catch (_) {}
+          if (!hx) continue;
+          let a = distAgg.get(hx);
+          if (!a) { a = { s: {}, c: {} }; distAgg.set(hx, a); }
+          for (const k of distKeys) {
+            const v = Number(rd[k]);
+            if (Number.isFinite(v)) { a.s[k] = (a.s[k] || 0) + v; a.c[k] = (a.c[k] || 0) + 1; }
+          }
         }
       }
+      drPlot.__mezoDistAggKey = _distAggKey;
+      drPlot.__mezoDistAgg = distAgg;
     }
     const cellDists = (cell) => {
       const out = {};

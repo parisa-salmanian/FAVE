@@ -229,19 +229,31 @@ function access2sfcaRowsInPolygon(feature) {
 
 // Baked rows whose centroid falls in the given H3 cell (resolution read from the
 // cell id, so it works at any mezo zoom). Uses the global h3-js (v3 API).
+// Cache: hexId -> [rowIdx] for the current city/mode (ACCESS2SFCA.sig) + h3 res.
+// Built once by a single pass over all coords. Without it, every call rescanned
+// all ~50k coords with an h3 conversion, and the mezo DR calls this once PER CELL
+// → tens of millions of conversions per Run (froze the tab, "page unresponsive").
+// With the index each call is an O(1) Map lookup and the pass runs once per city.
+let _a2sHexIndex = null;
 function access2sfcaRowsInHex(hexId) {
   if (!ACCESS2SFCA || !hexId || typeof h3 === 'undefined') return [];
   const res = (typeof h3.h3GetResolution === 'function') ? h3.h3GetResolution(hexId) : null;
   if (res == null) return [];
-  const out = [];
-  const coords = ACCESS2SFCA.coords;
   const toCell = h3.geoToH3 || h3.latLngToCell;
   if (typeof toCell !== 'function') return [];
-  for (let i = 0; i < coords.length; i++) {
-    const c = coords[i];
-    if (toCell(c[1], c[0], res) === hexId) out.push(i);
+  if (!_a2sHexIndex || _a2sHexIndex.sig !== ACCESS2SFCA.sig || _a2sHexIndex.res !== res) {
+    const map = new Map();
+    const coords = ACCESS2SFCA.coords;
+    for (let i = 0; i < coords.length; i++) {
+      const c = coords[i];
+      const h = toCell(c[1], c[0], res);
+      let arr = map.get(h);
+      if (!arr) { arr = []; map.set(h, arr); }
+      arr.push(i);
+    }
+    _a2sHexIndex = { sig: ACCESS2SFCA.sig, res, map };
   }
-  return out;
+  return _a2sHexIndex.map.get(hexId) || [];
 }
 
 function access2sfcaAggregateForPolygon(feature) {
