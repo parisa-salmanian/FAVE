@@ -16,6 +16,22 @@ const DR_DEMO_COLOR_BY = {
   child:         { key: 'demSynChild',    label: 'Child share',      dir: 'Fewer → More children' }
 };
 
+// REAL SCB DESO *pairwise* overlays — a fixed list of planner-relevant deprivation
+// intersections. Each side reads the same measured row field the single real-DESO
+// options use (childReal/elderReal/incomeReal/higherEdReal) and is normalised into
+// its FLAGGED tail (0..1); `invert:true` means the LOW end is flagged (low income,
+// low education). The point's colour is the PRODUCT of the two tail memberships, so
+// a cell lights up only when it sits in BOTH tails (e.g. low income AND high
+// elderly); strong on just one → fades. Measured data, colour-only (never fed into
+// the embedding, so no tautology). Rows missing either field are hidden.
+const DR_DEMO_COMBOS = {
+  combo_incelder: { a: { get: (r) => r.incomeReal,   invert: true }, b: { get: (r) => r.elderReal, invert: false }, label: 'Low income + High elderly',   dir: 'Bright = low income AND more elderly' },
+  combo_incchild: { a: { get: (r) => r.incomeReal,   invert: true }, b: { get: (r) => r.childReal, invert: false }, label: 'Low income + High children',   dir: 'Bright = low income AND more children' },
+  combo_incedu:   { a: { get: (r) => r.incomeReal,   invert: true }, b: { get: (r) => r.higherEdReal, invert: true }, label: 'Low income + Low education',   dir: 'Bright = low income AND low education' },
+  combo_eduelder: { a: { get: (r) => r.higherEdReal, invert: true }, b: { get: (r) => r.elderReal, invert: false }, label: 'Low education + High elderly', dir: 'Bright = low education AND more elderly' },
+  combo_educhild: { a: { get: (r) => r.higherEdReal, invert: true }, b: { get: (r) => r.childReal, invert: false }, label: 'Low education + High children', dir: 'Bright = low education AND more children' }
+};
+
 /* ---- Library detection ---- */
 function hasUMAPGlobal() {
   if (window.UMAP && typeof window.UMAP === 'function') return true;
@@ -224,6 +240,28 @@ function resizeDRCanvas() {
 function rampColor01(v) {
   const [r, g, b] = colorFromScore(v);
   return [r, g, b, 255];
+}
+// Sequential, single-hue ramp for DEMOGRAPHIC / socioeconomic colour-by modes
+// (child/elder share, income, education, need…). Deliberately NOT the
+// green↔purple fairness ramp: these quantities carry no "fair/unfair" valence,
+// and reusing the fairness colours made planners read "more children here" as
+// "more unfair here". Light cream → deep orange = MORE of the highlighted
+// attribute (for the inverted low-income / low-education modes the caller flips
+// the input so the DEPRIVED end is the dark, attention-grabbing colour).
+function demoRampColor01(v) {
+  const t = clamp01(v);
+  if (typeof d3 !== 'undefined' && d3.interpolateOranges && d3.color) {
+    // Skip the near-white low end so low values are still visible on the plot.
+    const c = d3.color(d3.interpolateOranges(0.15 + 0.8 * t));
+    if (c) return [Math.round(c.r), Math.round(c.g), Math.round(c.b), 255];
+  }
+  const lo = [255, 245, 235], hi = [166, 54, 3];   // cream → deep orange fallback
+  return [
+    Math.round(lo[0] + (hi[0] - lo[0]) * t),
+    Math.round(lo[1] + (hi[1] - lo[1]) * t),
+    Math.round(lo[2] + (hi[2] - lo[2]) * t),
+    255
+  ];
 }
 function grey(a=180){ return [a,a,a,255]; }
 
@@ -568,7 +606,7 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       const span = (hi - lo) || 1;
       colors = pickedRows.map((r) => {
         const v = get(r);
-        return Number.isFinite(v) ? rampColor01(clamp01((v - lo) / span)) : grey(120);
+        return Number.isFinite(v) ? demoRampColor01(clamp01((v - lo) / span)) : grey(120);
       });
       const label = colorBy === 'need' ? 'SCB need (deprivation)' : 'SCB median income';
       const dir = colorBy === 'need' ? 'Low need → High need' : 'Low income → High income';
@@ -583,6 +621,7 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       // the ramp spans only the real child range for a crisp family gradient.
       const get = (r) => (r.childReal == null ? NaN : Number(r.childReal));
       const vals = pickedRows.map(get).filter(Number.isFinite);
+      const noData = vals.length === 0;   // grey (not transparent) if nothing measured
       const [lo, hi] = robustLoHi(vals);
       const span = (hi - lo) || 1;
       colors = pickedRows.map((r) => {
@@ -592,9 +631,61 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         // no real child overlay (rural cells outside DESO coverage); hiding them
         // keeps the child gradient clean. They stay in the sample (UMAP layout is
         // unchanged); only the render is suppressed for this colour mode.
-        return Number.isFinite(v) ? rampColor01(clamp01((v - lo) / span)) : [0, 0, 0, 0];
+        return Number.isFinite(v) ? demoRampColor01(clamp01((v - lo) / span)) : (noData ? grey(150) : [0, 0, 0, 0]);
       });
       updateLegend('childreal', 'Legend (Child share — SCB DESO, real)', 'Fewer → More children');
+    } else if (colorBy === 'elderreal' || colorBy === 'incomelowreal'
+            || colorBy === 'incomehighreal' || colorBy === 'lowedureal') {
+      // REAL SCB DESO socioeconomic overlays (measured, not synthetic). These
+      // carry NO fairness valence, so they use the neutral demographic ramp
+      // (light → dark = MORE of the highlighted attribute), never the green↔purple
+      // fairness ramp. "Low income" / "low education" INVERT the axis so the
+      // DEPRIVED end is the dark, attention-grabbing colour — the planner's
+      // natural starting point when hunting an equity problem. Robust percentile
+      // clamp; rows with no measured DESO value are hidden (transparent) so
+      // rural cells outside DESO coverage stay neutral instead of reading as "0".
+      const spec = {
+        elderreal:      { get: (r) => r.elderReal,    invert: false, label: 'Elderly share — SCB DESO (real)',  dir: 'Fewer → More elderly' },
+        incomehighreal: { get: (r) => r.incomeReal,   invert: false, label: 'High income — SCB DESO (real)',     dir: 'Lower → Higher income' },
+        incomelowreal:  { get: (r) => r.incomeReal,   invert: true,  label: 'Low income — SCB DESO (real)',      dir: 'Higher → Lower income (low-income highlighted)' },
+        lowedureal:     { get: (r) => r.higherEdReal, invert: true,  label: 'Low education — SCB DESO (real)',    dir: 'Higher → Lower education (low-education highlighted)' }
+      }[colorBy];
+      const get = (r) => { const v = spec.get(r); return (v == null ? NaN : Number(v)); };
+      const vals = pickedRows.map(get).filter(Number.isFinite);
+      // If NO row has a measured DESO value (e.g. a scale where this demographic
+      // isn't aggregated), fall back to grey so the projection is still VISIBLE
+      // instead of rendering every point transparent (which reads as "empty/bug").
+      const noData = vals.length === 0;
+      const [lo, hi] = robustLoHi(vals);
+      const span = (hi - lo) || 1;
+      colors = pickedRows.map((r) => {
+        const v = get(r);
+        if (!Number.isFinite(v)) return noData ? grey(150) : [0, 0, 0, 0];
+        let t = clamp01((v - lo) / span);
+        if (spec.invert) t = 1 - t;
+        return demoRampColor01(t);
+      });
+      updateLegend(colorBy, `Legend (${spec.label})`, spec.dir);
+    } else if (DR_DEMO_COMBOS[colorBy]) {
+      // REAL SCB DESO pairwise intersection (e.g. low income + high elderly). Each
+      // side is normalised into its flagged tail (robust clamp + optional invert);
+      // the colour is the PRODUCT of the two tail memberships, so only cells in BOTH
+      // tails light up. Rows missing either measured field are hidden (transparent),
+      // or grey if a whole side is unavailable at this scale (so it never reads empty).
+      const spec = DR_DEMO_COMBOS[colorBy];
+      const raw = (side, r) => { const v = side.get(r); return (v == null ? NaN : Number(v)); };
+      const valsA = pickedRows.map((r) => raw(spec.a, r)).filter(Number.isFinite);
+      const valsB = pickedRows.map((r) => raw(spec.b, r)).filter(Number.isFinite);
+      const noData = valsA.length === 0 || valsB.length === 0;
+      const [loA, hiA] = robustLoHi(valsA); const spanA = (hiA - loA) || 1;
+      const [loB, hiB] = robustLoHi(valsB); const spanB = (hiB - loB) || 1;
+      const tail = (side, v, lo, span) => { let t = clamp01((v - lo) / span); return side.invert ? 1 - t : t; };
+      colors = pickedRows.map((r) => {
+        const va = raw(spec.a, r), vb = raw(spec.b, r);
+        if (!Number.isFinite(va) || !Number.isFinite(vb)) return noData ? grey(150) : [0, 0, 0, 0];
+        return demoRampColor01(tail(spec.a, va, loA, spanA) * tail(spec.b, vb, loB, spanB));
+      });
+      updateLegend(colorBy, `Legend (${spec.label} — SCB DESO, real)`, spec.dir);
     } else if (DR_DEMO_COLOR_BY[colorBy]) {
       // Color by a synthetic per-building demographic share so each UMAP cluster
       // can be NAMED (e.g. "this band is elderly-heavy"). Min–max normalised over
@@ -607,7 +698,7 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       const span = (hi - lo) || 1;
       colors = pickedRows.map((r) => {
         const v = get(r);
-        return Number.isFinite(v) ? rampColor01(clamp01((v - lo) / span)) : grey(120);
+        return Number.isFinite(v) ? demoRampColor01(clamp01((v - lo) / span)) : grey(120);
       });
       updateLegend(colorBy, `Legend (${spec.label})`, spec.dir);
     } else if (colorBy === 'year') {
@@ -700,7 +791,10 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         focused: Number(props.__score),
         // Real DESO child share aggregated to the district (color-only, like the
         // building path) — lets the macro DR colour districts by child share.
-        childReal: Number.isFinite(props.__childReal) ? props.__childReal : null,
+        childReal:    Number.isFinite(props.__childReal)    ? props.__childReal    : null,
+        elderReal:    Number.isFinite(props.__elderReal)    ? props.__elderReal    : null,
+        incomeReal:   Number.isFinite(props.__incomeReal)   ? props.__incomeReal   : null,
+        higherEdReal: Number.isFinite(props.__higherEdReal) ? props.__higherEdReal : null,
         grocery: Number(byCat.grocery),
         hospital: Number(byCat.hospital),
         primary: Number(byCat.school_primary),
@@ -824,7 +918,10 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         focused: Number(cell?.__score),
         // Real DESO child share aggregated to the cell (color-only, like the
         // building/district paths) — lets the mezo DR colour cells by child share.
-        childReal: Number.isFinite(cell?.__childReal) ? cell.__childReal : null,
+        childReal:    Number.isFinite(cell?.__childReal)    ? cell.__childReal    : null,
+        elderReal:    Number.isFinite(cell?.__elderReal)    ? cell.__elderReal    : null,
+        incomeReal:   Number.isFinite(cell?.__incomeReal)   ? cell.__incomeReal   : null,
+        higherEdReal: Number.isFinite(cell?.__higherEdReal) ? cell.__higherEdReal : null,
         grocery: Number(byCat.grocery),
         hospital: Number(byCat.hospital),
         primary: Number(byCat.school_primary),
@@ -939,16 +1036,28 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       const v = Number(props[sf.prop]);
       row[sf.key] = Number.isFinite(v) ? (sf.log ? Math.log1p(Math.max(0, v)) : v) : null;
     });
-    // REAL SCB child share of the building's DESO (color-only — deliberately NOT
-    // added to buildingLabels, so it never enters the embedding/EBM matrix and
-    // selecting high-child areas can't trivially "explain itself"). This is the
-    // measured DESO value, not the synthetic per-building spread (__synthChild).
-    let childReal = NaN;
+    // REAL SCB DESO socioeconomics for the building's DESO (color-only —
+    // deliberately NOT added to buildingLabels, so they never enter the
+    // embedding/EBM matrix and selecting e.g. high-child areas can't trivially
+    // "explain itself"). Measured DESO values, not the synthetic per-building
+    // spread (__synthChild etc.). One point-in-polygon lookup, reused for all.
+    let childReal = NaN, elderReal = NaN, incomeReal = NaN, higherEdReal = NaN;
     if (typeof epiDesoProps === 'function' && props.__deso != null) {
       const dp = epiDesoProps(props.__deso);
-      childReal = dp ? Number(dp.child_frac) : NaN;
+      if (dp) {
+        // null → NaN (not Number(null)=0): some DESOs have no higher_ed value,
+        // and a 0 would render as "max deprivation" instead of no-data/hidden.
+        const num = (x) => (x == null ? NaN : Number(x));
+        childReal    = num(dp.child_frac);
+        elderReal    = num(dp.elder_frac);
+        incomeReal   = num(dp.income);
+        higherEdReal = num(dp.higher_ed);
+      }
     }
-    row.childReal = Number.isFinite(childReal) ? childReal : null;
+    row.childReal    = Number.isFinite(childReal)    ? childReal    : null;
+    row.elderReal    = Number.isFinite(elderReal)    ? elderReal    : null;
+    row.incomeReal   = Number.isFinite(incomeReal)   ? incomeReal   : null;
+    row.higherEdReal = Number.isFinite(higherEdReal) ? higherEdReal : null;
     // RAW network distance (m) to nearest of each service — the distance model.
     const rd = rawDistsForFeature(f);
     Object.values(DR_DIST_KEY_BY_CAT).forEach((k) => {
