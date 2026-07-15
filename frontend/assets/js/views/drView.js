@@ -4898,7 +4898,30 @@ function drawEngineBarChart(engineData) {
 
  const top = engineData.ranked.slice(0, 30); // show full ranking (all services, no silent cap)
   const width = enginePlotEl.clientWidth || 260;
-  const margin = { top: 26, right: 12, bottom: 52, left: 170 };
+  // Size the left gutter to the LONGEST label so full names show. Coupled
+  // interaction terms ("A × B", enabled once pairwise interactions were turned
+  // on) overran the old fixed 170px margin and were clipped at the SVG's left
+  // edge. Measure with a canvas, cap the gutter so bars keep room, and shrink
+  // the label font only if a label is still too long for the cap.
+  const LABEL_FS_MAX = 10;
+  let labelFont = LABEL_FS_MAX;
+  const _measCtx = document.createElement('canvas').getContext('2d');
+  const measureMaxLabel = (fs) => {
+    _measCtx.font = fs + 'px sans-serif';
+    let m = 0;
+    for (const f of top) { const w = _measCtx.measureText(String(f.label)).width; if (w > m) m = w; }
+    return m;
+  };
+  const leftCap = Math.max(150, Math.min(250, Math.round(width * 0.6)));
+  let maxLabelW = measureMaxLabel(labelFont);
+  if (maxLabelW + 12 > leftCap) {
+    labelFont = Math.max(8, Math.floor(LABEL_FS_MAX * (leftCap - 12) / maxLabelW));
+    maxLabelW = measureMaxLabel(labelFont);
+  }
+  const margin = {
+    top: 26, right: 12, bottom: 52,
+    left: Math.min(leftCap, Math.max(120, Math.ceil(maxLabelW) + 12))
+  };
   const minInnerHeight = top.length * 24;
   const height = Math.max(
     enginePlotEl.clientHeight || 0,
@@ -4908,7 +4931,8 @@ function drawEngineBarChart(engineData) {
   const svg = root.append('svg')
     .attr('width', width)
     .attr('height', height)
-    .style('display', 'block');
+    .style('display', 'block')
+    .style('overflow', 'visible');
 
   const xMax = d3.max(top, f => f.score) || 0.01;
   const x = d3.scaleLinear()
@@ -4976,7 +5000,7 @@ function drawEngineBarChart(engineData) {
     .attr('y', d => y(d.label) + y.bandwidth() / 2)
     .attr('dy', '0.35em')
     .attr('text-anchor', 'end')
-    .attr('font-size', 10)
+    .attr('font-size', labelFont)
     .text(d => d.label);
 
   // small title line
