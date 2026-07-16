@@ -382,7 +382,25 @@
       if (!drFeatureUniverse.length && typeof globalThis.collectDRData === 'function') {
         try { globalThis.collectDRData(DR_UNIVERSE_CAP, true, 'none', 0, DR_UNIVERSE_CAP); } catch (_) { /* needs data loaded */ }
       }
-      const cfgs = drFeatureUniverse.slice();
+      // Hide the synthetic "(dem)" demographic columns that DUPLICATE a real
+      // "(scb)" twin (same base label). "(scb)" is the measured SCB value; the
+      // "(dem)" spread is just a synthetic per-building version of the SAME
+      // quantity (at building scale they even read the identical __synth* prop),
+      // so offering both only clutters the picker — keep "(scb)". Växjö-only
+      // "(dem)" fields with NO "(scb)" twin (employment, students, …) are kept.
+      const cfgsAll = drFeatureUniverse.slice();
+      const baseOfLabel = (label) => String(label || '')
+        .replace(/\s*\((?:dem|scb)\)\s*$/i, '').trim().toLowerCase();
+      const scbBases = new Set(
+        cfgsAll.filter(c => /\(scb\)\s*$/i.test(c.label)).map(c => baseOfLabel(c.label))
+      );
+      const cfgs = cfgsAll.filter(c => {
+        if (/\(dem\)\s*$/i.test(c.label) && scbBases.has(baseOfLabel(c.label))) {
+          drCustomKeys.delete(c.key);   // also drop from any lingering selection
+          return false;                 // hide the redundant "(dem)" duplicate
+        }
+        return true;
+      });
       if (!cfgs.length) { list.innerHTML = '<div class="tiny muted p-2">Run DR once to populate the field list.</div>'; return; }
       drLabelToKey = new Map();
       for (const c of cfgs) drLabelToKey.set(c.label, c.key);
