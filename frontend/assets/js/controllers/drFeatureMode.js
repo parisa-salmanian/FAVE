@@ -92,6 +92,10 @@
   let drUniverseSig = '';             // signature of the universe key-set (rebuild on change)
   let drPickerBuilding = false;       // reentrancy guard (dry-capture triggers the wrapper)
   let drCustomInit = false;           // seeded all-on once? (so "Deselect all" stays empty)
+  // Buildings to sample when capturing the column universe for the Custom picker.
+  // The universe only depends on which dimension GROUPS are populated, so a small
+  // strided subsample suffices and keeps the picker instant on first open.
+  const DR_UNIVERSE_CAP = 1000;
 
   // SCB profile features carry a '(scb)' label suffix + a scb* key. Detect from a
   // label OR a bare key (the contrastive path only has keys), like isSupplyFeature.
@@ -368,13 +372,18 @@
     if (!list) return;
     drPickerBuilding = true;
     try {
-      // Populate the universe on first open via a dry collectDRData (no UMAP; the
-      // wrapper captures the column set as a side effect).
+      // The picker lists the live matrix's column universe. If we don't have it
+      // yet, capture it with a dry collectDRData — but over a small strided
+      // SUBSAMPLE (DR_UNIVERSE_CAP), which is all it takes to learn which
+      // dimension groups are populated. That's a few tens of ms (vs ~2s for the
+      // full all-buildings pass), so the picker opens instantly. captureFeature-
+      // Universe (called inside collectDRData) fills drFeatureUniverse as a side
+      // effect; drPickerBuilding is already true here so it won't re-enter.
       if (!drFeatureUniverse.length && typeof globalThis.collectDRData === 'function') {
-        try { globalThis.collectDRData(Infinity, true, 'none', 0); } catch (_) { /* needs data loaded */ }
+        try { globalThis.collectDRData(DR_UNIVERSE_CAP, true, 'none', 0, DR_UNIVERSE_CAP); } catch (_) { /* needs data loaded */ }
       }
       const cfgs = drFeatureUniverse.slice();
-      if (!cfgs.length) { list.innerHTML = '<div class="tiny muted">Run DR once to populate the field list.</div>'; return; }
+      if (!cfgs.length) { list.innerHTML = '<div class="tiny muted p-2">Run DR once to populate the field list.</div>'; return; }
       drLabelToKey = new Map();
       for (const c of cfgs) drLabelToKey.set(c.label, c.key);
       // Seed everything ON exactly once (first open) — EXCEPT the supply/mismatch
@@ -504,12 +513,48 @@
     } catch (_) { /* supply is best-effort */ }
   }
 
-  function syncCustomPanelVisibility() {
+  // The custom picker behaves like a DROPDOWN: it floats under the toolbar
+  // (absolute overlay, doesn't push the layout) and can be dismissed without
+  // leaving the Custom feature set. Opening/closing only toggles visibility —
+  // DR_FEATURE_SET stays 'custom' and the picked keys persist, so Run still uses
+  // them while the picker is closed.
+  function positionCustomPanel(panel) {
+    const toolbar = document.querySelector('#drOffcanvas .dr-plot-toolbar');
+    if (toolbar) panel.style.top = toolbar.offsetHeight + 'px';
+  }
+  function isCustomPickerOpen() {
+    const panel = document.getElementById('drCustomPanel');
+    return !!(panel && !panel.hidden);
+  }
+  // The dedicated "Fields ▾" toggle button sits in the toolbar next to the
+  // Features <select>. It only shows while Custom is the active set (nothing to
+  // toggle otherwise) and flips its caret + aria-expanded with the panel state.
+  function updateCustomToggleBtn() {
+    const btn = document.getElementById('drCustomToggle');
+    if (!btn) return;
+    const isCustom = currentFeatureSet() === FS_CUSTOM;
+    btn.hidden = !isCustom;
+    const open = isCustomPickerOpen();
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.dataset.active = open ? 'true' : 'false';
+    btn.textContent = open ? 'Fields ▴' : 'Fields ▾';
+  }
+  function setCustomPickerOpen(open) {
     const panel = document.getElementById('drCustomPanel');
     if (!panel) return;
-    const show = currentFeatureSet() === FS_CUSTOM;
-    panel.hidden = !show;
-    if (show) buildCustomPicker();
+    if (open) {
+      positionCustomPanel(panel);
+      panel.hidden = false;
+      buildCustomPicker();
+    } else {
+      panel.hidden = true;
+    }
+    updateCustomToggleBtn();
+  }
+
+  // Auto-open iff Custom is the active feature set; auto-close for any other set.
+  function syncCustomPanelVisibility() {
+    setCustomPickerOpen(currentFeatureSet() === FS_CUSTOM);
   }
 
   function initModeUI() {
@@ -530,17 +575,13 @@
       globalThis.DR_FEATURE_SET = currentFeatureSet();
       setSel.addEventListener('change', async () => {
         globalThis.DR_FEATURE_SET = currentFeatureSet();
+        const isCustom = currentFeatureSet() === FS_CUSTOM;
         // "All Data" / "Custom" are explore sets → default to NO colouring so the
         // layout is read as clusters (via EBM/Contrastive/PCP), not tinted.
-        if (currentFeatureSet() === FS_ALL_DATA || currentFeatureSet() === FS_CUSTOM) {
+        if (currentFeatureSet() === FS_ALL_DATA || isCustom) {
           const colorSel = document.getElementById('drColorBy');
           if (colorSel && colorSel.value !== 'none') colorSel.value = 'none';
         }
-        // Custom: preload the 2SFCA supply layer first so supply/mismatch columns
-        // are offered in the picker (they start unchecked).
-        if (currentFeatureSet() === FS_CUSTOM) await ensureSupplyForPicker();
-        syncCustomPanelVisibility();   // show/build the picker iff Custom
-        refreshHints();
         // Invalidate cached engine results so EBM/contrastive recompute with the
         // new feature set instead of showing the frozen previous feature list.
         // drPlot is a shared top-level const (not on globalThis).
@@ -549,8 +590,22 @@
           drPlot.engineContrast = null;
           drPlot.engineEBM = null;
         }
-        // Custom: don't auto-run — the user picks fields first, then presses Run.
-        if (currentFeatureSet() === FS_CUSTOM) return;
+        if (isCustom) {
+          // Show + build the picker IMMEDIATELY from the columns already in the
+          // live matrix — do NOT block on the async 2SFCA load (awaiting it here
+          // was the multi-second delay before the panel appeared). Preload supply
+          // in the BACKGROUND; when it lands, rebuild so the supply/mismatch
+          // columns appear (they start unchecked). Custom never auto-runs — the
+          // user picks fields first, then presses Run.
+          syncCustomPanelVisibility();
+          refreshHints();
+          ensureSupplyForPicker().then(() => {
+            if (currentFeatureSet() === FS_CUSTOM) buildCustomPicker();
+          }).catch(() => { /* supply is best-effort */ });
+          return;
+        }
+        syncCustomPanelVisibility();   // hide the picker for non-custom sets
+        refreshHints();
         await rerunDRIfPossible();
         if (typeof calculateEnginePlot === 'function'
             && typeof drPlot !== 'undefined' && drPlot?.lastSelectionIdx?.length) {
@@ -570,6 +625,43 @@
     if (clrAllBtn && clrAllBtn.dataset.bound !== '1') {
       clrAllBtn.addEventListener('click', () => setAllCustom(false));
       clrAllBtn.dataset.bound = '1';
+    }
+
+    // Dropdown dismissal — the picker closes without changing the feature set.
+    // (1) the × button:
+    const closeBtn = document.getElementById('drCustomClose');
+    if (closeBtn && closeBtn.dataset.bound !== '1') {
+      closeBtn.addEventListener('click', () => setCustomPickerOpen(false));
+      closeBtn.dataset.bound = '1';
+    }
+    // (2) the dedicated "Fields ▾" toggle button — opens/collapses the picker on
+    //     EVERY click. This is the reliable toggle: a native <select> fires no
+    //     `change` when you re-pick the already-selected "Custom" option, so the
+    //     field can't double as the toggle. The <select> is therefore left fully
+    //     native (one click = switch feature sets); the button owns open/close.
+    const toggleBtn = document.getElementById('drCustomToggle');
+    if (toggleBtn && toggleBtn.dataset.bound !== '1') {
+      toggleBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (currentFeatureSet() !== FS_CUSTOM) return;   // only meaningful for Custom
+        setCustomPickerOpen(!isCustomPickerOpen());
+      });
+      toggleBtn.dataset.bound = '1';
+    }
+    // (3) Esc, or (4) a click anywhere outside the picker except the toolbar (so
+    //     Run/Lasso don't yank it shut). Bound once at the document level.
+    if (document.body.dataset.drCustomDismiss !== '1') {
+      document.addEventListener('mousedown', (e) => {
+        if (!isCustomPickerOpen()) return;
+        const panel = document.getElementById('drCustomPanel');
+        if (panel.contains(e.target)) return;
+        if (e.target.closest && e.target.closest('.dr-plot-toolbar')) return;
+        setCustomPickerOpen(false);
+      }, true);
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && isCustomPickerOpen()) setCustomPickerOpen(false);
+      });
+      document.body.dataset.drCustomDismiss = '1';
     }
     syncCustomPanelVisibility();  // reflect the initial feature-set value
 

@@ -1611,8 +1611,12 @@
     ensureDrawerHandles();
     const dr = document.getElementById('drOffcanvas');
     if (dr) {
-      dr.addEventListener('shown.bs.offcanvas', () => { syncDrawerBodyAttrs(); scheduleMapResize(); });
-      dr.addEventListener('hidden.bs.offcanvas', () => { syncDrawerBodyAttrs(); scheduleMapResize(); });
+      // DR is a FIXED left overlay — opening/closing it never changes the map
+      // container size (only the legend/PC panel shift, via CSS). So DON'T call
+      // scheduleMapResize() here: a spurious map.resize()+deck.redraw made the
+      // map's POI icons flicker off/on every time the panel slid in or out.
+      dr.addEventListener('shown.bs.offcanvas', () => { syncDrawerBodyAttrs(); });
+      dr.addEventListener('hidden.bs.offcanvas', () => { syncDrawerBodyAttrs(); });
     }
     const pc = document.getElementById('parallelCoordsPanel');
     if (pc) {

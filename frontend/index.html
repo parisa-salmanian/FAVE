@@ -1440,8 +1440,9 @@
             </button>
             <button id="mapLassoClearBtn" type="button" class="control" disabled>Clear map</button>
             <div class="dr-toolbar-spacer"></div>
-            <span class="tiny muted" title="Which features feed UMAP/PCA, EBM and contrastive. 'All dimensions' adds modal-gap + built form + demographics (Växjö); District mode adds demographics.">Features</span>
-            <select id="drFeatureSet" class="control" title="Accessibility only; + modal-gap, built form & demographics (the high-dimensional combo); or extra dimensions only">
+            <label class="dr-field">
+              <span class="tiny muted" title="Which features feed UMAP/PCA, EBM and contrastive. 'All dimensions' adds modal-gap + built form + demographics (Växjö); District mode adds demographics.">Features</span>
+              <select id="drFeatureSet" class="control" title="Accessibility only; + modal-gap, built form & demographics (the high-dimensional combo); or extra dimensions only">
               <option value="access">Accessibility</option>
               <option value="access_demo" selected>All dimensions (rich)</option>
               <option value="demo">Extra dims only</option>
@@ -1451,12 +1452,21 @@
               <option value="supply_plus">Supply + Mismatch</option>
               <option value="all_data">All Data (access + supply + all SCB)</option>
               <option value="custom">Custom — pick fields…</option>
-            </select>
+              </select>
+            </label>
+            <!-- Toggle for the Custom field picker. Shown only while Features =
+                 Custom; opens/collapses the picker on every click (the <select>
+                 itself can't toggle — re-picking the active "Custom" fires no
+                 change event). Wired in controllers/drFeatureMode.js. -->
+            <button id="drCustomToggle" class="control" type="button" hidden
+                    aria-expanded="false" aria-controls="drCustomPanel"
+                    title="Show or hide the field picker">Fields ▾</button>
             <label class="tiny muted" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap" title="Weight fairness by SCB deprivation (need) — changes the Gini/overall fairness, not the DR plot">
               <input type="checkbox" id="drNeedWeightToggle"> Need-weighted
             </label>
-            <span class="tiny muted">Color</span>
-            <select id="drColorBy" class="control">
+            <label class="dr-field">
+              <span class="tiny muted">Color</span>
+              <select id="drColorBy" class="control">
               <option value="none">No colour (structure only)</option>
               <option value="overall">Overall fairness</option>
               <option value="poi">Selected fairness</option>
@@ -1481,12 +1491,13 @@
               <option value="child">Child share (synthetic)</option>
               <option value="year">Built year</option>
               <option value="height">Height</option>
-            </select>
+              </select>
+            </label>
           </div>
           <!-- Custom field picker (shown only when Features = "Custom"). Grouped
                Bootstrap accordion checklist of every embeddable input; related
                fields sit together. Built + wired in controllers/drFeatureMode.js. -->
-          <div id="drCustomPanel" hidden class="card shadow-sm my-2">
+          <div id="drCustomPanel" hidden class="card shadow-sm dr-custom-dropdown">
             <div class="card-header bg-light d-flex align-items-center flex-wrap gap-2 py-2">
               <strong class="small mb-0">Pick the inputs for DR</strong>
               <span id="drCustomCount" class="badge rounded-pill text-bg-primary">0 selected</span>
@@ -1495,6 +1506,7 @@
                 <button id="drCustomClearAll" type="button" class="btn btn-sm btn-outline-secondary">Deselect all</button>
                 <span class="text-muted small">then press <strong>Run</strong></span>
               </div>
+              <button id="drCustomClose" type="button" class="btn-close ms-1" aria-label="Close field picker" title="Close (Esc)"></button>
             </div>
             <div id="drCustomList" class="card-body p-0" style="max-height:320px; overflow:auto;"></div>
           </div>

@@ -377,6 +377,7 @@ function supplyValsForFeature(f) {
   const mode = (document.getElementById('fairnessTravelMode')?.value || 'walking');
   if (p.__supplyVals && p.__supplyMode === mode) return p.__supplyVals;
   let out = {};
+  let resolved = false;
   if (typeof access2sfcaForPoint === 'function') {
     let lon = NaN, lat = NaN;
     try {
@@ -386,10 +387,14 @@ function supplyValsForFeature(f) {
     } catch {}
     if (Number.isFinite(lon) && Number.isFinite(lat)) {
       const s = access2sfcaForPoint(lon, lat);
-      if (s && s.cats) out = supplyRowFromCats(s.cats, 'norm');
+      if (s && s.cats) { out = supplyRowFromCats(s.cats, 'norm'); resolved = true; }
     }
   }
-  p.__supplyVals = out; p.__supplyMode = mode;
+  // Only cache a REAL resolution. When the 2SFCA layer isn't loaded yet the
+  // lookup yields {} — caching that would poison the building so a later pass
+  // (after the layer loads) keeps reading empty and supply columns never appear
+  // (this bit the Custom picker's pre-load capture). Recompute until it resolves.
+  if (resolved) { p.__supplyVals = out; p.__supplyMode = mode; }
   return out;
 }
 
@@ -760,7 +765,7 @@ function computeDRColors(pickedRows, colorBy, mode) {
 }
 
 /* ---- DR feature collection (different for OSM vs Local) ---- */
-function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall', runNonce = 0) {
+function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall', runNonce = 0, universeCap = Infinity) {
   const mode = currentDRDataMode();
 
   const makeMatrix = (sample, rows, labels) => {
@@ -1141,9 +1146,17 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
   // building set: they aren't dwellings and shouldn't be counted as buildings
   // or padded into the synthetic axes. They remain on the map (see
   // isAccessoryBuilding). This also fixes the "of N buildings" count.
-  const sample = (typeof isAccessoryBuilding === 'function')
+  const fullSample = (typeof isAccessoryBuilding === 'function')
     ? baseCityFC.features.filter(f => !isAccessoryBuilding(f.properties))
     : baseCityFC.features;
+  // A dry universe capture (drFeatureMode's Custom picker) only needs to learn
+  // WHICH dimension groups are populated — not every building — so it passes a
+  // small universeCap and we build rows for just a strided subsample. That turns
+  // the ~2s all-buildings pass into a few tens of ms, so the Custom picker opens
+  // instantly. Real DR runs pass universeCap=Infinity → the full sample.
+  const sample = (Number.isFinite(universeCap) && universeCap < fullSample.length)
+    ? fullSample.filter((_, i) => i % Math.ceil(fullSample.length / universeCap) === 0)
+    : fullSample;
   const richFeats = (typeof DR_RICH_FEATURES !== 'undefined') ? DR_RICH_FEATURES : [];
   const synthDemoFeats = (typeof DR_SYNTH_DEMO_FEATURES !== 'undefined') ? DR_SYNTH_DEMO_FEATURES : [];
   const rows = sample.map((f) => {

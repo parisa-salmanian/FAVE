@@ -1503,14 +1503,19 @@ body[data-theme="dark"] .equity-status.text-danger { color: #ff8580; }
   font-family: var(--font-sans) !important;
   display: flex !important;
   flex-direction: column !important;
-  /* Slide in from the left (Bootstrap toggles .show). */
+  /* Slide in from the left. Bootstrap drives the open/close through THREE
+     states: .showing (opening) → .show (open) → .hiding (closing, .show is
+     still present). Mirror all of them below so the panel actually transitions
+     ON open instead of sitting off-screen through the .showing phase and then
+     snapping into place. */
   transform: translateX(-100%) !important;
   transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
   /* Above map + rail (1040); the shell-legend is raised above this so it
      stays clickable if they ever visually overlap. */
   z-index: 1042 !important;
 }
-#drOffcanvas.show {
+#drOffcanvas.showing,
+#drOffcanvas.show:not(.hiding) {
   transform: translateX(0) !important;
 }
 /* The DR panel stays full-height on the left even when the Parallel-Coords
@@ -1596,7 +1601,27 @@ body[data-theme="dark"] .equity-status.text-danger { color: #ff8580; }
   border-bottom: 1px solid var(--line);
   overflow: visible !important;
   flex: none !important;
+  /* Positioning context for the floating Custom field-picker dropdown. */
+  position: relative;
 }
+/* Custom field picker = a DROPDOWN: floats just under the toolbar and overlays
+   the scatter (absolute → does NOT push the layout down), and is dismissible
+   (Esc / × / click away / click the Features field again). JS sets `top` to the
+   live toolbar height (the toolbar wraps, so its height varies). */
+#drCustomPanel.dr-custom-dropdown {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 0;
+  z-index: 30;
+  margin: 0 !important;
+  max-height: min(60vh, 400px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;              /* header stays put; #drCustomList scrolls */
+}
+#drCustomPanel.dr-custom-dropdown[hidden] { display: none; }
+#drCustomPanel.dr-custom-dropdown > #drCustomList { flex: 1 1 auto; }
 #drOffcanvas .dr-explorer .dr-scatter {
   height: 300px !important;
   flex: none !important;
@@ -1629,6 +1654,19 @@ body[data-theme="dark"] .equity-status.text-danger { color: #ff8580; }
   flex-wrap: wrap;
 }
 .dr-plot-toolbar .dr-toolbar-spacer { flex: 1; min-width: 8px; }
+/* Keep each "Features"/"Color" label glued to its own <select>. The toolbar is
+   flex-wrap, so loose label+select siblings could wrap onto different lines;
+   wrapping the pair in a .dr-field makes the label sit directly beside its
+   input and wrap as one unit. */
+.dr-plot-toolbar .dr-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dr-plot-toolbar .dr-field > .tiny.muted { cursor: inherit; }
 .dr-plot-toolbar .control {
   height: 26px;
   padding: 0 10px;
