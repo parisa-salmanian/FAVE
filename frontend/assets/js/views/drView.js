@@ -245,17 +245,24 @@ function rampColor01(v) {
 // (child/elder share, income, education, need…). Deliberately NOT the
 // green↔purple fairness ramp: these quantities carry no "fair/unfair" valence,
 // and reusing the fairness colours made planners read "more children here" as
-// "more unfair here". Light cream → deep orange = MORE of the highlighted
-// attribute (for the inverted low-income / low-education modes the caller flips
-// the input so the DEPRIVED end is the dark, attention-grabbing colour).
+// "more unfair here". Also deliberately NOT orange/red: the map's SELECTION
+// highlight, the Priority lens (OrRd) and the demographic map lens (YlOrRd) are
+// all orange, so an orange DR ramp made the coloured dots blur into the orange
+// selection reflected on the map. Light → deep BLUE = MORE of the highlighted
+// attribute: complementary to the orange selection, distinct from the viridis
+// fairness ramp, and wide-lightness so the dark high-value dots stay separable
+// (single-hue orange crushed them together). For the inverted low-income /
+// low-education modes the caller flips the input so the DEPRIVED end is the
+// dark, attention-grabbing colour.
 function demoRampColor01(v) {
   const t = clamp01(v);
-  if (typeof d3 !== 'undefined' && d3.interpolateOranges && d3.color) {
-    // Skip the near-white low end so low values are still visible on the plot.
-    const c = d3.color(d3.interpolateOranges(0.15 + 0.8 * t));
+  if (typeof d3 !== 'undefined' && d3.interpolateBlues && d3.color) {
+    // Skip the near-white low end (low values stay visible) and reach near the
+    // darkest navy so the high-value cells spread across a wide lightness range.
+    const c = d3.color(d3.interpolateBlues(0.12 + 0.85 * t));
     if (c) return [Math.round(c.r), Math.round(c.g), Math.round(c.b), 255];
   }
-  const lo = [255, 245, 235], hi = [166, 54, 3];   // cream → deep orange fallback
+  const lo = [214, 231, 247], hi = [8, 48, 107];   // light → deep navy fallback
   return [
     Math.round(lo[0] + (hi[0] - lo[0]) * t),
     Math.round(lo[1] + (hi[1] - lo[1]) * t),
@@ -470,7 +477,10 @@ function stableEntityId(entity, fallbackIdx = 0) {
 
 function stableSampleIndices(sample, take, runNonce = 0) {
   const baseSeed = Number(globalThis.DR_SAMPLE_SEED) || 202502;
-  const reproducible = !!globalThis.DR_REPRODUCIBLE_SAMPLE;
+  // Reproducible by DEFAULT now (same try → same layout). The sample order no
+  // longer changes per Run, so a seeded UMAP gives an identical embedding each
+  // time. Set globalThis.DR_REPRODUCIBLE_SAMPLE = false to restore per-run reshuffle.
+  const reproducible = globalThis.DR_REPRODUCIBLE_SAMPLE !== false;
   const seed = reproducible ? baseSeed : (baseSeed + Math.imul(Number(runNonce) || 0, 2654435761));
   const ranked = sample.map((entity, idx) => {
     const key = stableEntityId(entity, idx);
@@ -492,72 +502,110 @@ function isWhatIfEntity(entity) {
   return !!(props.__whatIf || props.__whatIfMock || props.__whatIfAdded);
 }
 
-/* ---- DR feature collection (different for OSM vs Local) ---- */
-function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall', runNonce = 0) {
-  const mode = currentDRDataMode();
-
-  const makeMatrix = (sample, rows, labels) => {
-    if (!sample.length) throw new Error(`No ${mode}s available for DR.`);
-
-    const N = sample.length;
-    const take = Math.min(maxPts, N);
-    const stableOrder = stableSampleIndices(sample, sample.length, runNonce);
-    const forcedSet = new Set();
-    sample.forEach((entity, i) => {
-      if (isWhatIfEntity(entity)) forcedSet.add(i);
-    });
-
-    const forcedCandidates = stableOrder.filter(i => forcedSet.has(i));
-    const regularCandidates = stableOrder.filter(i => !forcedSet.has(i));
-
-    // Balanced pseudo-random mix: keep mocked buildings visible without letting
-    // them fully dominate the DR sample when maxPts is capped.
-    const hasBothGroups = forcedCandidates.length > 0 && regularCandidates.length > 0;
-    let forcedTake = 0;
-    if (hasBothGroups) {
-      const populationShare = forcedCandidates.length / Math.max(1, N);
-      const proportionalTarget = Math.round(take * populationShare);
-      const forcedCap = Math.max(1, Math.floor(take * 0.35));
-      forcedTake = Math.max(1, Math.min(forcedCandidates.length, forcedCap, proportionalTarget || 1));
-    } else if (forcedCandidates.length > 0) {
-      forcedTake = Math.min(forcedCandidates.length, take);
+// Populate the scb* SCB embedding fields on a DR row. `source` = 'building' reads
+// the synthetic per-building props (__synth*); 'unit' reads the pre-aggregated
+// real-DESO fields (__*Real) that districts.js stamps on mezo cells / districts.
+// Same scb* keys at every scale → the "All Data" set is uniform micro/meso/macro.
+function scbRowFields(src, source) {
+  const feats = (typeof DR_SCB_FEATURES !== 'undefined') ? DR_SCB_FEATURES : [];
+  const out = {};
+  for (const f of feats) {
+    let v;
+    if (f.desoKey) {
+      // Rich SCB field from deso_full.json — resolved by DESO lookup, not a stamped
+      // prop. Micro: a deterministic per-building SYNTHETIC spread around the
+      // building's DESO mean (mirrors synthpop's logit-normal model — see
+      // _scbSynthValue). Meso/macro: the count-weighted mean over the unit's DESOs
+      // (districts.js stamps __desoMix = {deso:count}).
+      v = (source === 'building')
+        ? _scbSynthValue(src, f)
+        : _scbDesoMixMean(src?.__desoMix, f.desoKey);
+    } else {
+      const prop = source === 'building' ? f.building : f.unit;
+      v = Number(src?.[prop]);
     }
+    if (Number.isFinite(v)) { out[f.key] = f.log ? Math.log1p(Math.max(0, v)) : v; }
+    else out[f.key] = null;
+  }
+  return out;
+}
+// One building's DESO value for a deso_full field key (flat within a DESO).
+function _scbDesoValue(deso, key) {
+  if (deso == null || typeof epiDesoFull !== 'function') return NaN;
+  const d = epiDesoFull(deso);
+  const v = d ? Number(d[key]) : NaN;
+  return Number.isFinite(v) ? v : NaN;
+}
+// FNV-1a string hash → 32-bit seed component.
+function _scbStrHash(s) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+// Deterministic per-building SYNTHETIC value for a rich SCB field at micro scale.
+// Mirrors synthpop's dasymetric model: sample logit-normal `sigmoid(logit(p)+σ·z)`
+// around the building's DESO mean p, with σ = the binomial logit-scale SE
+// sqrt(1/(N·p(1-p))) from the building's synthetic population N (bigger buildings
+// sit tighter on the DESO mean). z is a deterministic gaussian seeded by
+// (building id, field) so the spread — and thus the UMAP layout — is reproducible.
+// Income *amounts* (f.log) use a lognormal spread instead; other magnitudes a
+// proportional gaussian. NB a per-building spread for visualization, NOT measured
+// data — the DESO mean is the only real signal (recovered on aggregation to meso).
+function _scbSynthValue(props, f) {
+  const d = (typeof epiDesoFull === 'function') ? epiDesoFull(props?.__deso) : null;
+  const mean = d ? Number(d[f.desoKey]) : NaN;
+  if (!Number.isFinite(mean)) return NaN;
+  if (f._h == null) f._h = _scbStrHash(f.desoKey);
+  const rnd = makeSeededRandom((Math.imul((props.__bidx | 0) >>> 0, 2654435761) + f._h) >>> 0);
+  const u1 = Math.max(1e-9, rnd()), u2 = rnd();
+  const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2); // Box–Muller
+  const N = Math.max(5, Number(props.__synthPop) || 40);
+  if (f.log) {                                   // income amount → lognormal
+    const sigma = Math.min(0.6, 1.5 / Math.sqrt(N));
+    return Math.max(0, mean * Math.exp(sigma * z - sigma * sigma / 2));
+  }
+  if (mean > 0 && mean < 100) {                  // percentage share → logit-normal
+    const p = Math.min(0.999, Math.max(0.001, mean / 100));
+    const sigma = Math.min(1.2, Math.sqrt(1 / (N * p * (1 - p))));
+    return 100 / (1 + Math.exp(-(Math.log(p / (1 - p)) + sigma * z)));
+  }
+  const sigma = Math.min(0.6, 1.5 / Math.sqrt(N)); // other magnitude → proportional gaussian
+  return Math.max(0, mean * (1 + sigma * z));
+}
+// Count-weighted mean of a deso_full field over a unit's DESO mix {deso: count}.
+// (Every building in a DESO shares that DESO's value, so count-weighting the DESOs
+// reproduces the building-count-weighted mean the base __*Real fields also use.)
+function _scbDesoMixMean(mix, key) {
+  if (!mix || typeof epiDesoFull !== 'function') return NaN;
+  let sum = 0, w = 0;
+  for (const deso in mix) {
+    const d = epiDesoFull(deso);
+    const v = d ? Number(d[key]) : NaN;
+    if (Number.isFinite(v)) { const c = mix[deso] || 0; sum += v * c; w += c; }
+  }
+  return w > 0 ? sum / w : NaN;
+}
+// Return { scbKey: label } for every scb feature at least one row carries, so the
+// matrix never gains dead all-null SCB columns at a scale/city that lacks them.
+function scbLabelsIfPresent(rows) {
+  const feats = (typeof DR_SCB_FEATURES !== 'undefined') ? DR_SCB_FEATURES : [];
+  const labels = {};
+  feats.forEach((f) => { if (rows.some(r => Number.isFinite(r[f.key]))) labels[f.key] = f.label; });
+  return labels;
+}
 
-    let regularTake = Math.min(regularCandidates.length, Math.max(0, take - forcedTake));
-    let remainder = take - (forcedTake + regularTake);
-    if (remainder > 0 && forcedCandidates.length > forcedTake) {
-      const extraForced = Math.min(remainder, forcedCandidates.length - forcedTake);
-      forcedTake += extraForced;
-      remainder -= extraForced;
-    }
-    if (remainder > 0 && regularCandidates.length > regularTake) {
-      regularTake += Math.min(remainder, regularCandidates.length - regularTake);
-    }
-
-    const forcedIdx = forcedCandidates.slice(0, forcedTake);
-    const sampledIdx = regularCandidates.slice(0, regularTake);
-
-    // Preserve deterministic pseudo-random ordering to keep UMAP behavior stable.
-    const idxSet = new Set([...forcedIdx, ...sampledIdx]);
-    const idx = stableOrder.filter(i => idxSet.has(i));
-
-    const pickedSample = idx.map(i => sample[i]);
-    const pickedRows = idx.map(i => rows[i]);
-    const keys = Object.keys(labels);
-    const vecByKey = {};
-
-    keys.forEach((key) => {
-      const vals = pickedRows.map(r => Number.isFinite(r[key]) ? r[key] : null);
-      const valid = vals.filter(Number.isFinite);
-      const mid = valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : 0;
-      const imputed = vals.map(v => Number.isFinite(v) ? v : mid);
-      vecByKey[key] = normalize ? zscore(imputed) : imputed;
-    });
-
-  const X = pickedRows.map((_, i) => keys.map(key => vecByKey[key][i]));
-
+// Compute the per-point colours for a given colour-by mode over already-built
+// rows. Extracted from makeMatrix so that changing the colour-by can re-tint the
+// EXISTING projection (drPlot.rows) without re-running UMAP. Also updates the
+// legend text + swatch. `mode` is the DR data scale (building/mezo/district).
+function computeDRColors(pickedRows, colorBy, mode) {
     let colors;
-    if (colorBy === 'overall') {
+    if (colorBy === 'none') {
+      // "All Data" explore mode: no colouring — the point is to read CLUSTERS by
+      // position and characterise them with EBM/Contrastive/PCP, not by colour.
+      updateLegend('none', 'Legend (no colour — structure only)', 'Lasso a cluster → read it in EBM / Contrastive / PCP');
+      colors = pickedRows.map(() => [96, 118, 148, 205]);   // neutral slate (not orange, not the demo blue ramp)
+    } else if (colorBy === 'overall') {
       colors = pickedRows.map((r) => Number.isFinite(r.overall) ? rampColor01(r.overall) : grey(120));
       updateLegend('overall', `Legend (${mode} overall fairness)`, 'Most fair (left) → Least fair (right)');
     } else if (colorBy === 'poi') {
@@ -708,10 +756,82 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       colors = pickedRows.map((r) => Number.isFinite(r.heightLike) ? rampColor01(r.heightLike) : grey(110));
       updateLegend('height', `Legend (${mode} size proxy)`, 'Low (left) → High (right)');
     }
+    return colors;
+}
+
+/* ---- DR feature collection (different for OSM vs Local) ---- */
+function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall', runNonce = 0) {
+  const mode = currentDRDataMode();
+
+  const makeMatrix = (sample, rows, labels) => {
+    if (!sample.length) throw new Error(`No ${mode}s available for DR.`);
+
+    const N = sample.length;
+    const take = Math.min(maxPts, N);
+    const stableOrder = stableSampleIndices(sample, sample.length, runNonce);
+    const forcedSet = new Set();
+    sample.forEach((entity, i) => {
+      if (isWhatIfEntity(entity)) forcedSet.add(i);
+    });
+
+    const forcedCandidates = stableOrder.filter(i => forcedSet.has(i));
+    const regularCandidates = stableOrder.filter(i => !forcedSet.has(i));
+
+    // Balanced pseudo-random mix: keep mocked buildings visible without letting
+    // them fully dominate the DR sample when maxPts is capped.
+    const hasBothGroups = forcedCandidates.length > 0 && regularCandidates.length > 0;
+    let forcedTake = 0;
+    if (hasBothGroups) {
+      const populationShare = forcedCandidates.length / Math.max(1, N);
+      const proportionalTarget = Math.round(take * populationShare);
+      const forcedCap = Math.max(1, Math.floor(take * 0.35));
+      forcedTake = Math.max(1, Math.min(forcedCandidates.length, forcedCap, proportionalTarget || 1));
+    } else if (forcedCandidates.length > 0) {
+      forcedTake = Math.min(forcedCandidates.length, take);
+    }
+
+    let regularTake = Math.min(regularCandidates.length, Math.max(0, take - forcedTake));
+    let remainder = take - (forcedTake + regularTake);
+    if (remainder > 0 && forcedCandidates.length > forcedTake) {
+      const extraForced = Math.min(remainder, forcedCandidates.length - forcedTake);
+      forcedTake += extraForced;
+      remainder -= extraForced;
+    }
+    if (remainder > 0 && regularCandidates.length > regularTake) {
+      regularTake += Math.min(remainder, regularCandidates.length - regularTake);
+    }
+
+    const forcedIdx = forcedCandidates.slice(0, forcedTake);
+    const sampledIdx = regularCandidates.slice(0, regularTake);
+
+    // Preserve deterministic pseudo-random ordering to keep UMAP behavior stable.
+    const idxSet = new Set([...forcedIdx, ...sampledIdx]);
+    const idx = stableOrder.filter(i => idxSet.has(i));
+
+    const pickedSample = idx.map(i => sample[i]);
+    const pickedRows = idx.map(i => rows[i]);
+    const keys = Object.keys(labels);
+    const vecByKey = {};
+
+    keys.forEach((key) => {
+      const vals = pickedRows.map(r => Number.isFinite(r[key]) ? r[key] : null);
+      const valid = vals.filter(Number.isFinite);
+      const mid = valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : 0;
+      const imputed = vals.map(v => Number.isFinite(v) ? v : mid);
+      vecByKey[key] = normalize ? zscore(imputed) : imputed;
+    });
+
+  const X = pickedRows.map((_, i) => keys.map(key => vecByKey[key][i]));
+
+    // Colour logic lives in computeDRColors() (extracted) so a colour-by change
+    // can re-tint the EXISTING projection without re-running UMAP — see the
+    // #drColorBy handler in drFeatureMode.js.
+    const colors = computeDRColors(pickedRows, colorBy, mode);
 
   return {
       X,
       colors,
+      rows: pickedRows,           // retained so a colour-by change can re-tint w/o a re-run
       sampleCount: pickedSample.length,
       dims: X[0]?.length || 0,
       sample: pickedSample,
@@ -770,9 +890,15 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         ...Object.fromEntries(
           (typeof DR_RICH_FEATURES !== 'undefined' ? DR_RICH_FEATURES : [])
             .map(f => [f.key, pickedRows.map(r => r[f.key])])
+        ),
+        // Full SCB profile (the "All Data" set) so the contrastive ranks them too.
+        ...Object.fromEntries(
+          (typeof DR_SCB_FEATURES !== 'undefined' ? DR_SCB_FEATURES : [])
+            .map(f => [f.key, pickedRows.map(r => r[f.key])])
         )
       },
       featureLabels: keys.map(key => labels[key]),
+      featureKeys: keys.slice(),   // canonical column keys, parallel to featureLabels
       mode
     };
   };
@@ -855,6 +981,9 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       Object.entries(DR_SUPPLY_LABELS).forEach(([k, lab]) => { districtLabels[k] = lab; });
       if (rows.some(r => Number.isFinite(r.mismatch))) districtLabels.mismatch = 'overall mismatch (prox−supply)';
     }
+    // "All Data" set — real DESO SCB (9 fields) as embedding features per district.
+    rows.forEach((row, i) => Object.assign(row, scbRowFields(sample[i]?.properties, 'unit')));
+    Object.assign(districtLabels, scbLabelsIfPresent(rows));
     return makeMatrix(sample, rows, districtLabels);
   }
 
@@ -1000,6 +1129,9 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       Object.entries(DR_SUPPLY_LABELS).forEach(([k, lab]) => { mezoLabels[k] = lab; });
       if (rows.some(r => Number.isFinite(r.mismatch))) mezoLabels.mismatch = 'overall mismatch (prox−supply)';
     }
+    // "All Data" set — real DESO SCB (9 fields) as embedding features per mezo cell.
+    rows.forEach((row, i) => Object.assign(row, scbRowFields(sample[i], 'unit')));
+    Object.assign(mezoLabels, scbLabelsIfPresent(rows));
     return makeMatrix(sample, rows, mezoLabels);
   }
 
@@ -1133,13 +1265,58 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     if (rows.some(r => Number.isFinite(r.mismatch))) buildingLabels.mismatch = 'overall mismatch (prox−supply)';
   }
 
+  // "All Data" set — synthetic per-building SCB (9 fields) as embedding features.
+  rows.forEach((row, i) => Object.assign(row, scbRowFields(sample[i]?.properties, 'building')));
+  Object.assign(buildingLabels, scbLabelsIfPresent(rows));
   return makeMatrix(sample, rows, buildingLabels);
+}
+
+// Build a CSS left→right gradient that faithfully samples the SAME ramp the
+// dots use, oriented to match the legend's "A → B" direction text. Demographic
+// modes → the blue demo ramp (light=low/"Fewer" → dark=high/"More"); the two
+// "Most fair (left)" fairness modes read high→low so they sample reversed;
+// mismatch samples the RdBu diverging scale (blue→red). Returns null if the
+// kind carries no colour ramp.
+function rampSwatchGradient(kind) {
+  if (kind === 'none') return null;   // "All Data" explore mode has no colour scale
+  const N = 12;
+  const FAIR = new Set(['supply', 'year', 'height']);   // Low/Least (left) → High/Most (right)
+  const FAIR_REV = new Set(['overall', 'poi']);          // Most fair (left) → Least fair (right)
+  let fn, reverse = false;
+  if (kind === 'mismatch') {
+    fn = (t) => {
+      if (typeof d3 !== 'undefined' && d3.interpolateRdBu && d3.color) {
+        const c = d3.color(d3.interpolateRdBu(t));
+        if (c) return [c.r, c.g, c.b];
+      }
+      return [128, 128, 128];
+    };
+    reverse = true;   // text: Supply-rich (blue = RdBu 1) on the LEFT → red on the right
+  } else if (FAIR.has(kind) || FAIR_REV.has(kind)) {
+    fn = (t) => rampColor01(t);
+    reverse = FAIR_REV.has(kind);
+  } else {
+    fn = (t) => demoRampColor01(t);   // all demographic / socioeconomic modes (blue)
+  }
+  const stops = [];
+  for (let i = 0; i < N; i++) {
+    const t = i / (N - 1);
+    const c = fn(reverse ? 1 - t : t);
+    stops.push(`rgb(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])}) ${Math.round(t * 100)}%`);
+  }
+  return `linear-gradient(to right, ${stops.join(', ')})`;
 }
 
 function updateLegend(kind, title, text) {
   const { legendTitle, legendText } = ensureDRUI();
   if (legendTitle) legendTitle.textContent = title;
   if (legendText)  legendText.textContent  = text;
+  const sw = document.getElementById('drLegendSwatch');
+  if (sw) {
+    const grad = rampSwatchGradient(kind);
+    if (grad) { sw.style.background = grad; sw.hidden = false; }
+    else { sw.hidden = true; }
+  }
 }
 
 /* ---------- PCA ---------- */
@@ -1201,10 +1378,26 @@ function runPCA(X) {
 }
 
 /* ---------- UMAP ---------- */
+// Deterministic PRNG (mulberry32). UMAP's layout depends on a random stream for
+// initialisation + negative sampling; feeding Math.random made every Run produce
+// a different embedding. A fixed-seed PRNG makes the SAME input give the SAME
+// layout every time (combined with DR_REPRODUCIBLE_SAMPLE keeping the sample
+// order stable across runs — see stableSampleIndices).
+const DR_UMAP_SEED = 202502;
+function makeSeededRandom(seed) {
+  let a = (seed >>> 0) || 1;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 async function runUMAP(X, {nNeighbors=15, minDist=0.1, nEpochs=200} = {}) {
   const ok = await ensureUMAP();
   if (!ok) throw new Error('UMAP library not loaded');
-  const umap = new window.UMAP({ nNeighbors, minDist, nEpochs, random: Math.random });
+  // Fresh seeded stream per run (same seed → reproducible layout).
+  const umap = new window.UMAP({ nNeighbors, minDist, nEpochs, random: makeSeededRandom(DR_UMAP_SEED) });
   const Y = await umap.fitAsync(X);
   return Y;
 }
@@ -1876,7 +2069,27 @@ const DR_FEATURE_CONFIG = [
   // Rich building-level features (modal-gap + built form + demo) for EBM/contrastive.
   ...((typeof DR_RICH_FEATURES !== 'undefined' ? DR_RICH_FEATURES : [])
       .map(f => ({ key: f.key, label: f.label }))),
+  // Full SCB profile ("All Data" set) so the contrastive panel names them. The
+  // scb tail is (re)built at city-load time by syncDrFeatureConfigScb() below —
+  // the parse-time spread only seeds the base 9.
+  ...((typeof DR_SCB_FEATURES !== 'undefined' ? DR_SCB_FEATURES : [])
+      .map(f => ({ key: f.key, label: f.label }))),
 ];
+
+// Re-sync DR_FEATURE_CONFIG's scb tail to the current DR_SCB_FEATURES (base 9 +
+// the loaded city's deso_full.json manifest). Called from applyDrScbFullFields on
+// city load. Mutates the const array IN PLACE so the two consumers (contrastive
+// payload loop @ ~2110, category-histogram config) read the live set. Idempotent:
+// every scb*-keyed entry is dropped and re-appended, so city switches don't leak.
+function syncDrFeatureConfigScb() {
+  if (typeof DR_FEATURE_CONFIG === 'undefined') return;
+  for (let i = DR_FEATURE_CONFIG.length - 1; i >= 0; i--) {
+    const k = DR_FEATURE_CONFIG[i]?.key;
+    if (typeof k === 'string' && k.startsWith('scb')) DR_FEATURE_CONFIG.splice(i, 1);
+  }
+  const feats = (typeof DR_SCB_FEATURES !== 'undefined') ? DR_SCB_FEATURES : [];
+  for (const f of feats) DR_FEATURE_CONFIG.push({ key: f.key, label: f.label });
+}
 
 // Small numeric helpers
 function mean1(arr) {
@@ -5381,6 +5594,7 @@ function clearDRProjection(showMessage = true) {
   if (infoEl) infoEl.textContent = 'Run PCA/UMAP to see a projection.';
   if (legendTitle) legendTitle.textContent = 'Color legend';
   if (legendText) legendText.textContent = '—';
+  { const sw = document.getElementById('drLegendSwatch'); if (sw) sw.hidden = true; }
   if (clearSelBtn) clearSelBtn.disabled = true;
   if (clearProjBtn) clearProjBtn.disabled = true;
 }
@@ -5427,7 +5641,7 @@ function clearDRProjection(showMessage = true) {
       const a2sCity = (typeof a2sCurrentCity === 'function') ? a2sCurrentCity() : undefined;
       try { await ensureAccess2sfca(a2sCity, a2sMode); } catch (_) { /* supply is best-effort */ }
     }
-    const { X, colors, sampleCount, sample, metrics, featureLabels, dims } =
+    const { X, colors, rows, sampleCount, sample, metrics, featureLabels, featureKeys, dims } =
       collectDRData(maxPts, normalize, colorBy, drPlot.runNonce);
 
     let Y = null;
@@ -5456,10 +5670,12 @@ function clearDRProjection(showMessage = true) {
     // Store DR results + feature space for explanations
     drPlot.points   = Y;
     drPlot.colors   = colors;
+    drPlot.rows     = rows;                  // for colour-by recolour without a re-run
     drPlot.sample   = sample;
     drPlot.metrics  = metrics;
     drPlot.features = X;                     //same features used for DR
     drPlot.featureLabels = featureLabels || null;
+    drPlot.featureKeys = featureKeys || null;   // canonical column keys (custom-picker matching)
     drPlot.cityStats = null;                 // reset cached stats
     drPlot.mode = currentDRDataMode();
     drPlot.lastSelectionIdx = [];

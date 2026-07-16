@@ -77,6 +77,28 @@
   // COLOR overlay and its non-redundant residual enters via mismatch. This makes
   // the layout driven by the map-invisible signal — the R1 answer.
   const FS_SUPPLY_PLUS = 'supply_plus';
+  // "All Data": the full SCB socio-demographic profile (labelled "(scb)" / keyed
+  // scb*) + accessibility + supply, ALL as embedding features, at EVERY scale
+  // (real DESO at meso/macro, synthetic per-building at micro). Purely
+  // exploratory (no colouring) — lasso a cluster, read it in EBM/Contrastive/PCP.
+  const FS_ALL_DATA = 'all_data';
+  // "Custom": the user hand-picks exactly which inputs feed DR from a grouped
+  // checklist (see the #drCustomPanel picker). drCustomKeys holds the selected
+  // DR_FEATURE_CONFIG keys; keepFeature matches a column by its key OR its label.
+  const FS_CUSTOM = 'custom';
+  const drCustomKeys = new Set();     // selected CANONICAL column keys (from the live matrix)
+  let drLabelToKey = null;            // Map<label, key> — fallback when only a label is available
+  let drFeatureUniverse = [];         // [{key,label}] — the live matrix's full column set
+  let drUniverseSig = '';             // signature of the universe key-set (rebuild on change)
+  let drPickerBuilding = false;       // reentrancy guard (dry-capture triggers the wrapper)
+  let drCustomInit = false;           // seeded all-on once? (so "Deselect all" stays empty)
+
+  // SCB profile features carry a '(scb)' label suffix + a scb* key. Detect from a
+  // label OR a bare key (the contrastive path only has keys), like isSupplyFeature.
+  function isScbFeature(s) {
+    const t = String(s || '');
+    return /^scb[A-Z]/.test(t) || /\(scb\)/i.test(t);
+  }
 
   // Supply features are tagged with a 'supply (2sfca)' label suffix and a
   // supply* key. Detect from either a label or a bare key (the contrastive path
@@ -101,7 +123,7 @@
   function currentFeatureSet() {
     const sel = document.getElementById('drFeatureSet');
     const v = sel?.value || globalThis.DR_FEATURE_SET || FS_ACCESS_DEMO;
-    return [FS_ACCESS, FS_ACCESS_DEMO, FS_DEMO, FS_EQUITY, FS_SUPPLY, FS_ACCESS_SUPPLY, FS_SUPPLY_PLUS].includes(v) ? v : FS_ACCESS_DEMO;
+    return [FS_ACCESS, FS_ACCESS_DEMO, FS_DEMO, FS_EQUITY, FS_SUPPLY, FS_ACCESS_SUPPLY, FS_SUPPLY_PLUS, FS_ALL_DATA, FS_CUSTOM].includes(v) ? v : FS_ACCESS_DEMO;
   }
 
   function isPolicyLabel(label) {
@@ -120,10 +142,30 @@
   }
 
   // Should this feature be kept, given policy/legacy mode AND the feature set?
-  function keepFeature({ isDemo, isAccessBaseline, label }) {
+  function keepFeature({ isDemo, isAccessBaseline, label, key }) {
     const fs = currentFeatureSet();
+    // "Custom": keep exactly the user's picks, matched by the CANONICAL column key
+    // (the DR matrix labels differ from the config labels — e.g. "grocery fairness
+    // (z)" vs "Grocery fairness" — so key matching is the robust path). Fall back to
+    // the label / label→key map when a key isn't supplied.
+    if (fs === FS_CUSTOM) {
+      if (key != null && drCustomKeys.has(key)) return true;
+      if (drCustomKeys.has(label)) return true;
+      const k = drLabelToKey ? drLabelToKey.get(label) : null;
+      return k ? drCustomKeys.has(k) : false;
+    }
     const isSupply = isSupplyFeature(label);
     const isMismatch = isMismatchFeature(label);
+    const isScb = isScbFeature(label);
+    // "All Data": everything real — accessibility + the full SCB profile + supply.
+    // NOT the "(dem)" building-synth shares (scb* already carries demographics
+    // uniformly at every scale, so keeping (dem) too would just duplicate them at
+    // micro). Checked before the supply/mismatch guard so supply stays in.
+    if (fs === FS_ALL_DATA) return isAccessBaseline || isScb || isSupply;
+    // The SCB columns exist in the matrix at every scale now, but ONLY all_data
+    // keeps them — every other set must drop them (else real demographics would
+    // enter the embedding and make the EBM coupling tautological).
+    if (isScb) return false;
     // Supply sets: only the 2SFCA supply dims (FS_SUPPLY), or per-category access
     // plus supply (FS_ACCESS_SUPPLY). Supply dims are never access/demo baseline,
     // so they're correctly excluded from all the other sets below.
@@ -153,38 +195,47 @@
 
   function filterDRMatrixForPolicy(payload) {
     if (!payload || !Array.isArray(payload.X) || !Array.isArray(payload.featureLabels)) return payload;
+    captureFeatureUniverse(payload);   // record the UNFILTERED column set for the picker
 
     const legacy = currentMode() === MODE_LEGACY;
+    const keys = Array.isArray(payload.featureKeys) ? payload.featureKeys : [];
     const keepIdx = [];
     payload.featureLabels.forEach((label, idx) => {
       const demo = isDemoLabel(label);
       const accessBaseline = legacy ? !demo : isPolicyLabel(label);
-      if (keepFeature({ isDemo: demo, isAccessBaseline: accessBaseline, label })) keepIdx.push(idx);
+      if (keepFeature({ isDemo: demo, isAccessBaseline: accessBaseline, label, key: keys[idx] })) keepIdx.push(idx);
     });
 
-    // Fallback: never return an empty matrix (e.g. demo-only outside district mode).
+    // Fallback: never return an empty matrix (e.g. demo-only outside district mode,
+    // or a Custom pick that matched nothing at this scale).
     if (!keepIdx.length) return payload;
 
     const X2 = payload.X.map((row) => keepIdx.map((j) => row[j]));
     const labels2 = keepIdx.map((j) => payload.featureLabels[j]);
+    const keys2 = keys.length ? keepIdx.map((j) => keys[j]) : payload.featureKeys;
 
     return {
       ...payload,
       X: X2,
       featureLabels: labels2,
+      featureKeys: keys2,
       dims: labels2.length
     };
   }
 
   function filterContrastiveForPolicy(diff) {
     if (!diff || !Array.isArray(diff.features)) return diff;
+    // Custom set: the projection is user-picked, but let the contrastive/EBM rank
+    // the FULL feature set so a lassoed cluster is explained against everything
+    // (its key vocabulary differs from the matrix's anyway).
+    if (currentFeatureSet() === FS_CUSTOM) return diff;
     const legacy = currentMode() === MODE_LEGACY;
     const filtered = diff.features.filter((f) => {
       const demo = isDemoKey(f.key);
       const accessBaseline = legacy ? !demo : POLICY_CONTRAST_KEYS.has(f.key);
-      // For the contrastive panel we only have keys, not labels; pass the key so
-      // the equity branch can still spot the 'overall' accessibility anchor.
-      return keepFeature({ isDemo: demo, isAccessBaseline: accessBaseline, label: f.key });
+      // For the contrastive panel we only have keys, not labels; pass the key as
+      // both so the equity branch spots the 'overall' anchor AND custom matches it.
+      return keepFeature({ isDemo: demo, isAccessBaseline: accessBaseline, label: f.key, key: f.key });
     });
     // Never blank the panel out entirely.
     return { ...diff, features: filtered.length ? filtered : diff.features };
@@ -222,6 +273,8 @@
       : fs === FS_SUPPLY ? '2SFCA supply provision only'
       : fs === FS_ACCESS_SUPPLY ? 'per-category access + 2SFCA supply'
       : fs === FS_SUPPLY_PLUS ? 'supply + mismatch (11-D) — colour by overall access'
+      : fs === FS_ALL_DATA ? 'ALL DATA — access + supply + full SCB profile (explore: lasso a cluster, read it in EBM/Contrastive/PCP)'
+      : fs === FS_CUSTOM ? `CUSTOM — ${drCustomKeys.size} hand-picked inputs (tick fields above, then Run)`
       : 'accessibility only';
     // The demographics note only applies to the demographic-bearing sets.
     const demoSets = (fs === FS_ACCESS_DEMO || fs === FS_DEMO || fs === FS_EQUITY);
@@ -236,6 +289,227 @@
     } catch (err) {
       console.warn('DR rerun after mode switch failed:', err);
     }
+  }
+
+  // ---- Custom field picker -------------------------------------------------
+  // Human group names for the SCB manifest `group` tags (from bake_scb_full.py).
+  const SCB_GROUP_LABEL = {
+    income: 'Income (SCB)', labour: 'Labour market (SCB)', transfers: 'Transfers & benefits (SCB)',
+    education: 'Education (SCB)', students_neet: 'Students & NEET (SCB)', age: 'Age bands (SCB)',
+    age_stage: 'Age life-stages (SCB)', sex: 'Sex (SCB)', sfi: 'SFI (SCB)',
+  };
+  // Display order — related groups sit next to each other (the "list close things
+  // close together" requirement): economic block together, education block, age block.
+  const GROUP_ORDER = [
+    'Accessibility — fairness', 'Accessibility — distance', 'Supply (2SFCA)', 'Mismatch',
+    'Built form & mobility', 'Demographics — summary',
+    'Income (SCB)', 'Transfers & benefits (SCB)', 'Labour market (SCB)',
+    'Education (SCB)', 'Students & NEET (SCB)',
+    'Age bands (SCB)', 'Age life-stages (SCB)', 'Sex (SCB)', 'SFI (SCB)', 'Other',
+  ];
+
+  // key -> SCB manifest group (built from DR_SCB_FEATURES which carries `group`).
+  function scbKeyGroupMap() {
+    const m = new Map();
+    const feats = (typeof DR_SCB_FEATURES !== 'undefined') ? DR_SCB_FEATURES : [];
+    for (const f of feats) if (f.group) m.set(f.key, f.group);
+    return m;
+  }
+
+  // Group a matrix column by its LABEL (robust — labels are stable across the two
+  // key vocabularies; e.g. fairness keys are 'grocery' at mezo but 'fairGrocery' in
+  // the config). SCB group comes from the manifest via the scbF_ key.
+  function fieldGroupOf(item, scbGroups) {
+    const key = String(item.key || '');
+    const label = String(item.label || '').toLowerCase();
+    if (/\(scb\)/.test(label) || /^scb/i.test(key)) {
+      if (/^scbF_/.test(key)) return SCB_GROUP_LABEL[scbGroups.get(key)] || 'Demographics — summary';
+      return 'Demographics — summary';
+    }
+    if (/supply \(2sfca\)/.test(label) || /^supply/i.test(key)) return 'Supply (2SFCA)';
+    if (/mismatch/.test(label) || /^mismatch/i.test(key)) return 'Mismatch';
+    if (/distance \(m\)/.test(label) || /^dist/i.test(key)) return 'Accessibility — distance';
+    if (/fairness|access\b/.test(label) || /^fair/i.test(key) || key === 'overall') return 'Accessibility — fairness';
+    if (/\(dem\)/.test(label) || /^dem/i.test(key)) return 'Demographics — summary';
+    if (/\((morph|modal)\)/.test(label) || /^rich/i.test(key)) return 'Built form & mobility';
+    if (/height|built year|footprint|change score/.test(label)
+        || ['heights', 'years', 'arealog', 'changescore'].includes(key.toLowerCase())) return 'Built form & mobility';
+    return 'Other';
+  }
+
+  function updateCustomCount() {
+    const el = document.getElementById('drCustomCount');
+    if (el) el.textContent = `${drCustomKeys.size} selected`;
+  }
+
+  // Record the live matrix's UNFILTERED column set (key+label) so the picker lists
+  // exactly what can be embedded at the current scale/city. Rebuilds a visible
+  // picker when the column set changes (scale/city switch). Guarded against the
+  // reentrancy from buildCustomPicker's own dry-capture.
+  function captureFeatureUniverse(payload) {
+    if (!Array.isArray(payload.featureKeys) || !Array.isArray(payload.featureLabels)) return;
+    const uni = payload.featureKeys.map((k, i) => ({ key: k, label: payload.featureLabels[i] }))
+      .filter(f => typeof f.key === 'string');
+    if (!uni.length) return;
+    drFeatureUniverse = uni;
+    const sig = uni.map(f => f.key).join('|');
+    if (sig !== drUniverseSig) {
+      drUniverseSig = sig;
+      const panel = document.getElementById('drCustomPanel');
+      if (panel && !panel.hidden && !drPickerBuilding) buildCustomPicker();
+    }
+  }
+
+  // (Re)build the grouped checklist from the LIVE matrix universe. Selection is
+  // preserved by key across rebuilds. First open (empty selection) starts with
+  // everything ON, so "Deselect all" → pick a few is the natural flow.
+  function buildCustomPicker() {
+    const list = document.getElementById('drCustomList');
+    if (!list) return;
+    drPickerBuilding = true;
+    try {
+      // Populate the universe on first open via a dry collectDRData (no UMAP; the
+      // wrapper captures the column set as a side effect).
+      if (!drFeatureUniverse.length && typeof globalThis.collectDRData === 'function') {
+        try { globalThis.collectDRData(Infinity, true, 'none', 0); } catch (_) { /* needs data loaded */ }
+      }
+      const cfgs = drFeatureUniverse.slice();
+      if (!cfgs.length) { list.innerHTML = '<div class="tiny muted">Run DR once to populate the field list.</div>'; return; }
+      drLabelToKey = new Map();
+      for (const c of cfgs) drLabelToKey.set(c.label, c.key);
+      // Seed everything ON exactly once (first open) — EXCEPT the supply/mismatch
+      // columns, which are shown but start OFF (they're the heavy 2SFCA extras; the
+      // user opts into them). After that, an empty set means the user deliberately
+      // deselected all — don't re-add.
+      if (!drCustomInit) {
+        drCustomInit = true;
+        for (const c of cfgs) {
+          if (isSupplyFeature(c.key) || isSupplyFeature(c.label)
+              || isMismatchFeature(c.key) || isMismatchFeature(c.label)) continue;
+          drCustomKeys.add(c.key);
+        }
+      }
+
+      const scbGroups = scbKeyGroupMap();
+      const groups = new Map();  // groupName -> [{key,label}]
+      for (const c of cfgs) {
+        const g = fieldGroupOf(c, scbGroups);
+        (groups.get(g) || groups.set(g, []).get(g)).push(c);
+      }
+      const orderedNames = [...GROUP_ORDER.filter(g => groups.has(g)),
+        ...[...groups.keys()].filter(g => !GROUP_ORDER.includes(g))];
+
+    // Bootstrap accordion — one collapsible panel per group (nice checkboxes +
+    // menu feel). Groups collapsed by default so 12 groups stay compact.
+    list.innerHTML = '';
+    const acc = document.createElement('div');
+    acc.className = 'accordion accordion-flush';
+    acc.id = 'drCustomAccordion';
+    let gi = 0;
+    for (const gname of orderedNames) {
+      const items = groups.get(gname);
+      const bodyId = `drcg_${gi++}`;
+      const item = document.createElement('div');
+      item.className = 'accordion-item';
+
+      // header: group toggle checkbox + collapse button (name, size, selected badge)
+      const hdr = document.createElement('div');
+      hdr.className = 'accordion-header d-flex align-items-center';
+      const gWrap = document.createElement('div');
+      gWrap.className = 'form-check m-0 ms-2 me-1';
+      const gToggle = document.createElement('input');
+      gToggle.type = 'checkbox'; gToggle.className = 'form-check-input dr-cg-toggle';
+      gToggle.style.cursor = 'pointer'; gToggle.title = 'Toggle all in group';
+      gWrap.appendChild(gToggle); hdr.appendChild(gWrap);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'accordion-button collapsed py-2 px-2 shadow-none';
+      btn.setAttribute('data-bs-toggle', 'collapse');
+      btn.setAttribute('data-bs-target', `#${bodyId}`);
+      const selBadge = document.createElement('span');
+      selBadge.className = 'badge rounded-pill text-bg-primary ms-2';
+      btn.innerHTML = `<span class="fw-semibold small">${gname}</span>` +
+        `<span class="badge rounded-pill text-bg-light text-muted border ms-2">${items.length}</span>`;
+      btn.appendChild(selBadge);
+      hdr.appendChild(btn);
+      item.appendChild(hdr);
+
+      // body: responsive grid of form-check checkboxes
+      const coll = document.createElement('div');
+      coll.id = bodyId; coll.className = 'accordion-collapse collapse';
+      const body = document.createElement('div');
+      body.className = 'accordion-body p-2';
+      const row = document.createElement('div');
+      row.className = 'row row-cols-1 row-cols-sm-2 row-cols-md-3 g-1';
+
+      const syncGroupHead = () => {
+        const on = items.filter(x => drCustomKeys.has(x.key)).length;
+        gToggle.checked = on === items.length;
+        gToggle.indeterminate = on > 0 && on < items.length;
+        selBadge.textContent = on ? `${on} on` : '';
+        selBadge.style.display = on ? '' : 'none';
+      };
+
+      items.forEach((c, ci) => {
+        const col = document.createElement('div'); col.className = 'col';
+        const fc = document.createElement('div'); fc.className = 'form-check mb-0';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.className = 'form-check-input'; cb.id = `${bodyId}_${ci}`;
+        cb.dataset.key = c.key; cb.checked = drCustomKeys.has(c.key); cb.style.cursor = 'pointer';
+        const lab = document.createElement('label');
+        lab.className = 'form-check-label small text-truncate d-block';
+        lab.style.cssText = 'cursor:pointer; max-width:100%;';
+        lab.setAttribute('for', cb.id); lab.title = c.label; lab.textContent = c.label;
+        cb.addEventListener('change', () => {
+          if (cb.checked) drCustomKeys.add(c.key); else drCustomKeys.delete(c.key);
+          syncGroupHead(); updateCustomCount();
+        });
+        fc.appendChild(cb); fc.appendChild(lab); col.appendChild(fc); row.appendChild(col);
+      });
+      body.appendChild(row); coll.appendChild(body); item.appendChild(coll);
+      acc.appendChild(item);
+
+      gToggle.addEventListener('click', (e) => e.stopPropagation());
+      gToggle.addEventListener('change', () => {
+        const on = gToggle.checked;
+        for (const c of items) { if (on) drCustomKeys.add(c.key); else drCustomKeys.delete(c.key); }
+        coll.querySelectorAll('input.form-check-input').forEach(cb => { cb.checked = on; });
+        syncGroupHead(); updateCustomCount();
+      });
+      syncGroupHead();
+    }
+    list.appendChild(acc);
+      updateCustomCount();
+    } finally { drPickerBuilding = false; }
+  }
+
+  function setAllCustom(on) {
+    drCustomKeys.clear();
+    if (on) for (const c of drFeatureUniverse) if (typeof c.key === 'string') drCustomKeys.add(c.key);
+    buildCustomPicker();   // rebuild so every checkbox + group header/badge re-syncs
+  }
+
+  // Preload the 2SFCA supply layer (same call the inspector's Supply panel uses) so
+  // the supply/mismatch columns exist in the matrix → appear in the picker. Cached,
+  // so it's instant once loaded (e.g. after an inspector hover). Then force a fresh
+  // universe capture so those new columns are picked up.
+  async function ensureSupplyForPicker() {
+    if (typeof globalThis.ensureAccess2sfca !== 'function') return;
+    try {
+      const mode = (document.getElementById('fairnessTravelMode')?.value || 'walking').toLowerCase();
+      const city = (typeof globalThis.a2sCurrentCity === 'function') ? globalThis.a2sCurrentCity() : undefined;
+      await globalThis.ensureAccess2sfca(city, mode);
+      drFeatureUniverse = []; drUniverseSig = '';   // force re-capture with supply present
+    } catch (_) { /* supply is best-effort */ }
+  }
+
+  function syncCustomPanelVisibility() {
+    const panel = document.getElementById('drCustomPanel');
+    if (!panel) return;
+    const show = currentFeatureSet() === FS_CUSTOM;
+    panel.hidden = !show;
+    if (show) buildCustomPicker();
   }
 
   function initModeUI() {
@@ -256,6 +530,16 @@
       globalThis.DR_FEATURE_SET = currentFeatureSet();
       setSel.addEventListener('change', async () => {
         globalThis.DR_FEATURE_SET = currentFeatureSet();
+        // "All Data" / "Custom" are explore sets → default to NO colouring so the
+        // layout is read as clusters (via EBM/Contrastive/PCP), not tinted.
+        if (currentFeatureSet() === FS_ALL_DATA || currentFeatureSet() === FS_CUSTOM) {
+          const colorSel = document.getElementById('drColorBy');
+          if (colorSel && colorSel.value !== 'none') colorSel.value = 'none';
+        }
+        // Custom: preload the 2SFCA supply layer first so supply/mismatch columns
+        // are offered in the picker (they start unchecked).
+        if (currentFeatureSet() === FS_CUSTOM) await ensureSupplyForPicker();
+        syncCustomPanelVisibility();   // show/build the picker iff Custom
         refreshHints();
         // Invalidate cached engine results so EBM/contrastive recompute with the
         // new feature set instead of showing the frozen previous feature list.
@@ -265,6 +549,8 @@
           drPlot.engineContrast = null;
           drPlot.engineEBM = null;
         }
+        // Custom: don't auto-run — the user picks fields first, then presses Run.
+        if (currentFeatureSet() === FS_CUSTOM) return;
         await rerunDRIfPossible();
         if (typeof calculateEnginePlot === 'function'
             && typeof drPlot !== 'undefined' && drPlot?.lastSelectionIdx?.length) {
@@ -272,6 +558,41 @@
         }
       });
       setSel.dataset.bound = '1';
+    }
+
+    // Custom picker buttons.
+    const selAllBtn = document.getElementById('drCustomSelectAll');
+    if (selAllBtn && selAllBtn.dataset.bound !== '1') {
+      selAllBtn.addEventListener('click', () => setAllCustom(true));
+      selAllBtn.dataset.bound = '1';
+    }
+    const clrAllBtn = document.getElementById('drCustomClearAll');
+    if (clrAllBtn && clrAllBtn.dataset.bound !== '1') {
+      clrAllBtn.addEventListener('click', () => setAllCustom(false));
+      clrAllBtn.dataset.bound = '1';
+    }
+    syncCustomPanelVisibility();  // reflect the initial feature-set value
+
+    // Colour-by: re-tint the EXISTING projection immediately, WITHOUT re-running
+    // UMAP (which would change the layout + wipe the selection). Changing the
+    // colour only re-reads drPlot.rows through computeDRColors and redraws. If no
+    // projection exists yet, it silently applies on the next Run.
+    const colorSel = document.getElementById('drColorBy');
+    if (colorSel && colorSel.dataset.bound !== '1') {
+      colorSel.addEventListener('change', () => {
+        if (typeof drPlot === 'undefined' || !drPlot || !drPlot.points
+            || !Array.isArray(drPlot.rows) || !drPlot.rows.length
+            || typeof computeDRColors !== 'function' || typeof redrawDR !== 'function') {
+          return; // nothing plotted yet → colour applies on next Run
+        }
+        try {
+          drPlot.colors = computeDRColors(drPlot.rows, colorSel.value, drPlot.mode);
+          const sel = Array.isArray(drPlot.lastSelectionIdx) && drPlot.lastSelectionIdx.length
+            ? drPlot.lastSelectionIdx : null;
+          redrawDR(sel);
+        } catch (e) { console.warn('DR recolour failed:', e); }
+      });
+      colorSel.dataset.bound = '1';
     }
 
     // Need-weighted fairness toggle, mirrored into the DR toolbar so it's easy to

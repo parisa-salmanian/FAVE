@@ -190,6 +190,9 @@ let fairnessSearchClearBtn;
 let fairnessSearchStatus;
 let whatIfTypeSelect;
 let whatIfSuggestBtn;
+let whatIfScopeSelect;
+let whatIfSuggestBusy = false;   // a what-if suggestion search is running
+let whatIfSuggestCancel = false; // request to cancel the running search
 let whatIfUseBoundsToggle;
 let whatIfRadiusInput;
 let whatIfCountInput;
@@ -851,6 +854,7 @@ function wireUI() {
   whatIfSuggestCategoriesSelect = document.getElementById('whatIfSuggestCategories');
   whatIfFairnessTargetSelect = document.getElementById('whatIfFairnessTarget');
   whatIfAreaFocusSelect = document.getElementById('whatIfAreaFocus');
+  whatIfScopeSelect = document.getElementById('whatIfScope');
   whatIfLLMInput = document.getElementById('whatIfLLMInput');
   whatIfApplySuggestionBtn = document.getElementById('whatIfApplySuggestionBtn');
   whatIfClearSuggestionBtn = document.getElementById('whatIfClearSuggestionBtn');
@@ -1180,6 +1184,7 @@ function wireUI() {
   whatIfSuggestCategoriesSelect?.addEventListener('change', () => clearWhatIfSuggestions());
   whatIfFairnessTargetSelect?.addEventListener('change', () => clearWhatIfSuggestions());
   whatIfAreaFocusSelect?.addEventListener('change', () => clearWhatIfSuggestions());
+  whatIfScopeSelect?.addEventListener('change', () => clearWhatIfSuggestions());
   if (whatIfLassoBtn && !whatIfLassoBtn.__bound) {
     whatIfLassoBtn.addEventListener('click', keepOpen(() => toggleWhatIfLasso()));
     whatIfLassoBtn.__bound = true;
@@ -1213,10 +1218,24 @@ function wireUI() {
     if (whatIfApplySuggestionBtn) whatIfApplySuggestionBtn.disabled = !hasSuggestion || isBusy;
     if (whatIfClearSuggestionBtn) whatIfClearSuggestionBtn.disabled = !hasSuggestion || isBusy;
     if (whatIfVerifySuggestionBtn) whatIfVerifySuggestionBtn.disabled = !hasSuggestion || isBusy;
-    if (whatIfSuggestBtn) whatIfSuggestBtn.disabled = !!isBusy;
+    // Keep the suggest button ENABLED while busy so it doubles as a Cancel — a
+    // long city-wide search must always be interruptible (was: disabled → the
+    // user was stuck waiting with no way to stop).
+    if (whatIfSuggestBtn) {
+      whatIfSuggestBtn.disabled = false;
+      whatIfSuggestBtn.textContent = isBusy ? 'Cancel' : 'Generate suggestions';
+    }
   };
 
   const runWhatIfSuggestion = async () => {
+    // Toggle-to-cancel: a second click while a search is running requests cancel.
+    if (whatIfSuggestBusy) {
+      whatIfSuggestCancel = true;
+      if (whatIfSuggestBtn) whatIfSuggestBtn.textContent = 'Cancelling…';
+      return;
+    }
+    whatIfSuggestBusy = true;
+    whatIfSuggestCancel = false;
     const prompt = (whatIfLLMInput?.value || '').trim();
     const fallbackKind = whatIfModeSelect?.value || 'add';
     const fallbackCount = Math.max(1, Math.min(10, parseInt(whatIfCountInput?.value || '1', 10) || 1));
@@ -1295,17 +1314,24 @@ function wireUI() {
         count = Math.min(categories.length, 10);
       }
 
-      // Force city-wide exact scope for LLM suggestions: full city candidate space under current model.
-      bbox = null;
+      // Merged "Search area" control (single dropdown) → bbox + exact-containment
+      // area + areaFocus, all resolved in one place (resolveWhatIfScope). "Selected
+      // area" constrains the candidate search to the current selection / drawn
+      // lasso AND enforces exact containment so the suggestion can't land outside
+      // it; the other options search the map view / centre / outskirts / whole city.
+      const _res = resolveWhatIfScope(whatIfScopeSelect?.value || 'selected');
+      bbox = _res.bbox;
       selectedRadiusKm = 0;
       selectedCenter = null;
-      areaFocus = 'any';
+      areaFocus = _res.areaFocus;
+      const selectedArea = _res.area;
 
       whatIfLastSuggestionConfig = {
         categories: [...categories],
         kind,
         count,
         bbox,
+        area: selectedArea,
         center: selectedCenter,
         radiusKm: selectedRadiusKm,
         fairnessTarget,
@@ -1317,13 +1343,19 @@ function wireUI() {
         kind,
         count,
         bbox,
+        area: selectedArea,
         center: selectedCenter,
         radiusKm: selectedRadiusKm,
         fairnessTarget,
         fairnessCategories: categories.length ? categories : ALL_CATEGORIES,
         areaFocus
       });
-     const shouldAutoVerifyExact = count === 1 && categories.length === 1;
+     // Auto-verify OFF: for a single count=1 suggestion the greedy search already
+     // scans every candidate (so it's already exhaustive) — the "verify optimality"
+     // pass just re-did the same exhaustive search, which was the main cause of the
+     // multi-minute hang and isn't cancellable. The manual "Verify optimality"
+     // button still runs it on demand.
+     const shouldAutoVerifyExact = false;
       let exactSuggestions = suggestions;
       if (shouldAutoVerifyExact) {
         const exactReport = await verifyWhatIfSuggestionsOptimality(whatIfLastSuggestionConfig, suggestions);
@@ -1347,12 +1379,17 @@ function wireUI() {
       }
     } catch (err) {
       console.error(err);
-      clearWhatIfSuggestions();
-      setWhatIfSuggestionUI(err?.message || 'Unable to compute suggestions.', {
-        isError: true,
+      const cancelled = /cancel/i.test(err?.message || '');
+      if (!cancelled) clearWhatIfSuggestions();
+      setWhatIfSuggestionUI(cancelled ? 'Suggestion search cancelled.' : (err?.message || 'Unable to compute suggestions.'), {
+        isError: !cancelled,
         hasSuggestion: false,
         isBusy: false
       });
+    } finally {
+      whatIfSuggestBusy = false;
+      whatIfSuggestCancel = false;
+      if (whatIfSuggestBtn) whatIfSuggestBtn.textContent = 'Generate suggestions';
     }
   };
 

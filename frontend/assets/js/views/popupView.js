@@ -823,6 +823,7 @@ async function findBestOverallCandidate({
   cat,
   kind,
   bbox,
+  area,
   center,
   radiusKm,
   areaFocus,
@@ -834,6 +835,7 @@ async function findBestOverallCandidate({
   const candidates = pickCandidateRows(rows, {
     kind,
     bbox,
+    area,
     usedIds,
     center,
     radiusKm,
@@ -1091,6 +1093,29 @@ function isWithinBBox(coord, bbox) {
   return coord[0] >= minX && coord[0] <= maxX && coord[1] >= minY && coord[1] <= maxY;
 }
 
+// Exact containment for the "Selected area" scope: a candidate must fall INSIDE
+// the real selection, not just its bounding box (which leaks across the gaps of a
+// scattered/irregular pocket). `area` is built by getSelectedAreaBBox():
+//   { hexes:Set, res } → mezo: the candidate's h3 cell must be a selected cell;
+//   { polygon }        → drawn lasso / micro hull: point-in-polygon.
+// No area (other scopes) → always true (bbox/areaFocus already did the filtering).
+function isCoordInSelectedArea(coord, area) {
+  if (!area || !coord) return true;
+  try {
+    if (area.hexes && area.res != null) {
+      const h3lib = (typeof h3 !== 'undefined') ? h3
+                  : ((typeof window !== 'undefined' && window.h3) ? window.h3 : null);
+      const toCell = h3lib && (h3lib.geoToH3 || h3lib.latLngToCell);
+      if (typeof toCell !== 'function') return true;   // no h3 → don't over-filter
+      return area.hexes.has(toCell.call(h3lib, coord[1], coord[0], area.res));
+    }
+    if (area.polygon) {
+      return turf.booleanPointInPolygon(turf.point(coord), area.polygon);
+    }
+  } catch (_) {}
+  return true;
+}
+
 function isWithinRadius(coord, center, radiusKm) {
   if (!center || !coord || !Number.isFinite(radiusKm) || radiusKm <= 0) return true;
   const distMeters = haversineMeters(coord, center);
@@ -1100,6 +1125,7 @@ function isWithinRadius(coord, center, radiusKm) {
 function pickCandidateRows(rows, {
   kind,
   bbox,
+  area,
   usedIds,
   center,
   radiusKm,
@@ -1119,6 +1145,7 @@ function pickCandidateRows(rows, {
     })
     .filter(row => !excludePOIBuildings || !row.isMatch)
     .filter(row => isWithinBBox(row.centroid, bbox))
+    .filter(row => isCoordInSelectedArea(row.centroid, area))
     .filter(row => isWithinRadius(row.centroid, center, radiusKm))
     .filter(row => {
       if (!areaFocus || areaFocus === 'any') return true;
@@ -1134,7 +1161,7 @@ function pickCandidateRows(rows, {
     .slice(0, Number.isFinite(limit) ? limit : rows.length);
 }
 
-async function computeWhatIfSuggestionsForCategory({ cat, kind, count, bbox, center, radiusKm, areaFocus }) {
+async function computeWhatIfSuggestionsForCategory({ cat, kind, count, bbox, area, center, radiusKm, areaFocus }) {
   const suggestions = [];
   const usedIds = new Set();
   const usedCoords = [];
@@ -1158,6 +1185,7 @@ async function computeWhatIfSuggestionsForCategory({ cat, kind, count, bbox, cen
       const candidates = pickCandidateRows(rows, {
         kind,
         bbox,
+        area,
         usedIds,
         center,
         radiusKm,
@@ -1173,7 +1201,13 @@ async function computeWhatIfSuggestionsForCategory({ cat, kind, count, bbox, cen
       let best = null;
       const metricEps = 0.0005;
       for (let ci = 0; ci < candidates.length; ci++) {
-        if (ci > 0 && ci % 5 === 0) await new Promise(r => setTimeout(r, 0));
+        if (ci > 0 && ci % 3 === 0) {
+          await new Promise(r => setTimeout(r, 0));   // yield → page stays responsive
+          if (typeof whatIfSuggestCancel !== 'undefined' && whatIfSuggestCancel) throw new Error('Suggestion search cancelled.');
+          if (ci % 30 === 0 && typeof updateWhatIfSuggestionUI === 'function') {
+            updateWhatIfSuggestionUI(`Evaluating candidate ${ci}/${candidates.length}…`, { isBusy: true });
+          }
+        }
         const candidate = candidates[ci];
         const inequality = generalizedEntropyWithIfCityCandidate(cat, entropyRows, categories, candidate.centroid, { [cat]: 1 });
         if (!best || inequality < best.inequality - metricEps) {
@@ -1219,6 +1253,7 @@ async function computeWhatIfSuggestionsForCategory({ cat, kind, count, bbox, cen
     const candidates = pickCandidateRows(buildingRows, {
       kind,
       bbox,
+      area,
       usedIds,
       center,
       radiusKm,
@@ -1233,7 +1268,13 @@ async function computeWhatIfSuggestionsForCategory({ cat, kind, count, bbox, cen
     let best = null;
     const giniEps = 0.0005;
     for (let ci = 0; ci < candidates.length; ci++) {
-      if (ci > 0 && ci % 5 === 0) await new Promise(r => setTimeout(r, 0));
+      if (ci > 0 && ci % 3 === 0) {
+        await new Promise(r => setTimeout(r, 0));   // yield → page stays responsive
+        if (typeof whatIfSuggestCancel !== 'undefined' && whatIfSuggestCancel) throw new Error('Suggestion search cancelled.');
+        if (ci % 30 === 0 && typeof updateWhatIfSuggestionUI === 'function') {
+          updateWhatIfSuggestionUI(`Evaluating candidate ${ci}/${candidates.length}…`, { isBusy: true });
+        }
+      }
       const candidate = candidates[ci];
       const g = giniWithCandidate(cat, giniRows, candidate.centroid);
       if (!best || g < best.gini - giniEps) {
@@ -1271,6 +1312,7 @@ async function computeWhatIfSuggestions({
   kind,
   count,
   bbox,
+  area,
   center,
   radiusKm,
   fairnessTarget,
@@ -1311,6 +1353,7 @@ async function computeWhatIfSuggestions({
           const candidates = pickCandidateRows(rows, {
             kind,
             bbox,
+            area,
             usedIds,
             center,
             radiusKm,
@@ -1355,6 +1398,7 @@ async function computeWhatIfSuggestions({
             cat,
             kind,
             bbox,
+            area,
             center,
             radiusKm,
             areaFocus,
@@ -1381,6 +1425,7 @@ async function computeWhatIfSuggestions({
         kind,
         count,
         bbox,
+        area,
         center,
         radiusKm,
         areaFocus
@@ -1474,6 +1519,7 @@ async function verifyWhatIfSuggestionsOptimality(config, suggestions) {
   const fairnessTarget = config.fairnessTarget === 'overall' ? 'overall' : 'category';
   const kind = config.kind === 'change' ? 'change' : 'add';
   const bbox = config.bbox || null;
+  const area = config.area || null;
   const center = config.center || null;
   const radiusKm = Number.isFinite(config.radiusKm) ? config.radiusKm : 0;
   const areaFocus = config.areaFocus || 'any';
@@ -1506,6 +1552,7 @@ async function verifyWhatIfSuggestionsOptimality(config, suggestions) {
       const candidates = pickCandidateRows(rows, {
         kind,
         bbox,
+        area,
         usedIds: new Set(),
         center,
         radiusKm,

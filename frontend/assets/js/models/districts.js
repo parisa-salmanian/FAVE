@@ -490,11 +490,16 @@ async function refreshDistrictScores() {
     const nOrNaN = (x) => (x == null ? NaN : Number(x));
     const fOrNull = (x) => (Number.isFinite(x) ? x : null);
     pts.push(turf.point(c, { score: s, overall: overallScore, cats: catScores, focused: focusedScore,
+      __deso: props?.__deso ?? null,   // for __desoMix (rich SCB deso_full aggregation)
       childReal:    dp ? fOrNull(nOrNaN(dp.child_frac)) : null,
       elderReal:    dp ? fOrNull(nOrNaN(dp.elder_frac)) : null,
       incomeReal:   dp ? fOrNull(nOrNaN(dp.income))     : null,
       higherEdReal: dp ? fOrNull(nOrNaN(dp.higher_ed))  : null,
-      needReal:     dp ? fOrNull(nOrNaN(dp.needZ))      : null }));
+      needReal:     dp ? fOrNull(nOrNaN(dp.needZ))      : null,
+      depReal:      dp ? fOrNull(nOrNaN(dp.dependency))     : null,
+      neetReal:     dp ? fOrNull(nOrNaN(dp.neet))           : null,
+      incSupReal:   dp ? fOrNull(nOrNaN(dp.income_support)) : null,
+      maleReal:     dp ? fOrNull(nOrNaN(dp.male_frac))      : null }));
   }
   const ptsFC = turf.featureCollection(pts);
 
@@ -533,17 +538,34 @@ async function refreshDistrictScores() {
     const incomeMean   = meanReal('incomeReal');
     const higherEdMean = meanReal('higherEdReal');
     const needMean     = meanReal('needReal');
+    const depMean      = meanReal('depReal');
+    const neetMean     = meanReal('neetReal');
+    const incSupMean   = meanReal('incSupReal');
+    const maleMean     = meanReal('maleReal');
+    // DESO mix {deso: buildingCount} — lets the DR "All Data" set aggregate the
+    // ~160 rich SCB deso_full fields on demand (count-weighted DESO mean) without
+    // stamping them all here.
+    const desoMix = {};
+    within.features.forEach((p) => {
+      const dz = p.properties?.__deso;
+      if (dz != null) desoMix[dz] = (desoMix[dz] || 0) + 1;
+    });
     const overallMean = overallScores.length ? overallScores.reduce((a, b) => a + b, 0) / overallScores.length : null;
     const focusedMean = focusedScores.length ? focusedScores.reduce((a, b) => a + b, 0) / focusedScores.length : null;
     feat.properties = {
       ...(feat.properties || {}),
       __districtName: name,
       __score: mean,
+      __desoMix: desoMix,
       __childReal: childMean,
       __elderReal: elderMean,
       __incomeReal: incomeMean,
       __higherEdReal: higherEdMean,
       __needZ: needMean,
+      __depReal: depMean,
+      __neetReal: neetMean,
+      __incSupReal: incSupMean,
+      __maleReal: maleMean,
       __count: scores.length,
       __fairOverall: overallMean,
       __fairByCat: fairByCat,
@@ -808,6 +830,7 @@ async function refreshMezoScores() {
       hexMap.set(cell, {
         hex: cell,
         total: 0,
+        desoMix: {},   // {deso: buildingCount} → on-demand rich SCB deso_full aggregation
         sum: 0,
         count: 0,
         overallSum: 0,
@@ -826,12 +849,21 @@ async function refreshMezoScores() {
         higherEdCount: 0,
         needSum: 0,
         needCount: 0,
+        depSum: 0,
+        depCount: 0,
+        neetSum: 0,
+        neetCount: 0,
+        incSupSum: 0,
+        incSupCount: 0,
+        maleSum: 0,
+        maleCount: 0,
         prevSum: 0,
         prevCount: 0
       });
     }
     const entry = hexMap.get(cell);
     entry.total += 1;
+    if (props?.__deso != null) entry.desoMix[props.__deso] = (entry.desoMix[props.__deso] || 0) + 1;
     // Real SCB DESO socioeconomics of the building's DESO — aggregated to the hex
     // cell below so the mezo DR / map can colour cells by "who lives there" (same
     // as the district path). Color-only; never enters the fairness matrix. One
@@ -846,6 +878,11 @@ async function refreshMezoScores() {
     accumReal('incomeSum',   'incomeCount',   dp ? dp.income     : null);
     accumReal('higherEdSum', 'higherEdCount', dp ? dp.higher_ed  : null);
     accumReal('needSum',     'needCount',     dp ? dp.needZ      : null);
+    // 4 more real DESO SCB fields → the full 9-field profile for the "All Data" set.
+    accumReal('depSum',      'depCount',      dp ? dp.dependency     : null);
+    accumReal('neetSum',     'neetCount',     dp ? dp.neet           : null);
+    accumReal('incSupSum',   'incSupCount',   dp ? dp.income_support : null);
+    accumReal('maleSum',     'maleCount',     dp ? dp.male_frac      : null);
     if (Number.isFinite(score)) {
       entry.sum += score;
       entry.count += 1;
@@ -886,11 +923,16 @@ async function refreshMezoScores() {
     const incomeMean = entry.incomeCount ? entry.incomeSum / entry.incomeCount : null;
     const higherEdMean = entry.higherEdCount ? entry.higherEdSum / entry.higherEdCount : null;
     const needMean = entry.needCount ? entry.needSum / entry.needCount : null;
+    const depMean = entry.depCount ? entry.depSum / entry.depCount : null;
+    const neetMean = entry.neetCount ? entry.neetSum / entry.neetCount : null;
+    const incSupMean = entry.incSupCount ? entry.incSupSum / entry.incSupCount : null;
+    const maleMean = entry.maleCount ? entry.maleSum / entry.maleCount : null;
     const prevMean = entry.prevCount ? entry.prevSum / entry.prevCount : null;
     return {
       hex: entry.hex,
       __score: mean,
       __count: entry.total,
+      __desoMix: entry.desoMix,
       __fairOverall: overallMean,
       __fairByCat: fairByCat,
       __fairFocused: focusedMean,
@@ -900,6 +942,10 @@ async function refreshMezoScores() {
       __incomeReal: incomeMean,
       __higherEdReal: higherEdMean,
       __needZ: needMean,
+      __depReal: depMean,
+      __neetReal: neetMean,
+      __incSupReal: incSupMean,
+      __maleReal: maleMean,
       __prevScore: prevMean
     };
   };

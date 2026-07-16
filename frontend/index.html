@@ -881,18 +881,16 @@
                     <option value="category" selected>Selected POI fairness</option>
                     <option value="overall">Overall fairness (selected POIs)</option>
                   </select>
-                  <label for="whatIfAreaFocus" class="form-label small text-muted mb-1">Area focus</label>
-                  <select id="whatIfAreaFocus" class="form-select form-select-sm mb-2">
-                    <option value="any" selected>City-wide</option>
-                    <option value="center">City center</option>
+                  <label for="whatIfScope" class="form-label small text-muted mb-1">Search area</label>
+                  <select id="whatIfScope" class="form-select form-select-sm mb-2" title="Where to look for the best spot. Selected area = only inside your map/DR selection or a drawn what-if lasso (exact — the suggestion stays inside it). Current map view = whatever is on screen. City centre / Outskirts = biased to the middle vs the edge of the city. City-wide = the whole city.">
+                    <option value="selected" selected>Selected area (selection or drawn)</option>
+                    <option value="view">Current map view</option>
+                    <option value="center">City centre</option>
                     <option value="outskirts">Outskirts / rural</option>
+                    <option value="city">City-wide</option>
                   </select>
                   <label for="whatIfSuggestCount" class="form-label small text-muted mb-1">How many suggestions?</label>
                   <input id="whatIfSuggestCount" class="form-control form-control-sm mb-2" type="number" min="1" max="10" value="1" />
-                  <div class="form-check form-switch mb-2">
-                    <input class="form-check-input" type="checkbox" role="switch" id="whatIfUseBoundsToggle" checked>
-                    <label class="form-check-label small" for="whatIfUseBoundsToggle">Limit to current map view</label>
-                  </div>
                   <label for="whatIfLLMInput" class="form-label small text-muted mb-1">LLM prompt (optional)</label>
                   <textarea id="whatIfLLMInput" class="form-control form-control-sm mb-2" rows="2" placeholder="E.g. focus on hospitals + schools in city center, suggest 3 spots."></textarea>
                   <button id="whatIfSuggestBtn" class="btn btn-sm btn-outline-warning w-100" type="button">
@@ -1451,12 +1449,15 @@
               <option value="supply">Supply (2SFCA)</option>
               <option value="access_supply">Access + Supply</option>
               <option value="supply_plus">Supply + Mismatch</option>
+              <option value="all_data">All Data (access + supply + all SCB)</option>
+              <option value="custom">Custom — pick fields…</option>
             </select>
             <label class="tiny muted" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap" title="Weight fairness by SCB deprivation (need) — changes the Gini/overall fairness, not the DR plot">
               <input type="checkbox" id="drNeedWeightToggle"> Need-weighted
             </label>
             <span class="tiny muted">Color</span>
             <select id="drColorBy" class="control">
+              <option value="none">No colour (structure only)</option>
               <option value="overall">Overall fairness</option>
               <option value="poi">Selected fairness</option>
               <option value="supply">Supply provision (2SFCA)</option>
@@ -1481,6 +1482,21 @@
               <option value="year">Built year</option>
               <option value="height">Height</option>
             </select>
+          </div>
+          <!-- Custom field picker (shown only when Features = "Custom"). Grouped
+               Bootstrap accordion checklist of every embeddable input; related
+               fields sit together. Built + wired in controllers/drFeatureMode.js. -->
+          <div id="drCustomPanel" hidden class="card shadow-sm my-2">
+            <div class="card-header bg-light d-flex align-items-center flex-wrap gap-2 py-2">
+              <strong class="small mb-0">Pick the inputs for DR</strong>
+              <span id="drCustomCount" class="badge rounded-pill text-bg-primary">0 selected</span>
+              <div class="ms-auto d-flex align-items-center gap-2">
+                <button id="drCustomSelectAll" type="button" class="btn btn-sm btn-outline-primary">Select all</button>
+                <button id="drCustomClearAll" type="button" class="btn btn-sm btn-outline-secondary">Deselect all</button>
+                <span class="text-muted small">then press <strong>Run</strong></span>
+              </div>
+            </div>
+            <div id="drCustomList" class="card-body p-0" style="max-height:320px; overflow:auto;"></div>
           </div>
           <!-- Hidden legacy controls — kept in DOM so existing drView.js
                handlers keep firing (they read these by ID). The new
@@ -1508,6 +1524,9 @@
           <div class="dr-feature-bar">
             <div class="tiny muted" style="margin-bottom: 4px;">Features</div>
             <div class="tiny" id="drLegendText" style="color: var(--ink-2); line-height: 1.4;">—</div>
+            <!-- Colour-scale swatch: light→dark bar matching the active ramp so
+                 "darker = more of the attribute" reads at a glance under the text. -->
+            <div id="drLegendSwatch" hidden style="height: 10px; border-radius: 5px; margin: 4px 0 2px; border: 1px solid rgba(0,0,0,0.08);"></div>
             <div class="dr-feature-meta">
               <div class="tiny muted" id="drSelectInfo">Selection: 0 points</div>
               <span id="drStatus" class="tiny muted"></span>

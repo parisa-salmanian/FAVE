@@ -2212,3 +2212,140 @@ body[data-drawer-collapsed="true"][data-pc-open="true"] .shell-legend,
 body[data-drawer-collapsed="true"][data-pc-open="true"] .shell-zoom {
   bottom: 40px !important;
 }
+
+/* ============================================================================
+   DR "Custom" field picker — reskinned to the FAVE shell.
+   The picker is built with Bootstrap (card / accordion / form-check); these
+   rules override Bootstrap's cool defaults with FAVE's warm tokens so it reads
+   as part of the app: hairline --line dividers, --ink-3 uppercase labels, warm
+   --accent checkboxes + soft-accent badges, and shadow/radius from the shell.
+   All colours are tokens → dark mode follows automatically.
+   ============================================================================ */
+#drCustomPanel.card {
+  --bs-card-bg: var(--surface);
+  --bs-card-border-color: var(--line);
+  --bs-card-cap-bg: var(--surface-1);
+  --bs-card-border-radius: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+  font-family: var(--font-sans);
+  color: var(--ink);
+}
+#drCustomPanel .card-header {
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--line);
+  padding: 10px 12px;
+}
+#drCustomPanel .card-header > strong {
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--ink-3);
+}
+#drCustomPanel .card-header .text-muted { color: var(--ink-3) !important; font-size: 11px; }
+#drCustomPanel .card-header .text-muted strong { color: var(--ink-2); font-weight: 600; }
+
+/* count pill — soft accent, never solid blue */
+#drCustomPanel #drCustomCount.badge {
+  background: var(--accent-soft) !important;
+  color: var(--accent-ink) !important;
+  border: 1px solid color-mix(in oklch, var(--accent) 22%, transparent);
+  font-weight: 600;
+  font-size: 10.5px;
+  padding: 0.32em 0.6em;
+}
+
+/* ghost toolbar buttons */
+#drCustomPanel .btn {
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 0.28rem 0.6rem;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+#drCustomPanel .btn-outline-secondary {
+  --bs-btn-color: var(--ink-2);
+  --bs-btn-border-color: var(--line-strong);
+  --bs-btn-hover-bg: var(--surface-2);
+  --bs-btn-hover-color: var(--ink);
+  --bs-btn-hover-border-color: var(--line-strong);
+  --bs-btn-active-bg: var(--surface-2);
+  --bs-btn-active-color: var(--ink);
+  --bs-btn-active-border-color: var(--line-strong);
+}
+#drCustomPanel .btn-outline-primary {
+  --bs-btn-color: var(--accent-ink);
+  --bs-btn-border-color: color-mix(in oklch, var(--accent) 34%, transparent);
+  --bs-btn-hover-bg: var(--accent-soft);
+  --bs-btn-hover-color: var(--accent-ink);
+  --bs-btn-hover-border-color: var(--accent);
+  --bs-btn-active-bg: var(--accent-soft);
+  --bs-btn-active-color: var(--accent-ink);
+  --bs-btn-active-border-color: var(--accent);
+}
+
+/* accordion — flush, hairline dividers, no blue active state */
+#drCustomPanel .accordion {
+  --bs-accordion-bg: transparent;
+  --bs-accordion-color: var(--ink);
+  --bs-accordion-border-color: var(--line);
+  --bs-accordion-btn-bg: transparent;
+  --bs-accordion-btn-color: var(--ink-1);
+  --bs-accordion-active-bg: transparent;
+  --bs-accordion-active-color: var(--ink);
+  --bs-accordion-btn-focus-border-color: transparent;
+  --bs-accordion-btn-focus-box-shadow: none;
+  --bs-accordion-btn-padding-y: 0.5rem;
+  --bs-accordion-btn-padding-x: 0.4rem;
+}
+#drCustomPanel .accordion-item { background: transparent; border: 0; border-top: 1px solid var(--line); }
+#drCustomPanel .accordion-item:first-child { border-top: 0; }
+#drCustomPanel .accordion-header { background: transparent; }
+#drCustomPanel .accordion-button {
+  font-family: var(--font-sans);
+  background: transparent;
+}
+#drCustomPanel .accordion-button:hover { background: var(--surface-1); }
+#drCustomPanel .accordion-button:not(.collapsed) { box-shadow: none; color: var(--ink); }
+#drCustomPanel .accordion-button .fw-semibold { color: var(--ink-1); font-size: 12px; letter-spacing: 0.005em; }
+#drCustomPanel .accordion-button::after { opacity: 0.45; background-size: 1rem; }
+
+/* group badges: size = subtle grey, "N on" = soft accent */
+#drCustomPanel .accordion-button .badge.text-bg-light {
+  background: var(--surface-2) !important;
+  color: var(--ink-3) !important;
+  border: 1px solid var(--line) !important;
+  font-weight: 600;
+  font-size: 10px;
+}
+#drCustomPanel .accordion-button .badge.text-bg-primary {
+  background: var(--accent-soft) !important;
+  color: var(--accent-ink) !important;
+  font-weight: 600;
+  font-size: 10px;
+}
+#drCustomPanel .accordion-body { background: var(--surface); padding: 6px 10px 10px 12px; }
+
+/* checkboxes — warm accent, lighter labels */
+#drCustomPanel .form-check-input {
+  border-color: var(--line-strong);
+  cursor: pointer;
+}
+#drCustomPanel .form-check-input:checked {
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+#drCustomPanel .form-check-input:focus {
+  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 0.18rem var(--accent-soft);
+}
+#drCustomPanel .form-check-label { color: var(--ink-2); font-size: 11.5px; }
+#drCustomPanel .form-check-input:checked ~ .form-check-label { color: var(--ink-1); }
+
+/* thin scrollbar for the list */
+#drCustomList { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+#drCustomList::-webkit-scrollbar { width: 8px; }
+#drCustomList::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 8px; }

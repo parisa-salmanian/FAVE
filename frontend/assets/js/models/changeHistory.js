@@ -524,7 +524,107 @@ function updateWhatIfSuggestionUI(text, { isError = false, isBusy = false, hasSu
   if (whatIfApplySuggestionBtn) whatIfApplySuggestionBtn.disabled = !hasSuggestion || isBusy;
   if (whatIfClearSuggestionBtn) whatIfClearSuggestionBtn.disabled = !hasSuggestion || isBusy;
   if (whatIfVerifySuggestionBtn) whatIfVerifySuggestionBtn.disabled = !hasSuggestion || isBusy;
-  if (whatIfSuggestBtn) whatIfSuggestBtn.disabled = !!isBusy;
+  if (whatIfSuggestBtn) {
+    whatIfSuggestBtn.disabled = false;
+    whatIfSuggestBtn.textContent = isBusy ? 'Cancel' : 'Generate suggestions';
+  }
+}
+
+function _h3lib() {
+  return (typeof h3 !== 'undefined') ? h3
+       : ((typeof window !== 'undefined' && window.h3) ? window.h3 : null);
+}
+
+// Resolve the "Selected area" scope to a bounding box PLUS an exact-containment
+// `area` so a suggestion can't leak outside the actual selection (the bbox is a
+// loose rectangle; `area` is the real shape). Tries, in order: (1) a drawn
+// what-if lasso → point-in-ring polygon; (2) the current DR selection — mezo
+// hex cells → the exact set of selected h3 cells; micro buildings → a convex
+// hull of the selected points. Returns null if nothing is selected.
+// Shape: { bbox:[minX,minY,maxX,maxY], ring, area } where area is one of
+//   { hexes:Set<string>, res:number } | { polygon:GeoJSONPolygon } | null.
+function getSelectedAreaBBox() {
+  // 1) explicit drawn what-if lasso
+  try {
+    if (typeof whatIfLasso !== 'undefined' && whatIfLasso?.selectionRing) {
+      const ring = whatIfLasso.selectionRing;
+      const bb = (typeof getWhatIfLassoBBox === 'function')
+        ? getWhatIfLassoBBox()
+        : turf.bbox(turf.polygon([ring]));
+      if (bb) {
+        let area = null;
+        try { area = { polygon: turf.polygon([ring]) }; } catch (_) {}
+        return { bbox: bb, ring, area };
+      }
+    }
+  } catch (_) {}
+  // 2) current DR selection (buildings at micro, hex cells at meso)
+  try {
+    if (typeof drPlot !== 'undefined' && Array.isArray(drPlot?.lastSelectionIdx)
+        && drPlot.lastSelectionIdx.length && Array.isArray(drPlot.sample)) {
+      const h3lib = _h3lib();
+      const pts = [];
+      const hexes = new Set();
+      for (const i of drPlot.lastSelectionIdx) {
+        const e = drPlot.sample[i];
+        if (!e) continue;
+        if (e.hex) {
+          hexes.add(e.hex);
+          if (h3lib) {
+            let ll = null;
+            try { ll = h3lib.cellToLatLng ? h3lib.cellToLatLng(e.hex) : (h3lib.h3ToGeo ? h3lib.h3ToGeo(e.hex) : null); } catch (_) {}
+            if (ll && Number.isFinite(ll[0]) && Number.isFinite(ll[1])) { pts.push([ll[1], ll[0]]); continue; }
+          }
+        }
+        if (Number.isFinite(e.__lon) && Number.isFinite(e.__lat)) { pts.push([e.__lon, e.__lat]); continue; }
+        try { const c = turf.centroid(e).geometry.coordinates; if (Number.isFinite(c[0]) && Number.isFinite(c[1])) pts.push(c); } catch (_) {}
+      }
+      if (pts.length) {
+        const fc = turf.featureCollection(pts.map(p => turf.point(p)));
+        const bbox = turf.bbox(fc);
+        let area = null;
+        // Mezo: exact membership in the selected h3 cells (best precision).
+        if (hexes.size && h3lib) {
+          const firstHex = hexes.values().next().value;
+          const res = (typeof h3lib.h3GetResolution === 'function') ? h3lib.h3GetResolution(firstHex)
+                    : (typeof h3lib.getResolution === 'function') ? h3lib.getResolution(firstHex) : null;
+          if (res != null) area = { hexes, res };
+        }
+        // Micro (or no h3): convex hull of the selected points as the containment
+        // polygon (falls back to bbox-only if <3 points / degenerate).
+        if (!area) {
+          try { const hull = turf.convex(fc); if (hull) area = { polygon: hull }; } catch (_) {}
+        }
+        return { bbox, ring: null, area };
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+// Map the single "Search area" dropdown value to (bbox, exact-containment area,
+// areaFocus). This is the ONE place the merged Search-scope + Area-focus control
+// is interpreted, shared by the button (state.js) and chat (changeHistory) paths.
+//   selected  → inside the selection/drawn lasso (exact area + bbox)
+//   view      → current map viewport bbox
+//   center    → whole city, biased to the centre
+//   outskirts → whole city, biased to the edge / rural
+//   city      → whole city, no bias
+function resolveWhatIfScope(scopeValue) {
+  const scope = scopeValue || 'selected';
+  if (scope === 'view') {
+    const bb = (typeof getMapBoundsBBox === 'function') ? getMapBoundsBBox() : null;
+    return { bbox: bb, area: null, areaFocus: 'any' };
+  }
+  if (scope === 'center')    return { bbox: null, area: null, areaFocus: 'center' };
+  if (scope === 'outskirts') return { bbox: null, area: null, areaFocus: 'outskirts' };
+  if (scope === 'city')      return { bbox: null, area: null, areaFocus: 'any' };
+  // default: 'selected' — exact containment
+  const sel = (typeof getSelectedAreaBBox === 'function') ? getSelectedAreaBBox() : null;
+  if (!sel || !sel.bbox) {
+    throw new Error('No area selected. Draw a what-if lasso or make a map/DR selection first, or pick a different Search area (e.g. City-wide).');
+  }
+  return { bbox: sel.bbox, area: sel.area || null, areaFocus: 'any' };
 }
 
 async function runWhatIfSuggestionFromChat(prompt, overrides = {}) {
@@ -627,17 +727,21 @@ async function runWhatIfSuggestionFromChat(prompt, overrides = {}) {
       throw new Error('Draw a what-if lasso selection first.');
     }
 
-    // Force city-wide exact scope for LLM suggestions: full city candidate space under current model.
-    bbox = null;
+    // Merged "Search area" control (dropdown, or overrides.scope from chat) →
+    // bbox + exact-containment area + areaFocus, all via resolveWhatIfScope.
+    const _res = resolveWhatIfScope(overrides.scope || whatIfScopeSelect?.value || 'selected');
+    bbox = _res.bbox;
     selectedRadiusKm = 0;
     selectedCenter = null;
-    areaFocus = 'any';
+    areaFocus = _res.areaFocus;
+    const selectedArea = _res.area;
 
     whatIfLastSuggestionConfig = {
       categories: [...categories],
       kind,
       count,
       bbox,
+      area: selectedArea,
       center: selectedCenter,
       radiusKm: selectedRadiusKm,
       fairnessTarget,
@@ -649,6 +753,7 @@ async function runWhatIfSuggestionFromChat(prompt, overrides = {}) {
       kind,
       count,
       bbox,
+      area: selectedArea,
       center: selectedCenter,
       radiusKm: selectedRadiusKm,
       fairnessTarget,

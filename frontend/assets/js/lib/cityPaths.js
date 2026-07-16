@@ -182,6 +182,61 @@ const DR_SYNTH_DEMO_FEATURES = [
   { prop: '__synthMale',          key: 'demSynMale',      label: 'Male share (dem)' }
 ];
 
+// "All Data" explore set — the FULL SCB socio-demographic profile as DR EMBEDDING
+// features, at EVERY scale + city. Real DESO values at meso/macro (aggregated per
+// unit into the __*Real fields that districts.js stamps on cells/districts),
+// synthetic per-building values at micro (__synth*). Same scb* keys + "(scb)"
+// labels at all scales so the filter, contrastive, EBM and PCP treat them
+// uniformly. Kept ONLY by the all_data feature set (label ends "(scb)") so every
+// other set stays non-tautological (real demographics remain colour-only there).
+// NB the 9 BASE entries are the DERIVED SCB summary baked into
+// demographics/deso.geojson (each has an explicit __synth*/__*Real key). The
+// FULL rich SCB profile (income/labour/transfers/education/students/age spectrum,
+// ~130-160 fields, split by sex + Sweden-/foreign-born) lives in the separate
+// demographics/deso_full.json (baked by tools/bake_scb_full.py) and is appended
+// at runtime by applyDrScbFullFields() when a city loads. Those appended entries
+// carry a `desoKey` instead of __synth*/__*Real: their value is resolved by DESO
+// lookup (epiDesoFull) — a count-weighted DESO mean at meso/macro (via each unit's
+// __desoMix) and the building's own DESO value at micro. So adding SCB fields is a
+// bake-list change, never a code change here.
+const DR_SCB_FEATURES_BASE = [
+  { key: 'scbChild',    label: 'child share (scb)',      building: '__synthChild',         unit: '__childReal'    },
+  { key: 'scbElder',    label: 'elderly share (scb)',    building: '__synthElder',         unit: '__elderReal'    },
+  { key: 'scbDep',      label: 'dependency ratio (scb)', building: '__synthDependency',    unit: '__depReal'      },
+  { key: 'scbHigherEd', label: 'higher education (scb)', building: '__synthHigherEd',      unit: '__higherEdReal' },
+  { key: 'scbNeet',     label: 'NEET share (scb)',       building: '__synthNeet',          unit: '__neetReal'     },
+  { key: 'scbIncSup',   label: 'income support (scb)',   building: '__synthIncomeSupport', unit: '__incSupReal'   },
+  { key: 'scbMale',     label: 'male share (scb)',       building: '__synthMale',          unit: '__maleReal'     },
+  { key: 'scbIncome',   label: 'median income (scb)',    building: '__synthIncome',        unit: '__incomeReal', log: true },
+  { key: 'scbNeed',     label: 'need index (scb)',       building: '__synthNeed',          unit: '__needZ'        }
+];
+// Live SCB feature list = base 9 + the loaded city's deso_full.json manifest.
+// Mutated IN PLACE (same binding) so every consumer that reads DR_SCB_FEATURES at
+// call time (scbRowFields, scbLabelsIfPresent, the contrastive/EBM payload) stays
+// current without a re-import. DR_FEATURE_CONFIG re-syncs its scb tail separately.
+const DR_SCB_FEATURES = DR_SCB_FEATURES_BASE.slice();
+
+// Rebuild DR_SCB_FEATURES = base 9 + `fields` (the deso_full.json manifest for the
+// active city). Called on city load. `fields` = [{key,label,group,...}] or null.
+function applyDrScbFullFields(fields) {
+  DR_SCB_FEATURES.length = 0;
+  for (const f of DR_SCB_FEATURES_BASE) DR_SCB_FEATURES.push(f);
+  if (Array.isArray(fields)) {
+    for (const fld of fields) {
+      if (!fld || typeof fld.key !== 'string') continue;
+      DR_SCB_FEATURES.push({
+        key: 'scbF_' + fld.key,                 // scbF... → matches isScbFeature /^scb[A-Z]/
+        label: (fld.label || fld.key) + ' (scb)',
+        desoKey: fld.key,                        // resolved via epiDesoFull (DESO lookup)
+        group: fld.group,
+        log: /disposable income/i.test(fld.label || '')   // log-scale only the income *amounts*
+      });
+    }
+  }
+  // Keep the EBM/contrastive config's scb tail in step (drView owns it; runtime call).
+  if (typeof syncDrFeatureConfigScb === 'function') syncDrFeatureConfigScb();
+}
+
 const GENDER_AGE_POP_URL_BY_CITY_KEY = {
   vaxjo: 'assets/data/gender-age-population.json',
   malmo: 'assets/data/malmo_age_gender.json',

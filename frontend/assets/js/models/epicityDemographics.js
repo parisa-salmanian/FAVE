@@ -15,6 +15,44 @@ let epiBuildingDesoMap = null;       // Map<featIdx, desoCode> (for overlays/pop
 let _epiDemoCity = null;
 let _epiDemoLoadPromise = null;
 
+// Expanded per-DESO SCB profile (demographics/deso_full.json, baked by
+// tools/bake_scb_full.py) — the FULL rich socio-demographic set that backs the DR
+// "All Data" feature. Kept separate from EPI_DEMO (which is the deso.geojson base).
+let EPI_DESO_FULL = null;            // { city, fields:[manifest], byDeso:{deso:{key:val}} }
+let _epiDesoFullMap = null;          // Map<desoCode, {fieldKey: value}>
+
+// Load deso_full.json for a city and splice its field manifest into the DR SCB
+// feature list. Missing file / older city → the base 9 SCB features still work.
+async function loadDesoFull(cityKey) {
+  if (EPI_DESO_FULL && EPI_DESO_FULL.city === cityKey) return EPI_DESO_FULL;
+  try {
+    const res = await fetch(`assets/data/cities/${cityKey}/demographics/deso_full.json`, { cache: 'force-cache' });
+    if (!res.ok) throw new Error('http ' + res.status);
+    const d = await res.json();
+    const by = d.byDeso || {};
+    const m = new Map();
+    for (const k in by) m.set(k, by[k]);
+    EPI_DESO_FULL = { city: cityKey, fields: d.fields || [], byDeso: by };
+    _epiDesoFullMap = m;
+    if (typeof applyDrScbFullFields === 'function') applyDrScbFullFields(EPI_DESO_FULL.fields);
+    console.log('[epi-demo] deso_full loaded —', (d.fields || []).length, 'fields,', m.size, 'DESOs for', cityKey);
+    return EPI_DESO_FULL;
+  } catch (e) {
+    console.warn('[epi-demo] deso_full load failed for', cityKey, e);
+    EPI_DESO_FULL = null; _epiDesoFullMap = null;
+    if (typeof applyDrScbFullFields === 'function') applyDrScbFullFields(null); // fall back to base 9
+    return null;
+  }
+}
+
+// DESO code -> its expanded deso_full field dict ({fieldKey: value}) or null.
+// Shared O(1) lookup used by DR (scbRowFields) to resolve the rich SCB fields at
+// every scale without stamping ~160 props on every building/cell.
+function epiDesoFull(code) {
+  if (code == null || !_epiDesoFullMap) return null;
+  return _epiDesoFullMap.get(code) || null;
+}
+
 function _epiCurrentCityKey() {
   return (document.getElementById('citySelect')?.value) || 'vaxjo';
 }
@@ -120,7 +158,9 @@ function buildEpicityBuildingMaps() {
     epiBuildingDesoMap.set(idx, code);
     // Stamp the DESO code on the feature so views (e.g. the parallel-coordinates
     // plot) can read per-building demographics in O(1) without a featIdx lookup.
-    if (feat.properties) feat.properties.__deso = code;
+    // __bidx is a stable per-building id → deterministic seed for the runtime
+    // per-building synthesis of the rich SCB fields at micro (drView _scbSynthValue).
+    if (feat.properties) { feat.properties.__deso = code; feat.properties.__bidx = idx; }
     const residential = _epiIsResidential(feat.properties || {});
     const fa = residential ? _epiFloorAreaM2(feat) : 0;
     perBuilding[idx] = { code, fa, pop: entry.props.pop || 0, residential };
@@ -148,6 +188,7 @@ async function ensureEpicityDemographics(cityKey) {
   if (typeof EPI_DEMOGRAPHICS_ENABLED !== 'undefined' && !EPI_DEMOGRAPHICS_ENABLED) return null;
   const key = cityKey || _epiCurrentCityKey();
   await loadEpicityDemographics(key);
+  await loadDesoFull(key);   // rich SCB profile for the DR "All Data" set
   // (Re)build building maps if missing, the city changed, OR the building set
   // (baseCityFC) was swapped under them. Keying on the city NAME alone missed
   // city switches: the dropdown flips to the new city before the async building
@@ -192,4 +233,5 @@ function resetEpicityBuildingMaps() {
   _epiDesoByCode = null;
   epiBuildingNeedMap = null; epiBuildingPopMap = null;
   epiBuildingDesoMap = null; _epiMappedCity = null; _epiMappedFC = null;
+  EPI_DESO_FULL = null; _epiDesoFullMap = null;   // force deso_full re-fetch for the new city
 }
