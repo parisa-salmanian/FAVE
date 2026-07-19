@@ -5110,9 +5110,11 @@ function drawEngineBarChart(engineData) {
     return;
   }
 
-  // Clear the plot area.
+  // Clear the plot area (and any open click-to-explain card — it belongs to
+  // the previous bar set; stale stats would mislead).
   const root = d3.select(enginePlotEl);
   root.html('');
+  hideFeatureExplainCard();
 
   // Update the external note area instead of appending inside the plot.
   const noteEl = document.getElementById('drEngineNote');
@@ -5121,6 +5123,10 @@ function drawEngineBarChart(engineData) {
     if (engineData?.mode === 'ebm') {
       noteTxt += (noteTxt ? ' ' : '') +
         'Color does not encode direction here; EBM bars show importance magnitude only.';
+    }
+    if (engineData?.ranked?.length) {
+      noteTxt += (noteTxt ? ' ' : '') +
+        'Click a bar to see what that feature means for this selection.';
     }
     noteEl.textContent = noteTxt;
   }
@@ -5211,12 +5217,17 @@ function drawEngineBarChart(engineData) {
         : 'Effect size |d| (contrastive)'
     );
 
+  // Click-to-explain: clicking a bar (or its label) opens the interpretation
+  // card below the chart, with per-selection stats + a plain-language reading.
+  const onFeatureClick = (d) => toggleFeatureExplainCard(d, engineData.mode, svg);
+
   // bars
   svg.append('g')
     .selectAll('rect')
     .data(top)
     .enter()
     .append('rect')
+    .attr('class', 'dr-engine-feat-bar')
     .attr('x', x(0))
     .attr('y', d => y(d.label))
     .attr('height', y.bandwidth())
@@ -5227,7 +5238,11 @@ function drawEngineBarChart(engineData) {
       // already accounts for distance polarity; fall back to raw direction if absent.
       if (typeof d.better === 'boolean') return d.better ? '#2ecc71' : '#e74c3c';
       return d.direction === 'higher-in-cluster' ? '#2ecc71' : '#e74c3c';
-    });
+    })
+    .style('cursor', 'pointer')
+    .on('click', (event, d) => onFeatureClick(d))
+    .append('title')
+    .text('Click: what does this mean in the selection?');
 
   // y-axis labels (feature names)
   svg.append('g')
@@ -5241,6 +5256,8 @@ function drawEngineBarChart(engineData) {
     .attr('dy', '0.35em')
     .attr('text-anchor', 'end')
     .attr('font-size', labelFont)
+    .style('cursor', 'pointer')
+    .on('click', (event, d) => onFeatureClick(d))
     .text(d => d.label);
 
   // small title line
@@ -5256,6 +5273,439 @@ function drawEngineBarChart(engineData) {
     .text(title);
 }
 
+// ============== Click-to-explain: what does this feature mean HERE? ==============
+// Clicking a bar in the EBM/contrastive chart opens a card below the chart that
+// interprets the feature FOR THE CURRENT SELECTION: plain-language definition,
+// selection-vs-city numbers (median, percentile, effect size), a mini histogram
+// overlay, and an LLM-phrased reading of those computed facts (local Ollama).
+// The interpretation is computed, never canned: the same feature reads
+// differently in different cities/selections because the numbers differ.
+
+const drFeatureExplainState = { label: null, svg: null };
+let drFeatureExplainNonce = 0;
+
+function hideFeatureExplainCard() {
+  const card = document.getElementById('drFeatureExplain');
+  if (card) { card.hidden = true; card.innerHTML = ''; }
+  drFeatureExplainNonce++;                    // invalidate any in-flight LLM fill
+  // Restore bar highlight on the chart the card was opened from (if still live).
+  const svg = drFeatureExplainState.svg;
+  if (svg && typeof d3 !== 'undefined') {
+    try {
+      svg.selectAll('rect.dr-engine-feat-bar').attr('opacity', 1).attr('stroke', null);
+    } catch (_) { /* chart may be gone */ }
+  }
+  drFeatureExplainState.label = null;
+  drFeatureExplainState.svg = null;
+}
+
+function toggleFeatureExplainCard(rankedItem, engineMode, svg) {
+  const label = rankedItem?.label;
+  if (!label) return;
+  if (drFeatureExplainState.label === label) { hideFeatureExplainCard(); return; }
+  hideFeatureExplainCard();
+  drFeatureExplainState.label = label;
+  drFeatureExplainState.svg = svg || null;
+  if (svg) {
+    svg.selectAll('rect.dr-engine-feat-bar')
+      .attr('opacity', b => (b.label === label ? 1 : 0.35))
+      .attr('stroke', b => (b.label === label ? '#333' : null))
+      .attr('stroke-width', b => (b.label === label ? 1.25 : null));
+  }
+  renderFeatureExplainCard(label, engineMode);
+}
+
+// Resolve a ranked-bar label to its RAW per-point value series. Two namespaces
+// exist: EBM labels come from the matrix's featureLabels (row-key namespace →
+// read raw values from drPlot.rows), contrastive labels come from
+// DR_FEATURE_CONFIG (metric-key namespace → drPlot.metrics). Try both.
+function dfeResolveSeries(label) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+  const stripZ = (s) => norm(s).replace(/\s*\(z\)\s*$/, '');
+  const stripParen = (s) => stripZ(s).replace(/\s*\([^)]*\)\s*$/, '').trim();
+
+  // 1) matrix column (EBM namespace): featureLabels[i] → featureKeys[i] → rows
+  const fl = drPlot.featureLabels || [];
+  const fk = drPlot.featureKeys || [];
+  let idx = fl.findIndex(l => norm(l) === norm(label));
+  if (idx < 0) idx = fl.findIndex(l => stripParen(l) === stripParen(label));
+  if (idx >= 0 && fk[idx] && Array.isArray(drPlot.rows)) {
+    const key = fk[idx];
+    const values = drPlot.rows.map(r => {
+      const v = Number(r?.[key]);
+      return Number.isFinite(v) ? v : NaN;
+    });
+    if (values.some(Number.isFinite)) return { key, values };
+  }
+
+  // 2) contrastive namespace: DR_FEATURE_CONFIG label → metrics[cfg.key]
+  const metrics = drPlot.metrics || {};
+  const cfgList = (typeof DR_FEATURE_CONFIG !== 'undefined') ? DR_FEATURE_CONFIG : [];
+  const cfg = cfgList.find(c => norm(c.label) === norm(label))
+           || cfgList.find(c => stripParen(c.label) === stripParen(label));
+  if (cfg && Array.isArray(metrics[cfg.key])) {
+    const values = metrics[cfg.key].map(v => (Number.isFinite(Number(v)) ? Number(v) : NaN));
+    if (values.some(Number.isFinite)) return { key: cfg.key, values };
+  }
+  return null;
+}
+
+// What kind of quantity is this, and which direction is "good"?
+// better: 'lower' | 'higher' | 'need' (higher = more need) | 'neutral'
+function dfeNature(key, label) {
+  const l = String(label || '').toLowerCase();
+  const k = String(key || '');
+  if (/distance/.test(l) || /^dist/.test(k))  return { kind: 'distance', better: 'lower' };
+  if (/mismatch/.test(l))                     return { kind: 'mismatch', better: 'lower' };
+  if (/supply/.test(l))                       return { kind: 'supply',   better: 'higher' };
+  if (/fairness|access/.test(l))              return { kind: 'fairness', better: 'higher' };
+  if (/need/.test(l))                         return { kind: 'need',     better: 'need' };
+  if (/income/.test(l))                       return { kind: 'income',   better: 'neutral' };
+  if (/height|storey|floor|area|year|built/.test(l)) return { kind: 'builtform', better: 'neutral' };
+  return { kind: 'demographic', better: 'neutral' };
+}
+
+// One-line plain-language definition (the static "what is this"; the
+// situational "what does it mean HERE" is computed from the numbers).
+function dfeDefinition(nature, label) {
+  const service = String(label || '')
+    .replace(/\s*\([^)]*\)\s*$/, '')
+    .replace(/\s*(distance|supply|mismatch|fairness|access).*$/i, '')
+    .trim() || 'this service';
+  switch (nature.kind) {
+    case 'distance':
+      return `How far homes here are from the nearest ${service} (network distance). Lower = closer.`;
+    case 'supply':
+      return `How much ${service} capacity is available per resident once everyone else competing for it is counted (2SFCA). Higher = better supplied.`;
+    case 'mismatch':
+      return `Gap between looking close and being served: positive = ${service} is nearby but crowded / under-supplied; negative = well supplied for its distance.`;
+    case 'fairness':
+      return `Accessibility score (0–1) for ${service}: distance turned into a "how well served" value. Higher = better access.`;
+    case 'need':
+      return 'Composite socioeconomic need (low income + dependency). Higher = more need for nearby services.';
+    case 'income':
+      return 'Typical household income of residents (SCB statistics). Describes who lives here — context, not good/bad by itself.';
+    case 'builtform':
+      return 'A physical property of the buildings themselves (size / age / height). Describes the built form, not service access.';
+    default:
+      return 'Who lives here: a resident-composition statistic (SCB / synthetic spread). Context for need, not good/bad by itself.';
+  }
+}
+
+// Build a value formatter fitted to this feature's kind and range.
+function dfeFmtMaker(nature, cityVals) {
+  let maxAbs = 0;
+  for (const v of cityVals) { const a = Math.abs(v); if (Number.isFinite(a) && a > maxAbs) maxAbs = a; }
+  if (nature.kind === 'distance') {
+    return (v) => (Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + ' km' : Math.round(v) + ' m');
+  }
+  if (nature.kind === 'income') {
+    return (v) => Math.round(v).toLocaleString('sv-SE');
+  }
+  if (maxAbs <= 1.05 && (nature.kind === 'demographic')) {
+    return (v) => (v * 100).toFixed(0) + '%';        // shares 0..1 read as percentages
+  }
+  if (maxAbs <= 2)    return (v) => v.toFixed(2);
+  if (maxAbs <= 100)  return (v) => v.toFixed(1);
+  return (v) => Math.round(v).toLocaleString('sv-SE');
+}
+
+// Percentile (0–100) of value v within sorted city values (mid-rank for ties).
+function dfePercentile(sortedCity, v) {
+  const n = sortedCity.length;
+  if (!n) return null;
+  let lo = 0, hi = 0;
+  for (const c of sortedCity) { if (c < v) lo++; if (c <= v) hi++; }
+  return Math.round(100 * ((lo + hi) / 2) / n);
+}
+
+// Compute the per-selection facts for one feature label. Returns null if the
+// label can't be resolved to raw values (e.g. a derived-only EBM term).
+function dfeComputeFacts(label) {
+  const series = dfeResolveSeries(label);
+  const selection = drPlot.lastSelectionIdx || [];
+  if (!series || !selection.length) return null;
+
+  const cityVals = series.values.filter(Number.isFinite);
+  const selVals = selection.map(i => series.values[i]).filter(Number.isFinite);
+  if (cityVals.length < 5 || !selVals.length) return null;
+
+  const nature = dfeNature(series.key, label);
+  const fmt = dfeFmtMaker(nature, cityVals);
+  const citySorted = cityVals.slice().sort((a, b) => a - b);
+  const selSorted = selVals.slice().sort((a, b) => a - b);
+  const cityMed = medianFromSorted(citySorted);
+  const selMed = medianFromSorted(selSorted);
+  const meanCity = mean1(cityVals);
+  const meanSel = mean1(selVals);
+  const stdCity = std1(cityVals, meanCity);
+  const effect = stdCity > 0 ? (meanSel - meanCity) / stdCity : 0;
+  const pct = dfePercentile(citySorted, selMed);
+
+  return {
+    label, key: series.key, nature, fmt,
+    cityVals, selVals, cityMed, selMed, effect, pct,
+    nSel: selVals.length, nCity: cityVals.length
+  };
+}
+
+// Turn computed facts into the situational sentences (the interpretation).
+function dfeVerdict(facts) {
+  const { nature, fmt, cityMed, selMed, effect, pct } = facts;
+  const absD = Math.abs(effect);
+  const mag = absD < 0.2 ? 'about the same as' :
+              absD < 0.5 ? 'slightly different from' :
+              absD < 1.0 ? 'clearly different from' : 'very different from';
+  const dir = selMed > cityMed ? 'higher' : 'lower';
+
+  const numbers = `Typical here: ${fmt(selMed)} · city-wide: ${fmt(cityMed)} — ` +
+    `${dir} than ${dir === 'higher' ? pct : 100 - pct}% of the city.`;
+
+  let reading, cls = 'neutral';
+  if (absD < 0.2) {
+    reading = `On this, the selection is ${mag} the rest of the city — it does not set this area apart.`;
+  } else if (nature.better === 'neutral') {
+    reading = `The selection is ${mag} the city here — this describes who lives here / what is built here (context), not good or bad by itself.`;
+  } else if (nature.better === 'need') {
+    const more = selMed > cityMed;
+    cls = more ? 'worse' : 'better';
+    reading = more
+      ? 'Residents here have MORE socioeconomic need than typical — poor access matters more in this area.'
+      : 'Residents here have less socioeconomic need than typical.';
+  } else {
+    const selWorse = (nature.better === 'lower') ? (selMed > cityMed) : (selMed < cityMed);
+    cls = selWorse ? 'worse' : 'better';
+    const word = nature.kind === 'distance' ? (selWorse ? 'farther from this service' : 'closer to this service')
+               : nature.kind === 'supply'   ? (selWorse ? 'less supplied (more crowding)' : 'better supplied')
+               : nature.kind === 'mismatch' ? (selWorse ? 'more "looks close but under-supplied"' : 'better supplied for its distance')
+               : (selWorse ? 'worse served' : 'better served');
+    reading = `The selection is ${mag} the rest of the city — it is ${word.toUpperCase()} than most of ${dfeCityName()}.`;
+  }
+  return { numbers, reading, cls };
+}
+
+function dfeCityName() {
+  return (typeof lastCityName !== 'undefined' && lastCityName) ? lastCityName : 'the city';
+}
+
+function dfeScaleNoun() {
+  const m = (typeof currentDRDataMode === 'function') ? currentDRDataMode() : 'building';
+  return m === 'district' ? 'districts' : (m === 'building' ? 'buildings' : 'areas');
+}
+
+// Compact city-vs-selection histogram overlay with median markers.
+function dfeDrawMiniHist(el, facts) {
+  if (typeof d3 === 'undefined' || !el) return;
+  const { cityVals, selVals, cityMed, selMed, fmt } = facts;
+  const width = el.clientWidth || 240;
+  const height = 64;
+  const margin = { top: 6, right: 8, bottom: 16, left: 8 };
+
+  const citySorted = cityVals.slice().sort((a, b) => a - b);
+  let lo = quantileSorted(citySorted, 0.01);
+  let hi = quantileSorted(citySorted, 0.99);
+  lo = Math.min(lo, selMed); hi = Math.max(hi, selMed);
+  if (!(hi > lo)) { lo -= 1; hi += 1; }
+
+  const x = d3.scaleLinear().domain([lo, hi]).range([margin.left, width - margin.right]);
+  const bins = d3.bin().domain([lo, hi]).thresholds(22);
+  const cityBins = bins(cityVals.filter(v => v >= lo && v <= hi));
+  const selBins = bins(selVals.filter(v => v >= lo && v <= hi));
+  const yMaxCity = d3.max(cityBins, b => b.length) || 1;
+  const yMaxSel = d3.max(selBins, b => b.length) || 1;
+  // Each series normalized to its own max: shape-vs-shape comparison (a small
+  // selection would otherwise be invisible against the whole city).
+  const yCity = d3.scaleLinear().domain([0, yMaxCity]).range([height - margin.bottom, margin.top]);
+  const ySel = d3.scaleLinear().domain([0, yMaxSel]).range([height - margin.bottom, margin.top]);
+
+  const svg = d3.select(el).append('svg')
+    .attr('width', width).attr('height', height).style('display', 'block');
+
+  const barW = (b) => Math.max(1, x(b.x1) - x(b.x0) - 1);
+  svg.append('g').selectAll('rect').data(cityBins).enter().append('rect')
+    .attr('x', b => x(b.x0)).attr('width', barW)
+    .attr('y', b => yCity(b.length)).attr('height', b => (height - margin.bottom) - yCity(b.length))
+    .attr('fill', '#d5dbe1');
+  svg.append('g').selectAll('rect').data(selBins).enter().append('rect')
+    .attr('x', b => x(b.x0)).attr('width', barW)
+    .attr('y', b => ySel(b.length)).attr('height', b => (height - margin.bottom) - ySel(b.length))
+    .attr('fill', 'rgba(230,126,34,0.6)');
+
+  const medLine = (v, color, dash) => svg.append('line')
+    .attr('x1', x(v)).attr('x2', x(v))
+    .attr('y1', margin.top - 2).attr('y2', height - margin.bottom)
+    .attr('stroke', color).attr('stroke-width', 1.4)
+    .attr('stroke-dasharray', dash || null);
+  medLine(cityMed, '#666', '3,2');
+  medLine(selMed, '#c05e12');
+
+  svg.append('g')
+    .attr('transform', `translate(0,${height - margin.bottom})`)
+    .call(d3.axisBottom(x).ticks(3).tickFormat(fmt).tickSizeOuter(0))
+    .call(g => { g.selectAll('path').remove(); g.selectAll('line').attr('stroke', '#ccc'); g.selectAll('text').attr('font-size', 8.5); });
+}
+
+// Render the card for one clicked bar. Interaction terms ("A × B") explain
+// both constituent features side by side.
+function renderFeatureExplainCard(label, engineMode) {
+  const card = document.getElementById('drFeatureExplain');
+  if (!card) return;
+  card.innerHTML = '';
+  card.hidden = false;
+
+  const parts = String(label).includes(' × ') ? String(label).split(' × ').map(s => s.trim()) : [label];
+  const isInteraction = parts.length > 1;
+
+  const head = document.createElement('div');
+  head.className = 'dfe-head';
+  const title = document.createElement('span');
+  title.className = 'dfe-title';
+  title.textContent = isInteraction ? `${label} (combined effect)` : label;
+  const close = document.createElement('button');
+  close.className = 'dfe-close';
+  close.type = 'button';
+  close.textContent = '✕';
+  close.title = 'Close';
+  close.addEventListener('click', hideFeatureExplainCard);
+  head.appendChild(title); head.appendChild(close);
+  card.appendChild(head);
+
+  if (isInteraction) {
+    const note = document.createElement('div');
+    note.className = 'dfe-def';
+    note.textContent = 'The model found these two features act TOGETHER for this selection — each is shown below.';
+    card.appendChild(note);
+  }
+
+  const factsList = [];
+  for (const part of parts) {
+    const facts = dfeComputeFacts(part);
+    if (!facts) {
+      const miss = document.createElement('div');
+      miss.className = 'dfe-def';
+      miss.textContent = `${part}: raw values are not available for this feature, so it can't be broken down here.`;
+      card.appendChild(miss);
+      continue;
+    }
+    factsList.push(facts);
+
+    if (isInteraction) {
+      const sub = document.createElement('div');
+      sub.style.fontWeight = '600';
+      sub.style.marginTop = '6px';
+      sub.textContent = part;
+      card.appendChild(sub);
+    }
+
+    const def = document.createElement('div');
+    def.className = 'dfe-def';
+    def.textContent = dfeDefinition(facts.nature, part);
+    card.appendChild(def);
+
+    const v = dfeVerdict(facts);
+    const verdict = document.createElement('div');
+    verdict.className = 'dfe-verdict';
+    const numbersEl = document.createElement('div');
+    numbersEl.textContent = v.numbers;
+    const readingEl = document.createElement('div');
+    const readingSpan = document.createElement('span');
+    readingSpan.className = v.cls;
+    readingSpan.textContent = v.reading;
+    readingEl.appendChild(readingSpan);
+    verdict.appendChild(numbersEl); verdict.appendChild(readingEl);
+    card.appendChild(verdict);
+
+    const hist = document.createElement('div');
+    hist.className = 'dfe-hist';
+    card.appendChild(hist);
+    dfeDrawMiniHist(hist, facts);
+
+    const legend = document.createElement('div');
+    legend.className = 'tiny muted';
+    legend.textContent = `grey = all of ${dfeCityName()} · orange = your selection (${facts.nSel} ${dfeScaleNoun()}) · lines = typical values`;
+    card.appendChild(legend);
+  }
+
+  if (!factsList.length) return;
+  card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+  // ---- LLM reading (async; card is fully useful without it) ----
+  if (typeof requestLLMExplain !== 'function') return;
+  const llm = document.createElement('div');
+  llm.className = 'dfe-llm pending';
+  llm.textContent = 'AI reading (local LLM)…';
+  card.appendChild(llm);
+
+  const myNonce = ++drFeatureExplainNonce;
+  const summary = {
+    engine: engineMode === 'ebm' ? 'EBM (supervised importance)' : 'contrastive (selection vs rest)',
+    city: dfeCityName(),
+    scale: dfeScaleNoun(),
+    selection_size: (drPlot.lastSelectionIdx || []).length,
+    total_units: Array.isArray(drPlot.sample) ? drPlot.sample.length : null,
+    features: factsList.map(f => {
+      const v = dfeVerdict(f);
+      return {
+        name: f.label,
+        definition: dfeDefinition(f.nature, f.label),
+        typical_in_selection: f.fmt(f.selMed),
+        typical_city_wide: f.fmt(f.cityMed),
+        selection_percentile_in_city: f.pct,
+        effect_size_sd: Number(f.effect.toFixed(2)),
+        computed_reading: v.reading
+      };
+    }),
+    demographic_context: dfeContextStats()
+  };
+  const question =
+    'In 2-3 short plain-English sentences for an urban planner: what does this feature mean ' +
+    'for THIS selected area specifically? Interpret the numbers above (is the selection unusual, ' +
+    'in which direction, does it matter given who lives there). Talk ONLY about the area and the ' +
+    'service — do NOT mention the dashboard, views, charts, thresholds, or lasso. ' +
+    'Do not restate the definition; no jargon.';
+
+  requestLLMExplain('dr_feature_meaning', summary, question)
+    .then(text => {
+      if (myNonce !== drFeatureExplainNonce) return;
+      llm.classList.remove('pending');
+      llm.textContent = text;
+    })
+    .catch(() => {
+      if (myNonce !== drFeatureExplainNonce) return;
+      llm.textContent = 'AI reading unavailable (local LLM offline) — the numbers above are complete.';
+    });
+}
+
+// Selection medians of a few need-relevant companions (income, child share,
+// elder share, need index) so the LLM can judge whether the deficit matters
+// for who actually lives there. Best-effort: only whatever is loaded.
+function dfeContextStats() {
+  const out = [];
+  const selection = drPlot.lastSelectionIdx || [];
+  if (!selection.length) return out;
+  const cfgList = (typeof DR_FEATURE_CONFIG !== 'undefined') ? DR_FEATURE_CONFIG : [];
+  const wanted = [/income/i, /child/i, /elder/i, /need/i];
+  const seen = new Set();
+  for (const re of wanted) {
+    const cfg = cfgList.find(c => re.test(c.label) && !seen.has(c.key));
+    if (!cfg) continue;
+    const arr = (drPlot.metrics || {})[cfg.key];
+    if (!Array.isArray(arr)) continue;
+    const cityVals = arr.filter(Number.isFinite);
+    const selVals = selection.map(i => arr[i]).filter(Number.isFinite);
+    if (cityVals.length < 5 || !selVals.length) continue;
+    seen.add(cfg.key);
+    const nature = dfeNature(cfg.key, cfg.label);
+    const fmt = dfeFmtMaker(nature, cityVals);
+    out.push({
+      name: cfg.label,
+      typical_in_selection: fmt(medianFromSorted(selVals.slice().sort((a, b) => a - b))),
+      typical_city_wide: fmt(medianFromSorted(cityVals.slice().sort((a, b) => a - b)))
+    });
+  }
+  return out;
+}
+
 
 // Refresh engine plot whenever selection or mode changes
 function engineNeedsCalculationMessage(mode) {
@@ -5267,6 +5717,9 @@ function engineNeedsCalculationMessage(mode) {
 async function refreshEnginePlot() {
   const { enginePlotEl } = ensureDRUI();
   if (!enginePlotEl) return;
+
+  // Any open click-to-explain card describes the previous chart — drop it.
+  hideFeatureExplainCard();
 
   const selection = drPlot.lastSelectionIdx || [];
   if (!selection.length) {
@@ -5314,6 +5767,7 @@ async function calculateEnginePlot() {
 
   try {
     if (engineCalcBtn) engineCalcBtn.disabled = true;
+    hideFeatureExplainCard();
     if (drPlot.engineMode === 'contrast') {
       enginePlotEl.textContent = 'Calculating contrastive distribution…';
       drPlot.engineContrast = buildContrastiveEngineExplanation();

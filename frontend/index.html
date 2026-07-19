@@ -458,6 +458,43 @@
     /* Optional: make SVG inside drEnginePlot block-level */
     #drEnginePlot svg { display: block; }
 
+    /* Click-to-explain card for EBM/contrastive feature bars */
+    .dr-feature-explain {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border: 1px solid #d9dee4;
+      border-left: 3px solid var(--accent, #e67e22);
+      border-radius: 8px;
+      background: #fafbfc;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .dr-feature-explain .dfe-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 2px;
+    }
+    .dr-feature-explain .dfe-title { font-weight: 700; font-size: 12.5px; }
+    .dr-feature-explain .dfe-close {
+      border: none; background: none; cursor: pointer;
+      font-size: 14px; line-height: 1; color: #888; padding: 0 2px;
+    }
+    .dr-feature-explain .dfe-close:hover { color: #333; }
+    .dr-feature-explain .dfe-def { color: #555; margin-bottom: 6px; }
+    .dr-feature-explain .dfe-verdict { margin-bottom: 4px; }
+    .dr-feature-explain .dfe-verdict .worse  { color: #c0392b; font-weight: 600; }
+    .dr-feature-explain .dfe-verdict .better { color: #1e8449; font-weight: 600; }
+    .dr-feature-explain .dfe-verdict .neutral{ color: #2c3e50; font-weight: 600; }
+    .dr-feature-explain .dfe-hist { margin: 4px 0 2px; }
+    .dr-feature-explain .dfe-llm {
+      margin-top: 6px; padding-top: 6px;
+      border-top: 1px dashed #d9dee4;
+      color: #444; font-style: italic;
+    }
+    .dr-feature-explain .dfe-llm.pending { color: #999; }
+
     /* Global spinner overlay */
     .global-spinner-overlay {
       position: fixed;
@@ -1574,6 +1611,8 @@
                 Lasso the scatter (or use Map lasso) to see top features explaining the selection.
               </div>
             </div>
+            <!-- Click-to-explain: filled by drView.js when a feature bar is clicked -->
+            <div id="drFeatureExplain" class="dr-feature-explain" hidden></div>
             <div id="drEngineNote" class="tiny muted" style="margin-top: 6px;"></div>
           </div>
 
