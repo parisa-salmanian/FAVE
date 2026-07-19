@@ -20,6 +20,18 @@ async function loadCityLocal(cityKey) {
       return r.json();
     });
 
+    // Göteborg's extract (283k features) exceeds what the tab can hold — 48% are
+    // Komplementbyggnad (sheds/garages: no residents, no service role). Dropping
+    // them lands at ~148k, inside the proven range (Stockholm loads at 242k).
+    // Göteborg-only: other cities load fine, and dropping komplement city-wide
+    // would shift already-reported metrics.
+    if (cityKey === 'goteborg' && Array.isArray(fc.features)) {
+      const before = fc.features.length;
+      fc.features = fc.features.filter(f =>
+        !String(f?.properties?.andamal1 || '').startsWith('Komplementbyggnad'));
+      console.log(`[cityLoader] goteborg: dropped ${before - fc.features.length} komplement buildings, kept ${fc.features.length}`);
+    }
+
     await alignBuildingCoverageToDistricts(fc, 'local buildings');
     baseCityFC  = fc;
     districtLandClipSignature = '';
