@@ -6102,6 +6102,7 @@ function clearDRProjection(showMessage = true) {
     const fsNow = document.getElementById('drFeatureSet')?.value || '';
     const colorNow = document.getElementById('drColorBy')?.value || '';
     const needsSupply = fsNow === 'supply' || fsNow === 'access_supply' || fsNow === 'supply_plus'
+      || fsNow === 'custom' || fsNow === 'all_data'
       || colorNow === 'mismatch' || colorNow === 'supply';
     if (needsSupply && typeof ensureAccess2sfca === 'function') {
       const a2sMode = (document.getElementById('fairnessTravelMode')?.value || 'walking').toLowerCase();
