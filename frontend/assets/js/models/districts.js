@@ -317,16 +317,22 @@ function ensureDistrictBoundaryLines() {
 /**
  * Build a land-mass polygon from building centroids.
  * Uses turf.concave (alpha shape) to trace the actual building footprint,
- * then buffers generously so no land is lost.
+ * then buffers so no land is lost. maxEdgeKm/bufferKm are tunable: the
+ * Malmö coastline clip uses the original FAVE values (1.5 / 0.3) that
+ * hug the shore; looser values (3.0 / 1.0) smooth rural edges instead.
  */
-function buildLandHullFromBuildings() {
+function buildLandHullFromBuildings({ maxEdgeKm = 3.0, bufferKm = 1.0 } = {}) {
   if (!baseCityFC?.features?.length) return null;
 
   const points = [];
   for (const feat of baseCityFC.features) {
     if (!feat?.geometry) continue;
     try {
-      const c = turf.centroid(feat)?.geometry?.coordinates;
+      // fastCentroid (bbox midpoint, cached) — turf.centroid over ~60k
+      // buildings dominates the hull cost otherwise.
+      const c = (typeof fastCentroid === 'function')
+        ? fastCentroid(feat)
+        : turf.centroid(feat)?.geometry?.coordinates;
       if (Array.isArray(c) && c.length >= 2 && Number.isFinite(c[0]) && Number.isFinite(c[1])) {
         points.push(turf.point(c));
       }
@@ -337,11 +343,12 @@ function buildLandHullFromBuildings() {
   const pointsFC = turf.featureCollection(points);
   let hull = null;
 
-  // Concave hull with a generous maxEdge — a tighter fit creates straight
-  // edges where buildings get sparse near the urban/rural boundary,
-  // which shows up as knife-cut artefacts on the district overlay.
+  // Concave hull (alpha shape). A tighter maxEdge follows the coastline
+  // closely; where building density runs out it creates straight edges,
+  // which is why the clip is only enabled per-city (see
+  // ensureDistrictLandClipping).
   try {
-    hull = turf.concave(pointsFC, { maxEdge: 3.0, units: 'kilometers' });
+    hull = turf.concave(pointsFC, { maxEdge: maxEdgeKm, units: 'kilometers' });
   } catch (_) { /* concave can fail on degenerate layouts */ }
 
   // Fallback to convex hull
@@ -352,11 +359,10 @@ function buildLandHullFromBuildings() {
   }
   if (!hull) return null;
 
-  // Generous 1 km buffer so the hull comfortably encloses every district
-  // boundary rather than slicing across it. Inland water (e.g. Växjösjön)
-  // will still be clipped because no building centroids sit on it.
+  // Buffer so the hull never clips actual land edges — larger than any
+  // building-to-coastline gap, smaller than the sea overhang being cut.
   try {
-    const buffered = turf.buffer(hull, 1.0, { units: 'kilometers' });
+    const buffered = turf.buffer(hull, bufferKm, { units: 'kilometers' });
     if (buffered) return buffered;
   } catch (_) { /* buffer can fail on complex concave shapes */ }
 
@@ -413,24 +419,62 @@ function clipFeatureToLandHull(feature, landPoly) {
 }
 
 /**
- * Previously this routine clipped every district polygon against a
- * building-centroid concave hull so lakes/sea inside districts wouldn't
- * be coloured. The clip's straight edges (where building density ran
- * out) showed up as knife-cut artefacts on the macro overlay, so it is
- * now a no-op — district polygons render with their original REGSO
- * shape. Inland water inside districts will be coloured along with the
- * land; this is a cosmetically smaller issue than the knife cuts and
- * keeps the user's curated EXCLUDED_DISTRICTS list as the sole source
- * of truth for which areas are visible.
+ * Clip district polygons to the building-derived land hull so the sea
+ * inside the administrative REGSO shapes isn't coloured (macro) or
+ * hex-filled (meso — the mezo mask is the district union, so it follows
+ * automatically once districtBoundaryFC/mezoMaskPolygon are reset).
  *
- * The hull helpers (buildLandHullFromBuildings, clipFeatureToLandHull)
- * are kept above for future use if a real coastline mask becomes
- * available — re-enable by reinstating the loop here.
+ * PER-CITY: enabled for Malmö only. Malmö's REGSO polygons extend far
+ * into the Öresund, and the original FAVE cut exactly this overhang
+ * (concave hull maxEdge 1.5 km + 0.3 km buffer). For inland/sparse
+ * cities the hull's straight edges show up as knife-cut artefacts where
+ * building density runs out, so everywhere else stays unclipped and the
+ * curated EXCLUDED_DISTRICTS list remains the source of truth.
  */
+const LAND_CLIP_BY_CITY = {
+  malmo: { maxEdgeKm: 1.5, bufferKm: 0.3 }
+};
+
 function ensureDistrictLandClipping() {
-  // Intentional no-op. Macro/meso shapes follow the curated district
-  // dataset directly.
-  return;
+  const clipOpts = LAND_CLIP_BY_CITY[activeDistrictCityKey];
+  if (!clipOpts) return;
+  if (!districtFC?.features?.length || !baseCityFC?.features?.length) return;
+
+  // Signature so we only clip once per dataset combination (reset on
+  // city/district-URL change in state.js).
+  const cityCount = baseCityFC.features.length;
+  const districtCount = districtFC.features.length;
+  const citySampleId =
+    baseCityFC.features[0]?.properties?.id ??
+    baseCityFC.features[0]?.properties?.osm_id ??
+    baseCityFC.features[0]?.properties?.byggnadsid ?? '';
+  const signature = `${activeDistrictURL || 'none'}|${districtCount}|${cityCount}|${citySampleId}`;
+  if (districtLandClipSignature === signature) return;
+
+  const landHull = buildLandHullFromBuildings(clipOpts);
+  if (!landHull) {
+    districtLandClipSignature = signature;
+    return;
+  }
+
+  let changed = 0;
+  for (const feat of districtFC.features) {
+    if (!feat?.geometry) continue;
+    const clipped = clipFeatureToLandHull(feat, landHull);
+    if (clipped !== feat && clipped?.geometry) {
+      feat.geometry = clipped.geometry;
+      changed += 1;
+    }
+  }
+
+  if (changed > 0) {
+    // Force rebuild of boundary lines and mezo mask from clipped geometry
+    districtBoundaryFC = null;
+    mezoMaskPolygon = null;
+    console.info(`Coastline clip: reshaped ${changed} district polygon(s) to land hull (${cityCount} buildings).`);
+  }
+
+  districtLandClipSignature = signature;
 }
 
 function buildingScoreForDistrict(f) {
