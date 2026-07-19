@@ -323,7 +323,7 @@ function updateChangeLogUI() {
       const timeStr = rec.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       const catLabel = rec.category ? `<span>📦 ${prettyPOIName(rec.category)}</span>` : '';
       const beforeAfter = (Number.isFinite(rec.beforeGini) && Number.isFinite(rec.afterGini))
-        ? `<span>Gini ${rec.beforeGini.toFixed(3)} → ${rec.afterGini.toFixed(3)}</span>` : '';
+        ? `<span>GE(2) ${rec.beforeGini.toFixed(3)} → ${rec.afterGini.toFixed(3)}</span>` : '';
       const hasFeatures = (rec.colorPairs?.length > 0) || rec.highlightCenter;
       const isPinned = pinnedChangeId === rec.id;
       const mapBtnHtml = hasFeatures

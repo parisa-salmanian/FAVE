@@ -1953,16 +1953,16 @@ async function applyWhatIfSuggestions() {
   const beforeParts = [];
   const afterParts = [];
   if (beforeCategoryLabel && Number.isFinite(beforeCategoryGini)) {
-    beforeParts.push(`${beforeCategoryLabel} Gini ${beforeCategoryGini.toFixed(3)}`);
+    beforeParts.push(`${beforeCategoryLabel} GE(2) ${beforeCategoryGini.toFixed(3)}`);
   }
   if (Number.isFinite(beforeOverallGini)) {
-    beforeParts.push(`Overall Gini ${beforeOverallGini.toFixed(3)}`);
+    beforeParts.push(`Overall GE(2) ${beforeOverallGini.toFixed(3)}`);
   }
   if (beforeCategoryLabel && Number.isFinite(afterCategoryGini)) {
-    afterParts.push(`${beforeCategoryLabel} Gini ${afterCategoryGini.toFixed(3)}`);
+    afterParts.push(`${beforeCategoryLabel} GE(2) ${afterCategoryGini.toFixed(3)}`);
   }
   if (Number.isFinite(afterOverallGini)) {
-    afterParts.push(`Overall Gini ${afterOverallGini.toFixed(3)}`);
+    afterParts.push(`Overall GE(2) ${afterOverallGini.toFixed(3)}`);
   }
 
   const baseSummary = formatWhatIfSuggestionSummary(whatIfSuggestions);
