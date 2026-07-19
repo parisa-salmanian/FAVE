@@ -42,16 +42,16 @@
     // per-category scores, so embedding/EBM-ing on it is circular. Keeping only
     // the per-category access lets the EBM attribute a selection's difference
     // (e.g. high child-share areas) to specific services such as university.
-    'grocery fairness',
-    'hospital fairness',
-    'primary school fairness',
-    'pharmacy fairness',
-    'healthcare center fairness',
-    'kindergarten fairness',
-    'high school fairness',
-    'university fairness',
-    'dentistry fairness',
-    'veterinary fairness',
+    'grocery access',
+    'hospital access',
+    'primary school access',
+    'pharmacy access',
+    'healthcare center access',
+    'kindergarten access',
+    'high school access',
+    'university access',
+    'dentistry access',
+    'veterinary access',
     // Raw network distance (m) per service — the DISTANCE model. Matches every
     // 'X distance (m)' label so they enter the embedding/EBM as access features.
     'distance (m)'
