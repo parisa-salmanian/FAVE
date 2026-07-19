@@ -1,10 +1,14 @@
 {
   "city": "kalmar",
-  "baked_at": "2026-06-05T09:33:07.923089+00:00",
+  "baked_at": "2026-07-19T14:28:21.446749+00:00",
   "key_format": "lon,lat",
   "key_decimals": 6,
   "building_count": 108604,
   "modes": {
+    "walking": {
+      "school_primary": 108604,
+      "school_high": 108604
+    },
     "cycling": {
       "grocery": 108604,
       "hospital": 108604,
