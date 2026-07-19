@@ -1,22 +1,10 @@
 {
   "city": "vaxjo",
-  "baked_at": "2026-07-19T14:11:17.431239+00:00",
+  "baked_at": "2026-07-19T21:04:50.988002+00:00",
   "key_format": "lon,lat",
   "key_decimals": 6,
   "building_count": 50303,
   "modes": {
-    "walking": {
-      "grocery": 50303,
-      "hospital": 50303,
-      "pharmacy": 50303,
-      "dentistry": 50303,
-      "healthcare_center": 50303,
-      "veterinary": 50303,
-      "university": 50303,
-      "kindergarten": 50303,
-      "school_primary": 50303,
-      "school_high": 50303
-    },
     "cycling": {
       "grocery": 50303,
       "hospital": 50303,
@@ -30,6 +18,18 @@
       "school_high": 50303
     },
     "driving": {
+      "grocery": 50303,
+      "hospital": 50303,
+      "pharmacy": 50303,
+      "dentistry": 50303,
+      "healthcare_center": 50303,
+      "veterinary": 50303,
+      "university": 50303,
+      "kindergarten": 50303,
+      "school_primary": 50303,
+      "school_high": 50303
+    },
+    "walking": {
       "grocery": 50303,
       "hospital": 50303,
       "pharmacy": 50303,
