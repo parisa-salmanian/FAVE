@@ -649,11 +649,18 @@ function computeDRColors(pickedRows, colorBy, mode) {
       });
       updateLegend('supply', 'Legend (2SFCA supply provision)', 'Least → Most supply');
     } else if (colorBy === 'need' || colorBy === 'income') {
-      // Color by an SCB axis (district need or median income). Min–max normalise
-      // across the sample so the ramp spans the actual value range.
+      // Color by an SCB axis (need deprivation or median income). Min–max
+      // normalise across the sample so the ramp spans the actual value range.
+      // Primary source = the REAL DESO value carried by every scale's rows
+      // (building: epiDesoProps lookup; mezo/district: __needZ/__incomeReal
+      // aggregates) — it exists for ALL cities. richNeed/richIncome (__drRich)
+      // is a Växjö-only bake and demNeed only exists at district scale, so with
+      // those first every other city rendered all-grey despite the legend.
       const get = (r) => colorBy === 'need'
-        ? (Number.isFinite(r.richNeed) ? r.richNeed : r.demNeed)
-        : (Number.isFinite(r.richIncome) ? r.richIncome : r.demIncome);
+        ? (Number.isFinite(r.needReal) ? r.needReal
+          : (Number.isFinite(r.richNeed) ? r.richNeed : r.demNeed))
+        : (Number.isFinite(r.incomeReal) ? r.incomeReal
+          : (Number.isFinite(r.richIncome) ? r.richIncome : r.demIncome));
       const vals = pickedRows.map(get).filter(Number.isFinite);
       const [lo, hi] = robustLoHi(vals);
       const span = (hi - lo) || 1;
@@ -926,6 +933,7 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         elderReal:    Number.isFinite(props.__elderReal)    ? props.__elderReal    : null,
         incomeReal:   Number.isFinite(props.__incomeReal)   ? props.__incomeReal   : null,
         higherEdReal: Number.isFinite(props.__higherEdReal) ? props.__higherEdReal : null,
+        needReal:     Number.isFinite(props.__needZ)        ? props.__needZ        : null,
         grocery: Number(byCat.grocery),
         hospital: Number(byCat.hospital),
         primary: Number(byCat.school_primary),
@@ -1070,6 +1078,7 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         elderReal:    Number.isFinite(cell?.__elderReal)    ? cell.__elderReal    : null,
         incomeReal:   Number.isFinite(cell?.__incomeReal)   ? cell.__incomeReal   : null,
         higherEdReal: Number.isFinite(cell?.__higherEdReal) ? cell.__higherEdReal : null,
+        needReal:     Number.isFinite(cell?.__needZ)        ? cell.__needZ        : null,
         grocery: Number(byCat.grocery),
         hospital: Number(byCat.hospital),
         primary: Number(byCat.school_primary),
@@ -1200,7 +1209,7 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     // embedding/EBM matrix and selecting e.g. high-child areas can't trivially
     // "explain itself"). Measured DESO values, not the synthetic per-building
     // spread (__synthChild etc.). One point-in-polygon lookup, reused for all.
-    let childReal = NaN, elderReal = NaN, incomeReal = NaN, higherEdReal = NaN;
+    let childReal = NaN, elderReal = NaN, incomeReal = NaN, higherEdReal = NaN, needReal = NaN;
     if (typeof epiDesoProps === 'function' && props.__deso != null) {
       const dp = epiDesoProps(props.__deso);
       if (dp) {
@@ -1211,12 +1220,14 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         elderReal    = num(dp.elder_frac);
         incomeReal   = num(dp.income);
         higherEdReal = num(dp.higher_ed);
+        needReal     = num(dp.needZ);
       }
     }
     row.childReal    = Number.isFinite(childReal)    ? childReal    : null;
     row.elderReal    = Number.isFinite(elderReal)    ? elderReal    : null;
     row.incomeReal   = Number.isFinite(incomeReal)   ? incomeReal   : null;
     row.higherEdReal = Number.isFinite(higherEdReal) ? higherEdReal : null;
+    row.needReal     = Number.isFinite(needReal)     ? needReal     : null;
     // RAW network distance (m) to nearest of each service — the distance model.
     const rd = rawDistsForFeature(f);
     Object.values(DR_DIST_KEY_BY_CAT).forEach((k) => {
@@ -5329,7 +5340,12 @@ const DR_CONTRAST_SECTIONS = [
   { id: 'demo',   title: 'Demographics (SCB)',        sub: 'who lives here — does the selection match the intended group?' },
   { id: 'access', title: 'Access (proximity)',        sub: 'how close services are — what the map shows' },
   { id: 'supply', title: 'Supply & mismatch (2SFCA)', sub: 'what is left after crowding — under-supply the map hides' },
-  { id: 'other',  title: 'Other (built form)',        sub: 'building-stock context' }
+  { id: 'other',  title: 'Other (built form)',        sub: 'building-stock context' },
+  // Flat escape hatch: the full ungrouped ranking (the pre-sectioning view),
+  // for planners who want one mixed list. contrastSectionOf never returns
+  // 'all', so this id is invisible to the Stats-table grouping; the renderer
+  // special-cases it to receive EVERY ranked feature. Collapsed by default.
+  { id: 'all',    title: 'All (mixed)',               sub: 'every feature in one ranked list, ungrouped' }
 ];
 const DR_CONTRAST_TOP_N = 6;    // bars per section before "Show all"
 const drContrastSectionUI = {}; // id -> { collapsed, showAll }
@@ -5357,10 +5373,10 @@ function drawContrastiveSections(root, enginePlotEl, engineData, onClick) {
     .text('Unsupervised engine (contrastive distribution)');
 
   for (const sec of DR_CONTRAST_SECTIONS) {
-    const items = all.filter(f => contrastSectionOf(f) === sec.id);
+    const items = sec.id === 'all' ? all : all.filter(f => contrastSectionOf(f) === sec.id);
     if (!items.length) continue;
     const st = drContrastSectionUI[sec.id]
-      || (drContrastSectionUI[sec.id] = { collapsed: sec.id === 'other', showAll: false });
+      || (drContrastSectionUI[sec.id] = { collapsed: sec.id === 'other' || sec.id === 'all', showAll: false });
 
     const wrap = root.append('div')
       .attr('class', 'dr-contrast-section' + (st.collapsed ? ' collapsed' : ''));
