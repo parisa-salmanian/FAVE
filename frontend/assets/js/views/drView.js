@@ -2244,7 +2244,6 @@ function renderFeatureDiffPanel(diff) {
     return;
   }
 
-  const top = feats.slice(0, 5); // show top 5
   let html = '<table class="table table-sm table-borderless mb-0">';
   html += '<thead><tr>' +
     '<th class="text-muted small">Feature</th>' +
@@ -2253,18 +2252,33 @@ function renderFeatureDiffPanel(diff) {
     '<th class="text-muted small">KS</th>' +
     '</tr></thead><tbody>';
 
-  for (const f of top) {
+  const rowOf = (f) => {
     const medSel  = Number.isFinite(f.medSel)  ? f.medSel.toFixed(f.key === 'years' ? 0 : 2) : '—';
     const medCity = Number.isFinite(f.medCity) ? f.medCity.toFixed(f.key === 'years' ? 0 : 2) : '—';
     const dMean   = Number.isFinite(f.effect)  ? f.effect.toFixed(2) : '—';
     const ks      = Number.isFinite(f.ks)      ? f.ks.toFixed(2) : '—';
-
-    html += `<tr>
+    return `<tr>
       <td>${f.label}</td>
       <td>${medSel} / ${medCity}</td>
       <td>${dMean}</td>
       <td>${ks}</td>
     </tr>`;
+  };
+
+  // Same sectioning as the contrastive chart (Demographics / Access / Supply &
+  // mismatch): top 3 per group instead of a flat top 5, so the supply story is
+  // never buried under collinear demographic rows. Falls back to flat top 5
+  // when only one group is populated (e.g. an access-only feature set).
+  const groups = DR_CONTRAST_SECTIONS
+    .map(sec => ({ sec, items: feats.filter(f => contrastSectionOf(f) === sec.id) }))
+    .filter(g => g.items.length);
+  if (groups.length <= 1) {
+    for (const f of feats.slice(0, 5)) html += rowOf(f);
+  } else {
+    for (const g of groups) {
+      html += `<tr class="dr-stats-group"><td colspan="4">${g.sec.title}</td></tr>`;
+      for (const f of g.items.slice(0, 3)) html += rowOf(f);
+    }
   }
 
   html += '</tbody></table>';
@@ -4959,21 +4973,23 @@ function buildContrastiveEngineExplanation() {
   const feats = diff && diff.features ? diff.features : [];
   if (!feats.length) return null;
 
-  // Show every feature (was capped at 16, which silently dropped services with a
-  // tiny effect — e.g. Hospital, which barely varies at hex scale in rural
-  // Kalmar). 30 is comfortably above the ~20 access features.
-  const top = feats.slice(0, 30);
-
+  // Return EVERY feature (no cap): the sectioned renderer groups the bars into
+  // Demographics / Access / Supply & mismatch, so a long collinear block (e.g.
+  // ~40 SCB bars when the selection was made BY demographics) can no longer bury
+  // the supply diagnosis 40 bars down. Other consumers slice their own top-N.
   return {
     mode: 'contrast',
-    ranked: top.map(f => {
+    ranked: feats.map(f => {
       const effect = f.effect || 0;
       // Colour by GOOD/BAD for the selection, not raw direction: for distance
-      // features LOWER is better (closer); for fairness/access HIGHER is better.
-      // So "closer" reads green and "farther" reads red — the intuitive mapping.
-      const lowerIsBetter = /distance/i.test(f.label || '');
+      // features LOWER is better (closer); for MISMATCH lower is also better
+      // (high mismatch = looks close but supply lags — the bad diagnosis); for
+      // fairness/access/supply HIGHER is better. So "closer"/"well-supplied"
+      // reads green and "farther"/"under-supplied" reads red.
+      const lowerIsBetter = /distance|mismatch/i.test(f.label || '');
       const better = lowerIsBetter ? effect < 0 : effect > 0;
       return {
+        key: f.key,
         label: f.label,
         score: Math.abs(effect),
         direction: effect >= 0 ? 'higher-in-cluster' : 'lower-in-cluster',
@@ -4981,8 +4997,10 @@ function buildContrastiveEngineExplanation() {
       };
     }),
     note: 'Unsupervised: contrastive distribution between the selection and the ' +
-          'wider city (standardized mean differences). Green = the selection is ' +
-          'BETTER served (closer / fairer); red = worse served (farther / less fair).'
+          'wider city (standardized mean differences), grouped into who lives ' +
+          'here (demographics) / how close services are (access) / how much is ' +
+          'left after crowding (supply). Green = the selection is BETTER served ' +
+          '(closer / fairer); red = worse served (farther / less fair).'
   };
 }
 
@@ -5142,20 +5160,45 @@ function drawEngineBarChart(engineData) {
     return;
   }
 
- const top = engineData.ranked.slice(0, 30); // show full ranking (all services, no silent cap)
+  // Click-to-explain: clicking a bar (or its label) opens the interpretation
+  // card below the chart, with per-selection stats + a plain-language reading.
+  // Pass the PANEL selection (not one svg): the sectioned contrastive draws one
+  // svg per group, and highlight/restore must span all of them.
+  const onFeatureClick = (d) => toggleFeatureExplainCard(d, engineData.mode, root);
+
+  if (engineData.mode === 'ebm') {
+    // EBM keeps the flat ranked chart — the backend already returns a compact
+    // importance ranking; sectioning is a contrastive concern.
+    const top = engineData.ranked.slice(0, 30);
+    drawEngineBarsSVG(root, top, {
+      ...engineBarGeometry(top, enginePlotEl),
+      mode: 'ebm',
+      onClick: onFeatureClick,
+      title: 'Supervised engine (EBM)',
+      xLabel: 'EBM importance (log-odds magnitude)'
+    });
+    return;
+  }
+
+  drawContrastiveSections(root, enginePlotEl, engineData, onFeatureClick);
+}
+
+// Shared geometry for the engine bar charts. Size the left gutter to the
+// LONGEST label so full names show — coupled interaction terms ("A × B")
+// overran the old fixed 170px margin and were clipped at the SVG's left edge.
+// Measure with a canvas, cap the gutter so bars keep room, and shrink the label
+// font only if a label is still too long for the cap. Computed ONCE over the
+// full ranking so the gutter and x-domain are shared by every section chart —
+// bars stay aligned and comparable across sections and expand/collapse.
+function engineBarGeometry(items, enginePlotEl) {
   const width = enginePlotEl.clientWidth || 260;
-  // Size the left gutter to the LONGEST label so full names show. Coupled
-  // interaction terms ("A × B", enabled once pairwise interactions were turned
-  // on) overran the old fixed 170px margin and were clipped at the SVG's left
-  // edge. Measure with a canvas, cap the gutter so bars keep room, and shrink
-  // the label font only if a label is still too long for the cap.
   const LABEL_FS_MAX = 10;
   let labelFont = LABEL_FS_MAX;
   const _measCtx = document.createElement('canvas').getContext('2d');
   const measureMaxLabel = (fs) => {
     _measCtx.font = fs + 'px sans-serif';
     let m = 0;
-    for (const f of top) { const w = _measCtx.measureText(String(f.label)).width; if (w > m) m = w; }
+    for (const f of items) { const w = _measCtx.measureText(String(f.label)).width; if (w > m) m = w; }
     return m;
   };
   const leftCap = Math.max(150, Math.min(250, Math.round(width * 0.6)));
@@ -5164,29 +5207,38 @@ function drawEngineBarChart(engineData) {
     labelFont = Math.max(8, Math.floor(LABEL_FS_MAX * (leftCap - 12) / maxLabelW));
     maxLabelW = measureMaxLabel(labelFont);
   }
-  const margin = {
-    top: 26, right: 12, bottom: 52,
-    left: Math.min(leftCap, Math.max(120, Math.ceil(maxLabelW) + 12))
+  return {
+    width,
+    labelFont,
+    left: Math.min(leftCap, Math.max(120, Math.ceil(maxLabelW) + 12)),
+    xMax: (typeof d3 !== 'undefined' ? d3.max(items, f => f.score) : 0) || 0.01
   };
-  const minInnerHeight = top.length * 24;
-  const height = Math.max(
-    enginePlotEl.clientHeight || 0,
-    margin.top + margin.bottom + minInnerHeight
-  );
+}
 
-  const svg = root.append('svg')
-    .attr('width', width)
+// Draw ONE horizontal ranked bar chart into `container` (a d3 selection).
+// Used directly for the EBM ranking and once per section for the contrastive.
+// opts: { width, left, labelFont, xMax, mode, onClick, title?, xLabel? }
+function drawEngineBarsSVG(container, items, opts) {
+  const margin = {
+    top: opts.title ? 26 : 8,
+    right: 12,
+    bottom: opts.xLabel ? 52 : 24,
+    left: opts.left
+  };
+  const height = margin.top + margin.bottom + items.length * 24;
+
+  const svg = container.append('svg')
+    .attr('width', opts.width)
     .attr('height', height)
     .style('display', 'block')
     .style('overflow', 'visible');
 
-  const xMax = d3.max(top, f => f.score) || 0.01;
   const x = d3.scaleLinear()
-    .domain([0, xMax])
-    .range([margin.left, width - margin.right]);
+    .domain([0, opts.xMax])
+    .range([margin.left, opts.width - margin.right]);
 
   const y = d3.scaleBand()
-    .domain(top.map(f => f.label))
+    .domain(items.map(f => f.label))
     .range([margin.top, height - margin.bottom])
     .padding(0.2);
 
@@ -5204,27 +5256,20 @@ function drawEngineBarChart(engineData) {
       g.selectAll('text').attr('font-size', 9);
     });
 
-  // x-axis label (different text for EBM vs contrastive)
-  svg.append('text')
-    .attr('x', (margin.left + width - margin.right) / 2)
-    .attr('y', height - 14)
-    .attr('text-anchor', 'middle')
-    .attr('font-size', 9)
-    .attr('fill', '#666')
-    .text(
-      engineData.mode === 'ebm'
-        ? 'EBM importance (log-odds magnitude)'
-        : 'Effect size |d| (contrastive)'
-    );
-
-  // Click-to-explain: clicking a bar (or its label) opens the interpretation
-  // card below the chart, with per-selection stats + a plain-language reading.
-  const onFeatureClick = (d) => toggleFeatureExplainCard(d, engineData.mode, svg);
+  if (opts.xLabel) {
+    svg.append('text')
+      .attr('x', (margin.left + opts.width - margin.right) / 2)
+      .attr('y', height - 14)
+      .attr('text-anchor', 'middle')
+      .attr('font-size', 9)
+      .attr('fill', '#666')
+      .text(opts.xLabel);
+  }
 
   // bars
   svg.append('g')
     .selectAll('rect')
-    .data(top)
+    .data(items)
     .enter()
     .append('rect')
     .attr('class', 'dr-engine-feat-bar')
@@ -5233,21 +5278,21 @@ function drawEngineBarChart(engineData) {
     .attr('height', y.bandwidth())
     .attr('width', d => x(d.score) - x(0))
     .attr('fill', d => {
-      if (engineData.mode === 'ebm') return '#6c6c6c';
+      if (opts.mode === 'ebm') return '#6c6c6c';
       // Green = better for the selection (closer / fairer), red = worse. `better`
       // already accounts for distance polarity; fall back to raw direction if absent.
       if (typeof d.better === 'boolean') return d.better ? '#2ecc71' : '#e74c3c';
       return d.direction === 'higher-in-cluster' ? '#2ecc71' : '#e74c3c';
     })
     .style('cursor', 'pointer')
-    .on('click', (event, d) => onFeatureClick(d))
+    .on('click', (event, d) => opts.onClick(d))
     .append('title')
     .text('Click: what does this mean in the selection?');
 
   // y-axis labels (feature names)
   svg.append('g')
     .selectAll('text.feature-label')
-    .data(top)
+    .data(items)
     .enter()
     .append('text')
     .attr('class', 'feature-label')
@@ -5255,22 +5300,119 @@ function drawEngineBarChart(engineData) {
     .attr('y', d => y(d.label) + y.bandwidth() / 2)
     .attr('dy', '0.35em')
     .attr('text-anchor', 'end')
-    .attr('font-size', labelFont)
+    .attr('font-size', opts.labelFont)
     .style('cursor', 'pointer')
-    .on('click', (event, d) => onFeatureClick(d))
+    .on('click', (event, d) => opts.onClick(d))
     .text(d => d.label);
 
-  // small title line
-  const title = engineData.mode === 'ebm'
-    ? 'Supervised engine (EBM)'
-    : 'Unsupervised engine (contrastive distribution)';
+  if (opts.title) {
+    svg.append('text')
+      .attr('x', margin.left)
+      .attr('y', margin.top - 4)
+      .attr('font-size', 10)
+      .attr('fill', '#555')
+      .text(opts.title);
+  }
+  return svg;
+}
 
-  svg.append('text')
-    .attr('x', margin.left)
-    .attr('y', margin.top - 4)
-    .attr('font-size', 10)
-    .attr('fill', '#555')
-    .text(title);
+// ---- Sectioned contrastive -------------------------------------------------
+// The contrastive ranking is grouped into the three stories a planner reads in
+// order: WHO the selection is (SCB demographics — confirmation the lasso caught
+// the intended group), how CLOSE services are (proximity/access — what the
+// choropleth already shows), and how much SUPPLY is left once crowding is
+// accounted for (2SFCA + mismatch — the diagnosis the map hides). Selecting a
+// cluster BY demographics makes ~40 collinear SCB bars monopolize a flat
+// ranking; sectioning keeps all three stories above the fold. Grouping mirrors
+// drFeatureMode.js fieldGroupOf(); collapse/show-all state survives re-renders.
+const DR_CONTRAST_SECTIONS = [
+  { id: 'demo',   title: 'Demographics (SCB)',        sub: 'who lives here — does the selection match the intended group?' },
+  { id: 'access', title: 'Access (proximity)',        sub: 'how close services are — what the map shows' },
+  { id: 'supply', title: 'Supply & mismatch (2SFCA)', sub: 'what is left after crowding — under-supply the map hides' },
+  { id: 'other',  title: 'Other (built form)',        sub: 'building-stock context' }
+];
+const DR_CONTRAST_TOP_N = 6;    // bars per section before "Show all"
+const drContrastSectionUI = {}; // id -> { collapsed, showAll }
+
+function contrastSectionOf(item) {
+  const key = String(item.key || '');
+  const label = String(item.label || '').toLowerCase();
+  // Order matters: mismatch labels contain "supply", and SCB labels can contain
+  // service words ("upper secondary students (scb)") — so test supply first,
+  // then demographics, then access.
+  if (/^(supply|mismatch)/.test(key) || /supply \(2sfca\)|mismatch/.test(label)) return 'supply';
+  if (/^(scb|dem)/i.test(key) || /^rich(Need|Income)$/.test(key)
+      || /\((scb|dem|synthetic)\)/.test(label)) return 'demo';
+  if (/^(fair|dist|richModal)/.test(key) || key === 'overall'
+      || /fairness|access|distance/.test(label)) return 'access';
+  return 'other';
+}
+
+function drawContrastiveSections(root, enginePlotEl, engineData, onClick) {
+  const all = engineData.ranked;
+  const geom = engineBarGeometry(all, enginePlotEl);
+
+  root.append('div')
+    .attr('class', 'tiny muted dr-contrast-title')
+    .text('Unsupervised engine (contrastive distribution)');
+
+  for (const sec of DR_CONTRAST_SECTIONS) {
+    const items = all.filter(f => contrastSectionOf(f) === sec.id);
+    if (!items.length) continue;
+    const st = drContrastSectionUI[sec.id]
+      || (drContrastSectionUI[sec.id] = { collapsed: sec.id === 'other', showAll: false });
+
+    const wrap = root.append('div')
+      .attr('class', 'dr-contrast-section' + (st.collapsed ? ' collapsed' : ''));
+    const head = wrap.append('button')
+      .attr('type', 'button')
+      .attr('class', 'dr-contrast-head');
+    head.append('span').attr('class', 'dr-contrast-chev').text('▾');
+    head.append('span').text(sec.title);
+    head.append('span').attr('class', 'dr-contrast-count').text(`(${items.length})`);
+    head.append('span').attr('class', 'dr-contrast-top')
+      .text(`top |d| ${items[0].score.toFixed(2)}`); // items keep the global sort → [0] is the section max
+    const body = wrap.append('div').attr('class', 'dr-contrast-body');
+
+    const renderBody = () => {
+      body.html('');
+      if (st.collapsed) return;
+      body.append('div').attr('class', 'dr-contrast-sub').text(sec.sub);
+      const shown = st.showAll ? items : items.slice(0, DR_CONTRAST_TOP_N);
+      drawEngineBarsSVG(body, shown, { ...geom, mode: 'contrast', onClick });
+      if (items.length > DR_CONTRAST_TOP_N) {
+        body.append('button')
+          .attr('type', 'button')
+          .attr('class', 'dr-contrast-more')
+          .text(st.showAll ? `Show top ${DR_CONTRAST_TOP_N} only` : `Show all ${items.length} ▾`)
+          .on('click', () => { st.showAll = !st.showAll; renderBody(); });
+      }
+      reapplyEngineBarHighlight(root);
+    };
+
+    head.on('click', () => {
+      st.collapsed = !st.collapsed;
+      wrap.classed('collapsed', st.collapsed);
+      renderBody();
+    });
+    renderBody();
+  }
+
+  root.append('div')
+    .attr('class', 'tiny muted dr-contrast-xcap')
+    .text('Bar length = effect size |d| vs the rest of the city (shared scale across sections).');
+}
+
+// Re-dim bars to match an OPEN click-to-explain card after a section re-render
+// (expand/collapse redraws that section's bars at full opacity while the other
+// sections stay dimmed).
+function reapplyEngineBarHighlight(rootSel) {
+  const label = drFeatureExplainState.label;
+  if (!label) return;
+  rootSel.selectAll('rect.dr-engine-feat-bar')
+    .attr('opacity', b => (b.label === label ? 1 : 0.35))
+    .attr('stroke', b => (b.label === label ? '#333' : null))
+    .attr('stroke-width', b => (b.label === label ? 1.25 : null));
 }
 
 // ============== Click-to-explain: what does this feature mean HERE? ==============
