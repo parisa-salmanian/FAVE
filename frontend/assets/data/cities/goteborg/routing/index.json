@@ -1,14 +1,10 @@
 {
   "city": "goteborg",
-  "baked_at": "2026-07-19T17:02:56.667833+00:00",
+  "baked_at": "2026-07-20T00:39:15.731129+00:00",
   "key_format": "lon,lat",
   "key_decimals": 6,
   "building_count": 282797,
   "modes": {
-    "walking": {
-      "school_primary": 282797,
-      "school_high": 282797
-    },
     "cycling": {
       "grocery": 282797,
       "hospital": 282797,
@@ -18,6 +14,14 @@
       "veterinary": 282797,
       "university": 282797,
       "kindergarten": 282797,
+      "school_primary": 282797,
+      "school_high": 282797
+    },
+    "driving": {
+      "school_primary": 282797,
+      "school_high": 282797
+    },
+    "walking": {
       "school_primary": 282797,
       "school_high": 282797
     }

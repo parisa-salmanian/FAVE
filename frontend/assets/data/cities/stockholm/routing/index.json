@@ -1,6 +1,6 @@
 {
   "city": "stockholm",
-  "baked_at": "2026-06-05T21:22:44.005758+00:00",
+  "baked_at": "2026-07-20T06:27:28.671946+00:00",
   "key_format": "lon,lat",
   "key_decimals": 6,
   "building_count": 242371,
@@ -15,6 +15,13 @@
       "university": 242371,
       "kindergarten": 242371,
       "school_primary": 242371,
+      "school_high": 242371
+    },
+    "driving": {
+      "school_primary": 242371,
+      "school_high": 242371
+    },
+    "walking": {
       "school_high": 242371
     }
   }
