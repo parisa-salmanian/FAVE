@@ -1,14 +1,10 @@
 {
   "city": "uppsala",
-  "baked_at": "2026-07-19T16:11:58.802583+00:00",
+  "baked_at": "2026-07-19T23:40:31.642000+00:00",
   "key_format": "lon,lat",
   "key_decimals": 6,
   "building_count": 117947,
   "modes": {
-    "walking": {
-      "school_primary": 117947,
-      "school_high": 117947
-    },
     "cycling": {
       "grocery": 117947,
       "hospital": 117947,
@@ -18,6 +14,14 @@
       "veterinary": 117947,
       "university": 117947,
       "kindergarten": 117947,
+      "school_primary": 117947,
+      "school_high": 117947
+    },
+    "driving": {
+      "school_primary": 117947,
+      "school_high": 117947
+    },
+    "walking": {
       "school_primary": 117947,
       "school_high": 117947
     }

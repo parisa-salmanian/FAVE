@@ -1,10 +1,14 @@
 {
   "city": "goteborg",
-  "baked_at": "2026-06-06T18:09:01.611662+00:00",
+  "baked_at": "2026-07-19T17:02:56.667833+00:00",
   "key_format": "lon,lat",
   "key_decimals": 6,
   "building_count": 282797,
   "modes": {
+    "walking": {
+      "school_primary": 282797,
+      "school_high": 282797
+    },
     "cycling": {
       "grocery": 282797,
       "hospital": 282797,
