@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>FAVE network test</title>
+<style>body{font-family:sans-serif;font-size:18px;padding:2em}div{margin:.4em 0}</style>
+</head>
+<body>
+<h2>FAVE dependency test</h2>
+<div>1. Local server: <b style="color:green">OK</b></div>
+<div>2. Backend :8001: <b id="backend">testing…</b></div>
+<div>3. OSM tile: <b id="tile">testing…</b></div>
+<div>4. bootstrap (jsdelivr): <b id="s0">testing…</b></div>
+<div>5. maplibre-gl (unpkg): <b id="s1">testing…</b></div>
+<div>6. deck.gl (unpkg): <b id="s2">testing…</b></div>
+<div>7. deck.gl mapbox (unpkg): <b id="s3">testing…</b></div>
+<div>8. h3-js (unpkg): <b id="s4">testing…</b></div>
+<div>9. deck.gl geo-layers (unpkg): <b id="s5">testing…</b></div>
+<div>10. turf (unpkg): <b id="s6">testing…</b></div>
+<div>11. proj4 (jsdelivr): <b id="s7">testing…</b></div>
+<div>12. d3 (jsdelivr): <b id="s8">testing…</b></div>
+<div>13. globals after load: <b id="globals">waiting…</b></div>
+<script>
+function set(id, ok, extra){ var e=document.getElementById(id);
+  e.textContent = (ok ? "OK" : "FAILED") + (extra ? " — "+extra : "");
+  e.style.color = ok ? "green" : "red"; }
+fetch("http://127.0.0.1:8001/health").then(r=>r.json()).then(j=>set("backend", j.ok))
+  .catch(e=>set("backend", false, e.message));
+var img=new Image();
+img.onload=()=>set("tile", true); img.onerror=()=>set("tile", false);
+img.src="https://tile.openstreetmap.org/12/2226/1256.png?t="+Date.now();
+
+var SCRIPTS=[
+ "https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js",
+ "https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js",
+ "https://unpkg.com/deck.gl@8.8.19/dist.min.js",
+ "https://unpkg.com/@deck.gl/mapbox@8.8.19/dist.min.js",
+ "https://unpkg.com/h3-js@3.7.2",
+ "https://unpkg.com/@deck.gl/geo-layers@8.8.19/dist.min.js",
+ "https://unpkg.com/@turf/turf@6/turf.min.js",
+ "https://cdn.jsdelivr.net/npm/proj4@2.12.1/dist/proj4.min.js",
+ "https://cdn.jsdelivr.net/npm/d3@7"
+];
+var pending=SCRIPTS.length;
+function loadSeq(i){
+  if(i>=SCRIPTS.length){ report(); return; }
+  var s=document.createElement("script");
+  s.src=SCRIPTS[i];
+  s.onload=function(){ set("s"+i, true); loadSeq(i+1); };
+  s.onerror=function(){ set("s"+i, false); loadSeq(i+1); };
+  document.head.appendChild(s);
+}
+function report(){
+  var g=[];
+  g.push("maplibregl:"+(typeof maplibregl!=="undefined"?"yes":"NO"));
+  g.push("deck:"+(typeof deck!=="undefined"?"yes":"NO"));
+  g.push("h3:"+(typeof h3!=="undefined"?"yes":"NO"));
+  g.push("turf:"+(typeof turf!=="undefined"?"yes":"NO"));
+  g.push("d3:"+(typeof d3!=="undefined"?"yes":"NO"));
+  var allOk=g.every(x=>!x.endsWith("NO"));
+  set("globals", allOk, g.join("  "));
+  document.getElementById("globals").textContent = g.join("   ");
+  document.getElementById("globals").style.color = allOk ? "green" : "red";
+}
+loadSeq(0);
+</script>
+</body>
+</html>
