@@ -118,6 +118,14 @@
     return String(s || '').toLowerCase().includes('mismatch');
   }
 
+  // Mode-gain dims: key 'mgain*' or a 'gain (from→to)' label (any mode pair).
+  // Opt-in via the Custom picker ONLY — they never enter the standard feature
+  // sets, so adding them changes no existing embedding.
+  function isModeGainFeature(s) {
+    const t = String(s || '');
+    return /^mgain/i.test(t) || /gain \([a-z]+→[a-z]+\)/i.test(t);
+  }
+
   function currentMode() {
     const sel = document.getElementById('drFeatureMode');
     const mode = sel?.value || globalThis.DR_FEATURE_MODE || MODE_POLICY;
@@ -158,6 +166,9 @@
       const k = drLabelToKey ? drLabelToKey.get(label) : null;
       return k ? drCustomKeys.has(k) : false;
     }
+    // Mode-gain columns are Custom-only (handled above): every named set keeps
+    // its exact pre-existing feature list.
+    if (isModeGainFeature(label) || isModeGainFeature(key)) return false;
     const isSupply = isSupplyFeature(label);
     const isMismatch = isMismatchFeature(label);
     const isScb = isScbFeature(label);
@@ -305,7 +316,8 @@
   // Display order — related groups sit next to each other (the "list close things
   // close together" requirement): economic block together, education block, age block.
   const GROUP_ORDER = [
-    'Accessibility — fairness', 'Accessibility — distance', 'Supply (2SFCA)', 'Mismatch',
+    'Accessibility — fairness', 'Accessibility — distance', 'Mode gain',
+    'Supply (2SFCA)', 'Mismatch',
     'Built form & mobility', 'Demographics — summary',
     'Income (SCB)', 'Transfers & benefits (SCB)', 'Labour market (SCB)',
     'Education (SCB)', 'Students & NEET (SCB)',
@@ -330,6 +342,7 @@
       if (/^scbF_/.test(key)) return SCB_GROUP_LABEL[scbGroups.get(key)] || 'Demographics — summary';
       return 'Demographics — summary';
     }
+    if (/^mgain/i.test(key) || /gain \([a-z]+→[a-z]+\)/.test(label)) return 'Mode gain';
     if (/supply \(2sfca\)/.test(label) || /^supply/i.test(key)) return 'Supply (2SFCA)';
     if (/mismatch/.test(label) || /^mismatch/i.test(key)) return 'Mismatch';
     if (/distance \(m\)/.test(label) || /^dist/i.test(key)) return 'Accessibility — distance';
@@ -412,7 +425,8 @@
         drCustomInit = true;
         for (const c of cfgs) {
           if (isSupplyFeature(c.key) || isSupplyFeature(c.label)
-              || isMismatchFeature(c.key) || isMismatchFeature(c.label)) continue;
+              || isMismatchFeature(c.key) || isMismatchFeature(c.label)
+              || isModeGainFeature(c.key) || isModeGainFeature(c.label)) continue;
           drCustomKeys.add(c.key);
         }
       }
@@ -467,6 +481,8 @@
       coll.id = bodyId; coll.className = 'accordion-collapse collapse';
       const body = document.createElement('div');
       body.className = 'accordion-body p-2';
+      // The Mode gain group carries its From/To pair controls above the fields.
+      if (gname === 'Mode gain') body.appendChild(buildModeGainPairControls());
       const row = document.createElement('div');
       row.className = 'row row-cols-1 row-cols-sm-2 row-cols-md-3 g-1';
 
@@ -517,18 +533,87 @@
     buildCustomPicker();   // rebuild so every checkbox + group header/badge re-syncs
   }
 
+  // From/To travel-mode selects for the mode-gain pair (reviewer point: the
+  // mode comparison must not be hardcoded walk→cycle — any two of the four
+  // modes can be compared). Changing the pair reloads the layer, relabels the
+  // mgain fields everywhere and, if a projection is live, re-runs DR (runDR is
+  // serialized and restores the selection + contrastive automatically).
+  function buildModeGainPairControls() {
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex align-items-center gap-1 mb-2 flex-wrap';
+    const pair = (typeof globalThis.modeGainPair === 'function')
+      ? globalThis.modeGainPair() : { from: 'walking', to: 'cycling' };
+    const modes = (typeof MGAIN_ALL_MODES !== 'undefined')
+      ? MGAIN_ALL_MODES : ['walking', 'cycling', 'driving', 'transit'];
+    const mkSel = (val, title) => {
+      const s = document.createElement('select');
+      s.className = 'form-select form-select-sm w-auto';
+      s.title = title;
+      for (const m of modes) {
+        const o = document.createElement('option');
+        o.value = m; o.textContent = m;
+        if (m === val) o.selected = true;
+        s.appendChild(o);
+      }
+      return s;
+    };
+    const fromSel = mkSel(pair.from, 'Baseline travel mode (anchors the 0..1 gain scale)');
+    const toSel = mkSel(pair.to, 'Comparison travel mode');
+    const lbl = document.createElement('span');
+    lbl.className = 'small text-muted'; lbl.textContent = 'Gain =';
+    const arrow = document.createElement('span');
+    arrow.className = 'small text-muted'; arrow.textContent = '→';
+    const note = document.createElement('span');
+    note.className = 'tiny text-muted ms-1';
+    const onChange = async () => {
+      const f = fromSel.value, t = toSel.value;
+      if (f === t) { note.textContent = 'pick two different modes'; return; }
+      if (typeof globalThis.setModeGainPair !== 'function'
+          || !globalThis.setModeGainPair(f, t)) { note.textContent = ''; return; }
+      note.textContent = 'loading…';
+      fromSel.disabled = toSel.disabled = true;
+      try {
+        await globalThis.ensureModeGain();
+        if (typeof globalThis.notifyModeGainPairChanged === 'function') globalThis.notifyModeGainPairChanged();
+        drFeatureUniverse = []; drUniverseSig = '';   // labels changed → recapture
+        const ok = typeof globalThis.modeGainReady === 'function' && globalThis.modeGainReady();
+        note.textContent = ok ? '' : 'not available for this city';
+        buildCustomPicker();
+        if (ok && typeof globalThis.runDR === 'function'
+            && typeof drPlot !== 'undefined' && drPlot?.points) {
+          await globalThis.runDR();
+        }
+      } finally { fromSel.disabled = toSel.disabled = false; }
+    };
+    fromSel.addEventListener('change', onChange);
+    toSel.addEventListener('change', onChange);
+    wrap.append(lbl, fromSel, arrow, toSel, note);
+    return wrap;
+  }
+
   // Preload the 2SFCA supply layer (same call the inspector's Supply panel uses) so
   // the supply/mismatch columns exist in the matrix → appear in the picker. Cached,
   // so it's instant once loaded (e.g. after an inspector hover). Then force a fresh
   // universe capture so those new columns are picked up.
   async function ensureSupplyForPicker() {
-    if (typeof globalThis.ensureAccess2sfca !== 'function') return;
+    let loadedAny = false;
     try {
-      const mode = (document.getElementById('fairnessTravelMode')?.value || 'walking').toLowerCase();
-      const city = (typeof globalThis.a2sCurrentCity === 'function') ? globalThis.a2sCurrentCity() : undefined;
-      await globalThis.ensureAccess2sfca(city, mode);
-      drFeatureUniverse = []; drUniverseSig = '';   // force re-capture with supply present
+      if (typeof globalThis.ensureAccess2sfca === 'function') {
+        const mode = (document.getElementById('fairnessTravelMode')?.value || 'walking').toLowerCase();
+        const city = (typeof globalThis.a2sCurrentCity === 'function') ? globalThis.a2sCurrentCity() : undefined;
+        await globalThis.ensureAccess2sfca(city, mode);
+        loadedAny = true;
+      }
     } catch (_) { /* supply is best-effort */ }
+    // Also preload the mode-gain (walk→cycle) layer so its columns show up in
+    // the picker (they start unchecked, like supply/mismatch).
+    try {
+      if (typeof globalThis.ensureModeGain === 'function') {
+        await globalThis.ensureModeGain();
+        loadedAny = true;
+      }
+    } catch (_) { /* mode gain is best-effort */ }
+    if (loadedAny) { drFeatureUniverse = []; drUniverseSig = ''; }   // force re-capture
   }
 
   // The custom picker behaves like a DROPDOWN: it floats under the toolbar

@@ -96,6 +96,7 @@ const drPlot = {
   // Cached stats & explanations (for your existing Stats / Model tabs)
   cityStats: null,             // per-feature stats over all DR points
   lastSelectionIdx: [],        // indices of the last lasso selection
+  selectedEntityIds: null,     // the selection as STABLE entity ids (cohort) — survives re-runs
   lastFeatureDiff: null,       // unsupervised feature differences for last selection (Stats tab)
   lastModelExplanation: null,  // supervised model explanation for last selection (Model tab)
 
@@ -448,6 +449,73 @@ function mismatchRowFromRow(row) {
   // Overall 2SFCA supply (mean per-cat provision) — for the "Supply provision"
   // colour option (not a matrix/metrics column).
   out.supplyOverall = Number.isFinite(supOverall) ? supOverall : null;
+  return out;
+}
+
+// ---- MODE-GAIN (from→to travel mode) features for the DR --------------------
+// Carries the mode comparison INTO the multivariate views (the submitted paper
+// compared modes only via maps + the summary index). Per category: access score
+// under the TO mode MINUS under the FROM mode, both on the FROM-mode-anchored
+// 0..1 scale (see lib/modeGain.js) — ~0 where the from-mode already saturates
+// AND where even the to-mode can't reach; large where the switch actually
+// rescues access. The pair is user-selectable (From/To selects in the Custom
+// picker's Mode gain group; default walking→cycling). Opt-in via the Custom
+// picker (the fields never enter the standard feature sets — see
+// drFeatureMode.js). Static baked matrices / baseline POIs: what-if edits are
+// not reflected, same as the dist* columns.
+const DR_MODEGAIN_NAME_BY_KEY = {
+  mgainGrocery: 'grocery', mgainHospital: 'hospital', mgainHealthcare: 'healthcare',
+  mgainPharmacy: 'pharmacy', mgainVeterinary: 'veterinary', mgainUniversity: 'university',
+  mgainSchoolHigh: 'high school', mgainPrimary: 'primary school',
+  mgainKindergarten: 'kindergarten', mgainDentistry: 'dentistry'
+};
+function drModeGainLabels() {
+  const pair = (typeof modeGainPairLabel === 'function') ? modeGainPairLabel() : 'walking→cycling';
+  const out = {};
+  for (const [k, name] of Object.entries(DR_MODEGAIN_NAME_BY_KEY)) out[k] = `${name} gain (${pair})`;
+  out.mgainOverall = `overall gain (${pair})`;
+  return out;
+}
+// Refresh every pair-labelled UI string after setModeGainPair: the feature-
+// config labels (custom picker rows) and the contrastive section header. Also
+// drops the meso aggregation memo — its cached sums hold the OLD pair's gains.
+function notifyModeGainPairChanged() {
+  const labels = drModeGainLabels();
+  for (const e of DR_FEATURE_CONFIG) {
+    if (labels[e.key]) e.label = labels[e.key].charAt(0).toUpperCase() + labels[e.key].slice(1);
+  }
+  const pair = (typeof modeGainPairLabel === 'function') ? modeGainPairLabel() : 'walking→cycling';
+  const sec = DR_CONTRAST_SECTIONS.find(s => s.id === 'mode');
+  if (sec) {
+    sec.title = `Mode shift (${pair})`;
+    sec.sub = `what switching ${pair.replace('→', ' → ')} changes here — gains the single-mode map hides`;
+  }
+  drPlot.__mezoDistAggKey = null;
+  drPlot.__mezoDistAgg = null;
+}
+// Per-building gains (cached on the feature per pair-epoch — the cache is
+// invalidated when the From/To pair changes). Needs ensureModeGain() to have
+// loaded both sides (runDR preloads it for the Custom set; the picker's
+// background preload also loads it). Same only-cache-a-real-resolution rule as
+// supplyValsForFeature.
+function modeGainValsForFeature(f) {
+  const p = f.properties || (f.properties = {});
+  const epoch = (typeof modeGainEpoch === 'function') ? modeGainEpoch() : 1;
+  if (p.__modeGainVals && p.__modeGainEpoch === epoch) return p.__modeGainVals;
+  let out = {};
+  if (typeof modeGainReady === 'function' && modeGainReady()
+      && typeof modeGainForPoint === 'function') {
+    let lon = NaN, lat = NaN;
+    try {
+      const g = f.geometry; let cs = null;
+      if (g) { if (g.type === 'Polygon') cs = g.coordinates[0]; else if (g.type === 'MultiPolygon') cs = g.coordinates[0] && g.coordinates[0][0]; }
+      if (cs && cs.length) { let x = 0, y = 0, n = 0; for (const c of cs) { x += c[0]; y += c[1]; n++; } if (n) { lon = x / n; lat = y / n; } }
+    } catch {}
+    if (Number.isFinite(lon) && Number.isFinite(lat)) {
+      const g = modeGainForPoint(lon, lat);
+      if (g) { out = g; p.__modeGainVals = out; p.__modeGainEpoch = epoch; }
+    }
+  }
   return out;
 }
 
@@ -890,6 +958,12 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
         // attributed to specific services. Absent rows are null → ignored.
         mismatch: pickedRows.map(r => r.mismatch),
         ...Object.fromEntries(Object.keys(DR_MISMATCH_PAIRS).map(k => [k, pickedRows.map(r => r[k])])),
+        // Mode-gain (walk→cycle) per service + overall — the mode-comparison
+        // fields, so the contrastive can attribute WHERE cycling changes access.
+        ...Object.fromEntries(
+          (typeof MGAIN_METRIC_KEYS !== 'undefined' ? MGAIN_METRIC_KEYS : [])
+            .map(k => [k, pickedRows.map(r => r[k])])
+        ),
         // Demographic metrics (district mode only; undefined elsewhere -> ignored
         // by computeFeatureDifferences' Number.isFinite filter). Includes the
         // composite need index used by need-weighted fairness.
@@ -1019,22 +1093,31 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     const distReady = (typeof routingReady === 'function' && routingReady()
       && typeof rawDistsForFeature === 'function' && typeof h3LatLngToCell === 'function'
       && h3lib && mezoRes != null && baseCityFC?.features?.length);
+    // Mode-gain (walk→cycle) aggregates ride the same building→hex pass. Its own
+    // store may load later than routing (Custom-set preload), so its readiness is
+    // part of the memo key — a later load invalidates the cached aggregation.
+    const mgReady = (typeof modeGainReady === 'function' && modeGainReady()
+      && typeof h3LatLngToCell === 'function' && h3lib && mezoRes != null
+      && baseCityFC?.features?.length);
     // Cache the building→hex distance aggregation: it depends only on the city +
     // travel mode + mezo resolution, NOT on the DR colour or re-runs. Recomputing
     // it every Run looped over ALL ~60k buildings (routing + centroid + h3) on the
     // main thread and froze the tab ("page unresponsive"). Memoise it on drPlot.
     const _travelMode = document.getElementById('fairnessTravelMode')?.value || 'walking';
     const _cityTok = (typeof lastCityKeyLoaded !== 'undefined' && lastCityKeyLoaded) ? lastCityKeyLoaded : '';
-    const _distAggKey = distReady ? `${_cityTok}|${_travelMode}|${mezoRes}|${baseCityFC.features.length}` : null;
+    const _mgPairTok = (mgReady && typeof modeGainPairLabel === 'function') ? modeGainPairLabel() : '';
+    const _distAggKey = (distReady || mgReady)
+      ? `${_cityTok}|${_travelMode}|${mezoRes}|${baseCityFC.features.length}|d${distReady ? 1 : 0}m${mgReady ? 1 : 0}|${_mgPairTok}`
+      : null;
     let distAgg; // hex -> { s:{key:sum}, c:{key:count} }
-    if (distReady && drPlot.__mezoDistAggKey === _distAggKey && drPlot.__mezoDistAgg) {
+    if (_distAggKey && drPlot.__mezoDistAggKey === _distAggKey && drPlot.__mezoDistAgg) {
       distAgg = drPlot.__mezoDistAgg;
     } else {
       distAgg = new Map();
-      if (distReady) {
+      if (distReady || mgReady) {
         const distKeys = Object.values(DR_DIST_KEY_BY_CAT);
         for (const f of baseCityFC.features) {
-          const rd = rawDistsForFeature(f);
+          const rd = distReady ? rawDistsForFeature(f) : null;
           let lon = NaN, lat = NaN;
           try {
             const g = f.geometry; let cs = null;
@@ -1047,9 +1130,16 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
           if (!hx) continue;
           let a = distAgg.get(hx);
           if (!a) { a = { s: {}, c: {} }; distAgg.set(hx, a); }
-          for (const k of distKeys) {
+          if (rd) for (const k of distKeys) {
             const v = Number(rd[k]);
             if (Number.isFinite(v)) { a.s[k] = (a.s[k] || 0) + v; a.c[k] = (a.c[k] || 0) + 1; }
+          }
+          if (mgReady) {
+            const mg = modeGainValsForFeature(f);
+            for (const k of MGAIN_METRIC_KEYS) {
+              const v = Number(mg[k]);
+              if (Number.isFinite(v)) { a.s[k] = (a.s[k] || 0) + v; a.c[k] = (a.c[k] || 0) + 1; }
+            }
           }
         }
       }
@@ -1061,6 +1151,18 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       const a = distAgg.get(cell?.hex);
       if (!a) return out;
       for (const k of Object.values(DR_DIST_KEY_BY_CAT)) {
+        const c = a.c[k];
+        out[k] = c ? a.s[k] / c : null;
+      }
+      return out;
+    };
+    // Per-cell mean of the per-building mode-gain values (same agg maps).
+    const cellGains = (cell) => {
+      const out = {};
+      if (!mgReady) return out;
+      const a = distAgg.get(cell?.hex);
+      if (!a) return out;
+      for (const k of MGAIN_METRIC_KEYS) {
         const c = a.c[k];
         out[k] = c ? a.s[k] / c : null;
       }
@@ -1110,6 +1212,8 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       Object.assign(row, supplyRowFromCats(supAgg && supAgg.cats, 'normMean'));
       // Mismatch (proximity − supply) per service + overall — the residual axis.
       Object.assign(row, mismatchRowFromRow(row));
+      // Mode-gain (walk→cycle) per service + overall, averaged over the cell.
+      Object.assign(row, cellGains(cell));
       return row;
     });
     const mezoLabels = {
@@ -1142,6 +1246,10 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     if (hasSupply) {
       Object.entries(DR_SUPPLY_LABELS).forEach(([k, lab]) => { mezoLabels[k] = lab; });
       if (rows.some(r => Number.isFinite(r.mismatch))) mezoLabels.mismatch = 'overall mismatch (prox−supply)';
+    }
+    // Mode-gain (from→to) dims — only if the layer resolved for this city.
+    if (rows.some(r => Number.isFinite(r.mgainOverall))) {
+      Object.entries(drModeGainLabels()).forEach(([k, lab]) => { mezoLabels[k] = lab; });
     }
     // "All Data" set — real DESO SCB (9 fields) as embedding features per mezo cell.
     rows.forEach((row, i) => Object.assign(row, scbRowFields(sample[i], 'unit')));
@@ -1238,6 +1346,8 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     Object.assign(row, supplyValsForFeature(f));
     // Mismatch (proximity − supply) per service + overall — the residual axis.
     Object.assign(row, mismatchRowFromRow(row));
+    // Mode-gain (walk→cycle) per service + overall — the mode-comparison fields.
+    Object.assign(row, modeGainValsForFeature(f));
     return row;
   });
 
@@ -1287,6 +1397,11 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     // Overall mismatch = the map-invisible residual axis for the "Supply +
     // Mismatch" (supply_plus) set; per-category mismatch stays in the contrastive.
     if (rows.some(r => Number.isFinite(r.mismatch))) buildingLabels.mismatch = 'overall mismatch (prox−supply)';
+  }
+
+  // Add the mode-gain (from→to) dims only if the layer resolved.
+  if (rows.some(r => Number.isFinite(r.mgainOverall))) {
+    Object.entries(drModeGainLabels()).forEach(([k, lab]) => { buildingLabels[k] = lab; });
   }
 
   // "All Data" set — synthetic per-building SCB (9 fields) as embedding features.
@@ -1806,7 +1921,8 @@ function initD3Overlay() {
 
 
 function applyDRSelection(idxArray, opts = {}) {
-  const { skipMapSync = false, skipParallelSync = false, append = false } = opts;
+  const { skipMapSync = false, skipParallelSync = false, append = false,
+          keepCohortOnEmpty = false } = opts;
 
   if (!skipParallelSync) {
     parallelCoordsForceEmptySelection = false;
@@ -1818,6 +1934,19 @@ function applyDRSelection(idxArray, opts = {}) {
 
   lasso.selectedIdx = selection;
   drHasSelection = selection.length > 0;
+
+  // Persist the cohort as STABLE entity ids (hex id / building geometry hash /
+  // district name) so re-runs (travel-mode switch, what-if, feature-set change)
+  // can restore the same selection instead of wiping it. An empty incoming
+  // selection is a user-intent clear → drop the cohort too — EXCEPT when the
+  // caller is a sync that merely failed to resolve entities (keepCohortOnEmpty):
+  // then the ids are the only remaining record of the cohort, keep them for
+  // restoreDRSelectionFromIds.
+  if (selection.length && Array.isArray(drPlot.sample)) {
+    drPlot.selectedEntityIds = selection.map(i => stableEntityId(drPlot.sample[i], i));
+  } else if (!keepCohortOnEmpty) {
+    drPlot.selectedEntityIds = null;
+  }
 
   if (typeof d3 !== 'undefined') {
     const svgEl = document.getElementById('drOverlay');
@@ -1904,6 +2033,7 @@ function drawSelectionHull(svg) {
 function clearSelection() {
   setPersistentBuildingSelection([]);
   clearParallelCoordsSelectionFromClearAction();
+  drPlot.selectedEntityIds = null;   // user cleared → drop the persisted cohort
   lasso.selectedIdx = [];
   lasso.points = [];
   lasso.drawing = false;
@@ -2083,6 +2213,21 @@ const DR_FEATURE_CONFIG = [
   { key: 'mismatchPrimary',      label: 'Primary school mismatch (prox−supply)' },
   { key: 'mismatchKindergarten', label: 'Kindergarten mismatch (prox−supply)' },
   { key: 'mismatchDentistry',    label: 'Dentistry mismatch (prox−supply)' },
+  // Mode-gain (from→to travel mode): access score under the To mode minus the
+  // From mode, both on the From-mode-anchored 0..1 scale (lib/modeGain.js).
+  // Carries the mode comparison into the contrastive/EBM: ~0 = already served
+  // OR beyond the To mode's reach; large = the switch genuinely rescues access.
+  // Labels carry the CURRENT pair (default walking→cycling) and are rewritten
+  // by notifyModeGainPairChanged when the picker's From/To selects change.
+  ...Object.entries({
+    mgainOverall: 'Overall', mgainGrocery: 'Grocery', mgainHospital: 'Hospital',
+    mgainHealthcare: 'Healthcare', mgainPharmacy: 'Pharmacy', mgainVeterinary: 'Veterinary',
+    mgainUniversity: 'University', mgainSchoolHigh: 'High school', mgainPrimary: 'Primary school',
+    mgainKindergarten: 'Kindergarten', mgainDentistry: 'Dentistry'
+  }).map(([key, name]) => ({
+    key,
+    label: `${name} gain (${typeof modeGainPairLabel === 'function' ? modeGainPairLabel() : 'walking→cycling'})`
+  })),
   { key: 'areaLog',      label: 'Footprint area (log m²)' },
   { key: 'changeScore',  label: 'Change score (S1)' },
   // Demographic features (district mode). Generated from DEMOGRAPHIC_FEATURES so
@@ -5339,6 +5484,7 @@ function drawEngineBarsSVG(container, items, opts) {
 const DR_CONTRAST_SECTIONS = [
   { id: 'demo',   title: 'Demographics (SCB)',        sub: 'who lives here — does the selection match the intended group?' },
   { id: 'access', title: 'Access (proximity)',        sub: 'how close services are — what the map shows' },
+  { id: 'mode',   title: 'Mode shift (walking→cycling)', sub: 'what switching modes changes here — gains the single-mode map hides' },
   { id: 'supply', title: 'Supply & mismatch (2SFCA)', sub: 'what is left after crowding — under-supply the map hides' },
   { id: 'other',  title: 'Other (built form)',        sub: 'building-stock context' },
   // Flat escape hatch: the full ungrouped ranking (the pre-sectioning view),
@@ -5354,8 +5500,9 @@ function contrastSectionOf(item) {
   const key = String(item.key || '');
   const label = String(item.label || '').toLowerCase();
   // Order matters: mismatch labels contain "supply", and SCB labels can contain
-  // service words ("upper secondary students (scb)") — so test supply first,
-  // then demographics, then access.
+  // service words ("upper secondary students (scb)") — so test mode-gain first
+  // (its labels contain service words too), then supply, demographics, access.
+  if (/^mgain/.test(key) || /gain \([a-z]+→[a-z]+\)/.test(label)) return 'mode';
   if (/^(supply|mismatch)/.test(key) || /supply \(2sfca\)|mismatch/.test(label)) return 'supply';
   if (/^(scb|dem)/i.test(key) || /^rich(Need|Income)$/.test(key)
       || /\((scb|dem|synthetic)\)/.test(label)) return 'demo';
@@ -5872,6 +6019,17 @@ function engineNeedsCalculationMessage(mode) {
     : 'EBM is ready to run. Click "Calculate selected engine".';
 }
 
+// The engines' notion of "the selection". lastSelectionIdx is the canonical
+// record, but if a stray render reset it while a live lasso selection exists,
+// self-heal from lasso.selectedIdx instead of telling the user to re-lasso.
+function engineSelectionIdx() {
+  const last = drPlot.lastSelectionIdx || [];
+  if (last.length) return last;
+  const live = Array.isArray(lasso.selectedIdx) ? lasso.selectedIdx : [];
+  if (live.length) drPlot.lastSelectionIdx = live.slice();
+  return drPlot.lastSelectionIdx || [];
+}
+
 async function refreshEnginePlot() {
   const { enginePlotEl } = ensureDRUI();
   if (!enginePlotEl) return;
@@ -5879,7 +6037,7 @@ async function refreshEnginePlot() {
   // Any open click-to-explain card describes the previous chart — drop it.
   hideFeatureExplainCard();
 
-  const selection = drPlot.lastSelectionIdx || [];
+  const selection = engineSelectionIdx();
   if (!selection.length) {
     if (typeof d3 !== 'undefined') {
       d3.select(enginePlotEl).selectAll('*').remove();
@@ -5917,7 +6075,7 @@ async function calculateEnginePlot() {
   const { enginePlotEl, engineCalcBtn } = ensureDRUI();
   if (!enginePlotEl) return;
 
-  const selection = drPlot.lastSelectionIdx || [];
+  const selection = engineSelectionIdx();
   if (!selection.length) {
     enginePlotEl.textContent = 'Select some buildings (lasso) to see ranked features here.';
     return;
@@ -6192,11 +6350,13 @@ function clearDRProjection(showMessage = true) {
   drPlot.featureLabels = null;
   drPlot.cityStats = null;
   drPlot.lastSelectionIdx = [];
+  drPlot.selectedEntityIds = null;   // projection removed / city switched → cohort gone
   drPlot.lastFeatureDiff = null;
   drPlot.lastModelExplanation = null;
   drPlot.engineEBM = null;
   drPlot.engineContrast = null;
   drPlot.runNonce = 0;
+  drPlot.__matrixSig = null;
 
   drHasSelection = false;
 
@@ -6224,9 +6384,66 @@ function clearDRProjection(showMessage = true) {
   if (clearProjBtn) clearProjBtn.disabled = true;
 }
 
+// Cheap content signature of the embedding matrix (keys + shape + a strided
+// value sample). When a re-run produces the SAME matrix (e.g. a travel-mode
+// switch under a mode-independent feature set like the SES profile), the
+// projection is reused instead of re-embedding — the layout stays put, which
+// both saves the UMAP wait and keeps the user's mental map intact.
+function drMatrixSignature(X, featureKeys) {
+  const cols = X[0]?.length || 0;
+  const total = X.length * cols;
+  if (!total) return `0|${(featureKeys || []).join(',')}`;
+  const stride = Math.max(1, Math.floor(total / 4000));
+  let acc = '';
+  for (let t = 0; t < total; t += stride) {
+    const v = X[(t / cols) | 0][t % cols];
+    acc += (Number.isFinite(v) ? v.toFixed(5) : 'n') + ';';
+  }
+  return `${X.length}x${cols}|${(featureKeys || []).join(',')}|${stableHashString(acc)}`;
+}
 
+// Restore the persisted cohort (drPlot.selectedEntityIds) in the CURRENT run's
+// sample. Matching is by stable entity id, so it works whether or not the
+// embedding was recomputed: after a mode switch the points may move, but the
+// cohort — the thing the analysis is about — is re-selected exactly. Returns
+// { count, requested } or null when there is nothing to restore (first run,
+// user-cleared selection, or a scale change where the entity type changed so
+// no id matches). No-op when a selection already exists (the map-preserve
+// path in runDR restores first and takes precedence).
+function restoreDRSelectionFromIds() {
+  if (Array.isArray(lasso.selectedIdx) && lasso.selectedIdx.length) {
+    // Already selected (map-preserve path restored first). Make sure the stats/
+    // engine UI agrees with it — a mid-run reset may have blanked the counter.
+    if (!(drPlot.lastSelectionIdx || []).length) renderSelectionStats(lasso.selectedIdx);
+    return null;
+  }
+  const ids = drPlot.selectedEntityIds;
+  if (!Array.isArray(ids) || !ids.length || !Array.isArray(drPlot.sample)) return null;
+  const want = new Set(ids);
+  const idx = [];
+  drPlot.sample.forEach((e, i) => { if (want.has(stableEntityId(e, i))) idx.push(i); });
+  if (!idx.length) return null;
+  applyDRSelection(idx);
+  return { count: idx.length, requested: ids.length };
+}
 
-  async function runDR(opts = {}) {
+  // runDR must NOT run concurrently with itself: a travel-mode switch fires it
+  // from the fairness recompute (fire-and-forget, seconds later) while the Run
+  // button / scale toggle / feature-set change can fire it again. Two in-flight
+  // runs interleave at their awaits, and the later run's mid-flight selection
+  // reset (renderSelectionStats([])) wipes the earlier run's restored cohort —
+  // map+plot still SHOW the selection, but lastSelectionIdx/engines are empty
+  // ("Selection: 0 points" + dead Calculate button). Serializing every call
+  // behind the previous one removes the whole race class: each run re-reads
+  // app state at start, so the last queued run always reflects the latest state.
+  let drRunChain = Promise.resolve();
+  function runDR(opts = {}) {
+    const next = drRunChain.catch(() => {}).then(() => runDRImpl(opts));
+    drRunChain = next;
+    return next;
+  }
+
+  async function runDRImpl(opts = {}) {
     // By default, re-running DR/UMAP starts with a clean selection state (the
     // manual "Run" button). Passing { preserveSelection: true } — or setting
     // `globalThis.DR_PRESERVE_SELECTION_ON_RERUN` — keeps the current selection
@@ -6246,6 +6463,9 @@ function clearDRProjection(showMessage = true) {
     const normalize = !!(normEl && normEl.checked);
 
     prepareDRSurface();
+    // Engine results present BEFORE this re-run (the reset below wipes them) —
+    // used after the cohort restore to decide what to auto-refresh.
+    const hadEngines = { ebm: !!drPlot.engineEBM, contrast: !!drPlot.engineContrast };
     resetDROverlayAndSelection(); // clear overlay & selection BEFORE plotting
 
     drPlot.runNonce = (Number(drPlot.runNonce) || 0) + 1;
@@ -6267,11 +6487,27 @@ function clearDRProjection(showMessage = true) {
       const a2sCity = (typeof a2sCurrentCity === 'function') ? a2sCurrentCity() : undefined;
       try { await ensureAccess2sfca(a2sCity, a2sMode); } catch (_) { /* supply is best-effort */ }
     }
+    // Preload the mode-gain (walk→cycle) layer for the Custom set — the only set
+    // that can select the mgain* columns (see drFeatureMode.js). Best-effort:
+    // cities without both baked modes simply never grow the columns.
+    if (fsNow === 'custom' && typeof ensureModeGain === 'function') {
+      try { await ensureModeGain(); } catch (_) { /* mode gain is best-effort */ }
+    }
     const { X, colors, rows, sampleCount, sample, metrics, featureLabels, featureKeys, dims } =
       collectDRData(maxPts, normalize, colorBy, drPlot.runNonce);
 
+    // Same features → same layout: reuse the existing projection instead of
+    // re-embedding (typical case: travel-mode switch with a mode-independent
+    // feature set — the metrics/supply arrays still refresh below).
+    const matrixSig = `${algo}|${drMatrixSignature(X, featureKeys)}`;
+    const reuseProjection = drPlot.__matrixSig === matrixSig
+      && Array.isArray(drPlot.points) && drPlot.points.length === X.length;
+
     let Y = null;
-    if (algo === 'pca') {
+    if (reuseProjection) {
+      Y = drPlot.points;
+      if (statusEl) statusEl.textContent = `Features unchanged — kept the existing ${algo.toUpperCase()} layout (${sampleCount} points).`;
+    } else if (algo === 'pca') {
       Y = runPCA(X);
       if (statusEl) statusEl.textContent = `PCA done for ${sampleCount} points.`;
     } else if (algo === 'umap') {
@@ -6302,6 +6538,7 @@ function clearDRProjection(showMessage = true) {
     drPlot.features = X;                     //same features used for DR
     drPlot.featureLabels = featureLabels || null;
     drPlot.featureKeys = featureKeys || null;   // canonical column keys (custom-picker matching)
+    drPlot.__matrixSig = matrixSig;             // for the reuse-projection check next run
     drPlot.cityStats = null;                 // reset cached stats
     drPlot.mode = currentDRDataMode();
     drPlot.lastSelectionIdx = [];
@@ -6331,11 +6568,38 @@ function clearDRProjection(showMessage = true) {
         syncDRSelectionFromBuildings(pendingMapSelection, { preserveMapSelection: true });
       }
 
-      // Buttons: no selection yet
-      if (clearSelBtn) clearSelBtn.disabled = true;
+      // Carry the cohort across the re-run: a travel-mode switch / what-if /
+      // feature-set change re-runs DR, but the SELECTED ENTITIES are still the
+      // unit of analysis — restore them by stable id so comparisons (e.g. the
+      // same SES cluster under walking then cycling) hold the group fixed.
+      // The contrastive is cheap and deterministic → recompute automatically;
+      // the EBM is a training run → never auto-retrain, mark it stale instead.
+      const restored = restoreDRSelectionFromIds();
+      if (restored) {
+        if (statusEl) {
+          statusEl.textContent += ` Selection restored (${restored.count}${restored.count !== restored.requested ? ` of ${restored.requested}` : ''}).`;
+        }
+        const noteEl = document.getElementById('drEngineNote');
+        if (hadEngines.contrast && drPlot.engineMode === 'contrast') {
+          try {
+            drPlot.engineContrast = buildContrastiveEngineExplanation();
+            await refreshEnginePlot();
+            if (noteEl) noteEl.textContent = 'Selection carried over — contrastive recomputed for the new run.';
+          } catch (_) { /* engine refresh is best-effort */ }
+        } else if (hadEngines.ebm && drPlot.engineMode === 'ebm') {
+          await refreshEnginePlot();   // shows the "needs calculation" hint
+          if (noteEl) noteEl.textContent = 'Selection carried over — EBM is stale for the new run; click “Calculate selected engine” to retrain.';
+        }
+      }
+
+      // Buttons: follow the actual selection state (a restored/preserved
+      // selection keeps Clear enabled; otherwise no selection yet).
+      if (clearSelBtn) clearSelBtn.disabled = !(Array.isArray(lasso.selectedIdx) && lasso.selectedIdx.length);
       if (clearProjBtn) clearProjBtn.disabled = false;
 
-    hideDRSpinner();
+    // Keep the final status ("UMAP done… Selection restored (…)") visible —
+    // hideDRSpinner's default doneMsg='' used to blank it immediately.
+    hideDRSpinner(statusEl ? statusEl.textContent : '');
   } catch (e) {
     console.error(e);
     alert(e?.message || e);

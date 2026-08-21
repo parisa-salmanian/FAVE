@@ -284,7 +284,13 @@ function syncDRSelectionFromBuildings(buildings, opts = {}) {
 
   prepareDRSurface();
   initD3Overlay();
-  applyDRSelection(idx, { skipMapSync: preserveMapSelection, append });
+  // A non-empty building set that resolves to zero plot entities is a FAILED
+  // sync (stale objects after a re-aggregation), not a user clear — keep the
+  // persisted cohort ids so restoreDRSelectionFromIds can still recover it.
+  applyDRSelection(idx, {
+    skipMapSync: preserveMapSelection, append,
+    keepCohortOnEmpty: selectedBuildings.length > 0 && idx.length === 0
+  });
 }
 
 function applyMapSelection(selected, opts = {}) {
