@@ -1387,8 +1387,13 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
   );
 
   const catToPOI = {};
+  // Categories that LOST a fetched POI to a what-if type change (the 50 m
+  // overlap filter). These must fall back to haversine like added-POI cats —
+  // the baked routing matrices still contain the removed POI.
+  const removalCats = new Set();
   for (const { cat, fc } of fetched) {
     const filtered = filterFetchedPOIsForWhatIf(fc?.features || []);
+    if (filtered.length < (fc?.features?.length || 0)) removalCats.add(cat);
     catToPOI[cat] = filtered.map(p => ({
       c: p.geometry.coordinates,
       name: p.properties?.name || '(unnamed)',
@@ -1480,7 +1485,8 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
       const whatIfCats = new Set();
       for (const cat of catList) {
         if ((whatIfMap[cat] && whatIfMap[cat].length) ||
-            (buildingPOIs[cat] && buildingPOIs[cat].length)) whatIfCats.add(cat);
+            (buildingPOIs[cat] && buildingPOIs[cat].length) ||
+            removalCats.has(cat)) whatIfCats.add(cat);
       }
       netCats = new Set(catList.filter(c => routingHasCat(c) && !whatIfCats.has(c)));
       if (!netCats.size) netCats = null;
