@@ -2125,11 +2125,24 @@ function renderSelectionStats(idx) {
   const yMin = yearsKnown.length ? Math.min(...yearsKnown) : null;
   const yMax = yearsKnown.length ? Math.max(...yearsKnown) : null;
 
+  // A map lasso can select features that have no DR row (accessory structures,
+  // or buildings outside a capped DR sample) — report that gap instead of
+  // silently showing a smaller count than the map's selection pill.
+  let mapNote = '';
+  if ((drPlot.mode || currentDRDataMode()) === 'building'
+      && typeof persistentBuildingSelection !== 'undefined'
+      && persistentBuildingSelection?.size > count) {
+    const mapN = persistentBuildingSelection.size;
+    mapNote = ` of ${mapN.toLocaleString()} map-selected (${(mapN - count).toLocaleString()} without DR data)`;
+  }
   selInfoEl.textContent =
-    `Selection: ${count} points` +
+    `Selection: ${count} points${mapNote}` +
     (Number.isFinite(hMean) ? ` | mean height ≈ ${hMean.toFixed(1)} m` : '') +
-    (Number.isFinite(oMean) ? ` | mean overall ≈ ${oMean.toFixed(2)}` : '') +
+    (Number.isFinite(oMean) ? ` | mean overall score ≈ ${oMean.toFixed(2)}` : '') +
     (yearsKnown.length ? ` | built year range ${yMin}–${yMax}` : ' | built year unknown/varied');
+  selInfoEl.title = 'Points = selected entities that have a DR row (accessory structures and buildings outside the DR sample have none). '
+    + 'Mean overall score = mean of the overall fairness score (fair_overall, 0–1, city-relative, includes equity/need/demand weighting) — the score that also colors the map. '
+    + 'This is a DIFFERENT quantity from the PCP footer\'s "mean per-service access", which averages the per-category accessibility scores only.';
 
   const diff = computeFeatureDifferences(selection);
   drPlot.lastFeatureDiff = diff;
@@ -2876,6 +2889,11 @@ function getParallelCoordsDataset(mode) {
   const categoriesWithOverall = [PARALLEL_COORDS_OVERALL_KEY, ...categories];
   let rows = [];
   let total = 0;
+  // Building mode only: analysis universe (non-accessory buildings) vs the raw
+  // map feature count — surfaced in the PCP footer so the DR/PCP subset is
+  // explicit instead of silently smaller than the map's building count.
+  let universeCount = null;
+  let mapFeatureCount = null;
 
   if (mode === 'district') {
     const feats = districtFC?.features || [];
@@ -2905,6 +2923,8 @@ function getParallelCoordsDataset(mode) {
     const feats = (typeof isAccessoryBuilding === 'function')
       ? (baseCityFC?.features || []).filter(f => !isAccessoryBuilding(f.properties))
       : (baseCityFC?.features || []);
+    mapFeatureCount = (baseCityFC?.features || []).length;
+    universeCount = feats.length;
     const drSample = (drPlot.mode === mode && Array.isArray(drPlot.sample) && drPlot.sample.length)
       ? drPlot.sample
       : null;
@@ -3048,12 +3068,16 @@ function getParallelCoordsDataset(mode) {
 
   const rawMaxPC = parseInt(parallelCoordsMaxPoints, 10);
   const maxLines = (rawMaxPC <= 0 || !Number.isFinite(rawMaxPC)) ? Infinity : Math.max(200, rawMaxPC);
+  // Keep the FULL (pre-stride) row set: selection statistics in the footer are
+  // computed over the whole dataset — the stride below is for RENDERING only,
+  // so "Max points" must not change any reported count or mean.
+  const fullRows = rows;
   if (rows.length > maxLines) {
     const step = Math.ceil(rows.length / maxLines);
     rows = rows.filter((_, idx) => idx % step === 0);
   }
 
-  return { rows, total, categories: outCategories };
+  return { rows, total, categories: outCategories, fullRows, universe: universeCount, mapTotal: mapFeatureCount };
 }
 
 function isEntityDRSelected(entity) {
@@ -3129,7 +3153,7 @@ function updateParallelCoordsPanel() {
     }
   }
 
-  const { rows, total, categories } = getParallelCoordsDataset(mode);
+  const { rows, total, categories, fullRows, universe, mapTotal } = getParallelCoordsDataset(mode);
   const orderedCategories = getOrderedParallelCoordsCategories(categories);
   parallelCoordsColumnOrder = orderedCategories.slice();
 
@@ -3151,10 +3175,12 @@ function updateParallelCoordsPanel() {
     else delete parallelCoordsBrushSelections[cat];
   });
   parallelCoordsSelectionIds = new Set(Array.from(parallelCoordsSelectionIds).filter(id => rows.some(row => row.id === id)));
-  renderParallelCoords(rows, total, modeLabel, orderedCategories, { pending: parallelCoordsPending });
+  renderParallelCoords(rows, total, modeLabel, orderedCategories,
+    { pending: parallelCoordsPending, fullRows, universe, mapTotal });
 }
 
-function renderParallelCoords(rows, total, modeLabel, categories, { pending = false } = {}) {
+function renderParallelCoords(rows, total, modeLabel, categories,
+  { pending = false, fullRows = null, universe = null, mapTotal = null } = {}) {
   const chart = document.getElementById('parallelCoordsChart');
   const note = document.getElementById('parallelCoordsNote');
   if (!chart || !note) return;
@@ -3335,7 +3361,7 @@ function renderParallelCoords(rows, total, modeLabel, categories, { pending = fa
     else next.add(datum.row.id);
     parallelCoordsSelectionIds = next;
     parallelCoordsForceEmptySelection = parallelCoordsSelectionIds.size === 0;
-    renderParallelCoords(rows, total, modeLabel, categories);
+    renderParallelCoords(rows, total, modeLabel, categories, { fullRows, universe, mapTotal });
   });
   svg.on('mousemove.pc-line', (event) => {
     const datum = event.target?.__data__;
@@ -3525,26 +3551,45 @@ function renderParallelCoords(rows, total, modeLabel, categories, { pending = fa
 
   const scrollHint = width > viewportWidth ? ' Scroll horizontally to see all categories.' : '';
   const sampledNote = available < total
-    ? `Showing ${available} of ${total} ${modeLabel} (sampled).`
+    ? `Showing ${available} of ${total} ${modeLabel} (sampled for drawing).`
     : `Showing ${available} ${modeLabel}.`;
+  // Building mode: make the analysis universe explicit — DR/PCP run on the
+  // non-accessory building set, which is smaller than the map's feature count.
+  const universeNote = (Number.isFinite(universe) && Number.isFinite(mapTotal) && mapTotal > universe)
+    ? ` Analysis set: ${universe.toLocaleString()} of ${mapTotal.toLocaleString()} map buildings (accessory structures excluded).`
+    : '';
 
   if (currentSelectedRows.length) {
-    const selCount = currentSelectedRows.length;
-    const selectedAvgValues = currentSelectedRows.map(r => r.avg).filter(Number.isFinite);
+    const isBrush = brushedCategories().length > 0;
+    const isPick = !isBrush && parallelCoordsSelectionIds.size > 0;
+    // REPORTING scope: a map/DR selection is defined on the full dataset, so
+    // its count and mean are computed over fullRows — they must not depend on
+    // the "Max points" drawing stride. Axis brushes and line picks are made on
+    // the drawn lines themselves, so their stats stay on the drawn sample and
+    // the label says so.
+    let statsRows = currentSelectedRows;
+    let scopeText = isBrush ? ' (axis brush, over drawn sample)'
+      : isPick ? ' (line pick)'
+      : ' (map selection)';
+    if (!isBrush && !isPick && Array.isArray(fullRows) && fullRows.length > rows.length) {
+      statsRows = fullRows.filter(row => isEntityDRSelected(row.source));
+      scopeText = ` (map selection; ${currentSelectedRows.length} of ${available} drawn)`;
+    }
+    const selCount = statsRows.length;
+    const selectedAvgValues = statsRows.map(r => r.avg).filter(Number.isFinite);
     const avg = selectedAvgValues.length
       ? selectedAvgValues.reduce((a, b) => a + b, 0) / selectedAvgValues.length
       : null;
     const avgText = Number.isFinite(avg) ? `${Math.round(avg * 100)}%` : '—';
-    const brushText = brushedCategories().length
-      ? ' (axis brush intersection)'
-      : (parallelCoordsSelectionIds.size ? ' (line pick)' : '');
-    note.textContent = `${sampledNote}${scrollHint} Selected: ${selCount} ${modeLabel}${brushText} · Mean fairness ${avgText}.`;
+    note.textContent = `${sampledNote}${universeNote}${scrollHint} Selected: ${selCount} ${modeLabel}${scopeText} · Mean per-service access ${avgText}.`;
+    note.title = `Mean per-service access: for each selected ${modeLabel.replace(/s$/, '')}, the mean of its per-category accessibility scores (0–1, city-relative) over the active categories, averaged across the selection. This is NOT the overall fairness score shown in the DR panel (which additionally includes equity/need/demand weighting).`;
     updateSelectionStyles({ sync: true });
     return;
   }
 
   updateSelectionStyles({ sync: true });
-  note.textContent = `${sampledNote}${scrollHint}`;
+  note.textContent = `${sampledNote}${universeNote}${scrollHint}`;
+  note.title = '';
 }
 
 // ======================= Fairness by district / hex bar chart =======================
