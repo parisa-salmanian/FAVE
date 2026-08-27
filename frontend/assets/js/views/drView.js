@@ -2978,7 +2978,7 @@ function getParallelCoordsDataset(mode) {
     if (res != null) pcMezoAgg = synthpopAggregateAllHexes(res);
   }
 
-  rows = rows.map((row) => {
+  const sourceRows = rows.map((row) => {
     const values = {};
     let count = 0;
     const rawValues = [];
@@ -3041,7 +3041,12 @@ function getParallelCoordsDataset(mode) {
       }
     }
     return { id: row.id, label: row.label || row.id, values, realValues, count, min, max, avg, source: row.source };
-  }).filter(row => row.count > 0);
+  });
+  // Entities with no per-category value at all can't be plotted, but a map lasso
+  // still selects the ENTITY — so the footer reports its selection over
+  // sourceRows (pre-filter) and names this drop explicitly. Keeping both sets
+  // apart is what stops "Selected: N" from silently meaning "N that had data".
+  rows = sourceRows.filter(row => row.count > 0);
 
   // Append demographic axes in DISTRICT mode whenever the data is present —
   // independent of the DR scatter's Features dropdown (the district PCP is the
@@ -3104,7 +3109,7 @@ function getParallelCoordsDataset(mode) {
     rows = rows.filter((_, idx) => idx % step === 0);
   }
 
-  return { rows, total, categories: outCategories, fullRows, universe: universeCount, mapTotal: mapFeatureCount };
+  return { rows, total, categories: outCategories, fullRows, sourceRows, universe: universeCount, mapTotal: mapFeatureCount };
 }
 
 function isEntityDRSelected(entity) {
@@ -3180,7 +3185,7 @@ function updateParallelCoordsPanel() {
     }
   }
 
-  const { rows, total, categories, fullRows, universe, mapTotal } = getParallelCoordsDataset(mode);
+  const { rows, total, categories, fullRows, sourceRows, universe, mapTotal } = getParallelCoordsDataset(mode);
   const orderedCategories = getOrderedParallelCoordsCategories(categories);
   parallelCoordsColumnOrder = orderedCategories.slice();
 
@@ -3203,11 +3208,11 @@ function updateParallelCoordsPanel() {
   });
   parallelCoordsSelectionIds = new Set(Array.from(parallelCoordsSelectionIds).filter(id => rows.some(row => row.id === id)));
   renderParallelCoords(rows, total, modeLabel, orderedCategories,
-    { pending: parallelCoordsPending, fullRows, universe, mapTotal });
+    { pending: parallelCoordsPending, fullRows, sourceRows, universe, mapTotal });
 }
 
 function renderParallelCoords(rows, total, modeLabel, categories,
-  { pending = false, fullRows = null, universe = null, mapTotal = null } = {}) {
+  { pending = false, fullRows = null, sourceRows = null, universe = null, mapTotal = null } = {}) {
   const chart = document.getElementById('parallelCoordsChart');
   const note = document.getElementById('parallelCoordsNote');
   if (!chart || !note) return;
@@ -3577,8 +3582,18 @@ function renderParallelCoords(rows, total, modeLabel, categories,
   });
 
   const scrollHint = width > viewportWidth ? ' Scroll horizontally to see all categories.' : '';
-  const sampledNote = available < total
-    ? `Showing ${available} of ${total} ${modeLabel} (sampled for drawing).`
+  // Rows go missing from the plot for reasons that must NOT all read as
+  // "sampled": an entity with no per-service value can never be drawn (missing
+  // data), the "Max points" stride drops drawable rows for rendering speed
+  // only, and the district picker filters the set before either. Name each one.
+  const plottable = Array.isArray(fullRows) ? fullRows.length : available;
+  const sourceCount = (Array.isArray(sourceRows) && sourceRows.length) ? sourceRows.length : plottable;
+  const dropReasons = [];
+  if (total > sourceCount) dropReasons.push(`${total - sourceCount} filtered out`);
+  if (sourceCount > plottable) dropReasons.push(`${sourceCount - plottable} without per-service data`);
+  if (plottable > available) dropReasons.push(`${plottable - available} not drawn (Max points)`);
+  const sampledNote = dropReasons.length
+    ? `Showing ${available} of ${total} ${modeLabel} — ${dropReasons.join('; ')}.`
     : `Showing ${available} ${modeLabel}.`;
   // Building mode: make the analysis universe explicit — DR/PCP run on the
   // non-accessory building set, which is smaller than the map's feature count.
@@ -3589,18 +3604,28 @@ function renderParallelCoords(rows, total, modeLabel, categories,
   if (currentSelectedRows.length) {
     const isBrush = brushedCategories().length > 0;
     const isPick = !isBrush && parallelCoordsSelectionIds.size > 0;
-    // REPORTING scope: a map/DR selection is defined on the full dataset, so
-    // its count and mean are computed over fullRows — they must not depend on
-    // the "Max points" drawing stride. Axis brushes and line picks are made on
-    // the drawn lines themselves, so their stats stay on the drawn sample and
-    // the label says so.
+    // REPORTING scope: a map/DR selection is made on the SOURCE entities, so
+    // its count is taken over sourceRows — it must not depend on the "Max
+    // points" drawing stride, nor shrink silently to the entities that happen
+    // to carry per-service data. Both shrinkages are named in the label so the
+    // mean's denominator is never implicit. Axis brushes and line picks are
+    // made on the drawn lines themselves, so their stats stay on the drawn
+    // sample and the label says so.
     let statsRows = currentSelectedRows;
     let scopeText = isBrush ? ' (axis brush, over drawn sample)'
       : isPick ? ' (line pick)'
       : ' (map selection)';
-    if (!isBrush && !isPick && Array.isArray(fullRows) && fullRows.length > rows.length) {
-      statsRows = fullRows.filter(row => isEntityDRSelected(row.source));
-      scopeText = ` (map selection; ${currentSelectedRows.length} of ${available} drawn)`;
+    if (!isBrush && !isPick) {
+      const scopeRows = (Array.isArray(sourceRows) && sourceRows.length) ? sourceRows
+        : (Array.isArray(fullRows) ? fullRows : rows);
+      const selRows = scopeRows.filter(row => isEntityDRSelected(row.source));
+      if (selRows.length) statsRows = selRows;   // never report 0 for a live selection
+      // The mean below averages r.avg, which only the with-data rows have.
+      const withData = statsRows.filter(row => Number.isFinite(row.avg)).length;
+      const parts = ['map selection'];
+      if (withData < statsRows.length) parts.push(`${withData} have per-service data`);
+      if (currentSelectedRows.length < withData) parts.push(`${currentSelectedRows.length} of ${available} drawn`);
+      scopeText = ` (${parts.join('; ')})`;
     }
     const selCount = statsRows.length;
     const selectedAvgValues = statsRows.map(r => r.avg).filter(Number.isFinite);
