@@ -183,11 +183,31 @@
     return [];
   }
 
+  // Mean per-building fairness score across the city — the "Overall fairness"
+  // number. Shared by the City-overview row and the metric strip so the two can
+  // never disagree. It is a LEVEL, not an inequality measure: GE(2) and Gini are
+  // separate readouts (the overview row used to print GE(2) into both slots).
+  function cityMeanFairScore(isFairActive) {
+    if (!isFairActive) return null;
+    const cityFeats = (typeof baseCityFC !== 'undefined' && Array.isArray(baseCityFC?.features))
+      ? baseCityFC.features : [];
+    let sum = 0, n = 0;
+    for (const f of cityFeats) {
+      const s = f?.properties?.fair?.score;
+      if (Number.isFinite(s)) { sum += s; n += 1; }
+    }
+    return n ? sum / n : null;
+  }
+
   function renderCityOverview() {
     const isFairActive = (typeof fairActive !== 'undefined' && fairActive);
-    const catGini2 = (typeof currentCategoryGini !== 'undefined' && Number.isFinite(currentCategoryGini))
+    const catGe2 = (typeof currentCategoryGini !== 'undefined' && Number.isFinite(currentCategoryGini))
       ? currentCategoryGini : null;
-    const displayGini = (isFairActive && catGini2 != null) ? catGini2 : null;
+    const catGiniTrue = (typeof currentCategoryGiniTrue !== 'undefined' && Number.isFinite(currentCategoryGiniTrue))
+      ? currentCategoryGiniTrue : null;
+    const ge2Val = (isFairActive && catGe2 != null) ? catGe2 : null;
+    const giniVal = (isFairActive && catGiniTrue != null) ? catGiniTrue : null;
+    const meanFair = cityMeanFairScore(isFairActive);
     const poiCount = (typeof currentPOIsFC !== 'undefined' && currentPOIsFC?.features?.length) || 0;
     const activeCats = pickActiveCategories();
     const cityName = (typeof lastCityName === 'string' && lastCityName) ? lastCityName : '—';
@@ -197,8 +217,9 @@
       if (el) el.textContent = text;
     };
     setText('inspCityName', cityName);
-    setText('inspOverallFairness', displayGini != null ? fmt(displayGini) : '—');
-    setText('inspGini', displayGini != null ? fmt(displayGini) : '—');
+    setText('inspOverallFairness', meanFair != null ? fmt(meanFair) : '—');
+    setText('inspGe2', ge2Val != null ? fmt(ge2Val) : '—');
+    setText('inspGini', giniVal != null ? fmt(giniVal) : '—');
     setText('inspPoiCount', String(poiCount));
     setText('inspActiveCats', String(activeCats.length));
   }
@@ -606,14 +627,7 @@
     const cityFeats = (typeof baseCityFC !== 'undefined' && Array.isArray(baseCityFC?.features))
       ? baseCityFC.features : [];
     // Use per-selection scores (fair.score) only when active; "—" otherwise.
-    const microScores = isFairActive
-      ? cityFeats
-          .map(f => Number.isFinite(f?.properties?.fair?.score) ? f.properties.fair.score : null)
-          .filter(v => Number.isFinite(v))
-      : [];
-    const meanFair = microScores.length
-      ? microScores.reduce((a, b) => a + b, 0) / microScores.length
-      : null;
+    const meanFair = cityMeanFairScore(isFairActive);
     const poiCount = (typeof currentPOIsFC !== 'undefined' && currentPOIsFC?.features?.length) || 0;
 
     // Units metric tracks the active scale: districts in Macro, hex cells in

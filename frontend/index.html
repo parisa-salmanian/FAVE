@@ -1155,11 +1155,15 @@
           <span class="insp-tiny" id="inspCityName">—</span>
         </h3>
         <div class="kv-list">
-          <div class="kv">
+          <div class="kv" title="Mean per-building fairness score for the active POI categories (0–1, city-relative). A level, not an inequality measure — higher is better.">
             <span class="kv-key">Overall fairness</span>
-            <span class="kv-val"><span id="inspOverallFairness">—</span><span class="insp-pill">GE(2)</span></span>
+            <span class="kv-val" id="inspOverallFairness">—</span>
           </div>
-          <div class="kv">
+          <div class="kv" title="Generalized Entropy (α=2) across buildings — the headline inequality metric. 0 = perfectly equal, unbounded above. Lower is better.">
+            <span class="kv-key">Inequality GE(2)</span>
+            <span class="kv-val" id="inspGe2">—</span>
+          </div>
+          <div class="kv" title="Gini coefficient on the same distribution (0–1) — bounded companion to GE(2). Lower is better.">
             <span class="kv-key">Inequality (Gini)</span>
             <span class="kv-val" id="inspGini">—</span>
           </div>
