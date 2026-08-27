@@ -469,26 +469,57 @@ const DR_MODEGAIN_NAME_BY_KEY = {
   mgainSchoolHigh: 'high school', mgainPrimary: 'primary school',
   mgainKindergarten: 'kindergarten', mgainDentistry: 'dentistry'
 };
+// Labels for EVERY active pair's columns: each pair contributes its own 11 keys
+// (mgainGrocery_w2c, mgainGrocery_w2d, …) so several mode comparisons can sit in
+// the matrix side by side and stay distinguishable in the picker/contrastive.
 function drModeGainLabels() {
-  const pair = (typeof modeGainPairLabel === 'function') ? modeGainPairLabel() : 'walking→cycling';
+  const pairs = (typeof modeGainPairs === 'function')
+    ? modeGainPairs() : [{ from: 'walking', to: 'cycling' }];
   const out = {};
-  for (const [k, name] of Object.entries(DR_MODEGAIN_NAME_BY_KEY)) out[k] = `${name} gain (${pair})`;
-  out.mgainOverall = `overall gain (${pair})`;
+  for (const p of pairs) {
+    const pk = (typeof modeGainPairKey === 'function') ? modeGainPairKey(p) : 'w2c';
+    const lab = `${p.from}→${p.to}`;
+    for (const [k, name] of Object.entries(DR_MODEGAIN_NAME_BY_KEY)) {
+      out[`${k}_${pk}`] = `${name} gain (${lab})`;
+    }
+    out[`mgainOverall_${pk}`] = `overall gain (${lab})`;
+  }
   return out;
 }
-// Refresh every pair-labelled UI string after setModeGainPair: the feature-
-// config labels (custom picker rows) and the contrastive section header. Also
-// drops the meso aggregation memo — its cached sums hold the OLD pair's gains.
-function notifyModeGainPairChanged() {
-  const labels = drModeGainLabels();
-  for (const e of DR_FEATURE_CONFIG) {
-    if (labels[e.key]) e.label = labels[e.key].charAt(0).toUpperCase() + labels[e.key].slice(1);
+// Does any row carry a resolved gain? Probes the overall column of every active
+// pair (there is no single `mgainOverall` any more).
+function drRowsHaveModeGain(rows) {
+  const keys = (typeof modeGainOverallKeys === 'function') ? modeGainOverallKeys() : ['mgainOverall'];
+  return rows.some(r => keys.some(k => Number.isFinite(r[k])));
+}
+// Rebuild DR_FEATURE_CONFIG's mode-gain tail from the active pair list, so the
+// contrastive/EBM name exactly the columns the matrix carries — the
+// syncDrFeatureConfigScb pattern (entries are added/removed, not just relabelled,
+// because the KEYS change with the pair set).
+function syncDrFeatureConfigModeGain() {
+  if (typeof DR_FEATURE_CONFIG === 'undefined') return;
+  for (let i = DR_FEATURE_CONFIG.length - 1; i >= 0; i--) {
+    const k = DR_FEATURE_CONFIG[i]?.key;
+    if (typeof k === 'string' && /^mgain/.test(k)) DR_FEATURE_CONFIG.splice(i, 1);
   }
-  const pair = (typeof modeGainPairLabel === 'function') ? modeGainPairLabel() : 'walking→cycling';
+  for (const [k, lab] of Object.entries(drModeGainLabels())) {
+    DR_FEATURE_CONFIG.push({ key: k, label: lab.charAt(0).toUpperCase() + lab.slice(1) });
+  }
+}
+// Refresh every pair-labelled UI string after the pair set changes: the feature-
+// config entries (custom picker rows) and the contrastive section header. Also
+// drops the meso aggregation memo — its cached sums hold the OLD pairs' gains.
+function notifyModeGainPairChanged() {
+  syncDrFeatureConfigModeGain();
+  const pairs = (typeof modeGainPairs === 'function')
+    ? modeGainPairs() : [{ from: 'walking', to: 'cycling' }];
+  const labs = pairs.map(p => `${p.from}→${p.to}`);
   const sec = DR_CONTRAST_SECTIONS.find(s => s.id === 'mode');
   if (sec) {
-    sec.title = `Mode shift (${pair})`;
-    sec.sub = `what switching ${pair.replace('→', ' → ')} changes here — gains the single-mode map hides`;
+    sec.title = `Mode shift (${labs.join(', ')})`;
+    sec.sub = labs.length > 1
+      ? `what switching from ${pairs[0].from} to ${pairs.map(p => p.to).join(' / ')} changes here — gains the single-mode map hides`
+      : `what switching ${labs[0].replace('→', ' → ')} changes here — gains the single-mode map hides`;
   }
   drPlot.__mezoDistAggKey = null;
   drPlot.__mezoDistAgg = null;
@@ -1105,7 +1136,7 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
     // main thread and froze the tab ("page unresponsive"). Memoise it on drPlot.
     const _travelMode = document.getElementById('fairnessTravelMode')?.value || 'walking';
     const _cityTok = (typeof lastCityKeyLoaded !== 'undefined' && lastCityKeyLoaded) ? lastCityKeyLoaded : '';
-    const _mgPairTok = (mgReady && typeof modeGainPairLabel === 'function') ? modeGainPairLabel() : '';
+    const _mgPairTok = (mgReady && typeof modeGainPairsSig === 'function') ? modeGainPairsSig() : '';
     const _distAggKey = (distReady || mgReady)
       ? `${_cityTok}|${_travelMode}|${mezoRes}|${baseCityFC.features.length}|d${distReady ? 1 : 0}m${mgReady ? 1 : 0}|${_mgPairTok}`
       : null;
@@ -1248,7 +1279,7 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
       if (rows.some(r => Number.isFinite(r.mismatch))) mezoLabels.mismatch = 'overall mismatch (prox−supply)';
     }
     // Mode-gain (from→to) dims — only if the layer resolved for this city.
-    if (rows.some(r => Number.isFinite(r.mgainOverall))) {
+    if (drRowsHaveModeGain(rows)) {
       Object.entries(drModeGainLabels()).forEach(([k, lab]) => { mezoLabels[k] = lab; });
     }
     // "All Data" set — real DESO SCB (9 fields) as embedding features per mezo cell.
@@ -1400,7 +1431,7 @@ function collectDRData(maxPts = Infinity, normalize = true, colorBy = 'overall',
   }
 
   // Add the mode-gain (from→to) dims only if the layer resolved.
-  if (rows.some(r => Number.isFinite(r.mgainOverall))) {
+  if (drRowsHaveModeGain(rows)) {
     Object.entries(drModeGainLabels()).forEach(([k, lab]) => { buildingLabels[k] = lab; });
   }
 
@@ -2230,17 +2261,10 @@ const DR_FEATURE_CONFIG = [
   // From mode, both on the From-mode-anchored 0..1 scale (lib/modeGain.js).
   // Carries the mode comparison into the contrastive/EBM: ~0 = already served
   // OR beyond the To mode's reach; large = the switch genuinely rescues access.
-  // Labels carry the CURRENT pair (default walking→cycling) and are rewritten
-  // by notifyModeGainPairChanged when the picker's From/To selects change.
-  ...Object.entries({
-    mgainOverall: 'Overall', mgainGrocery: 'Grocery', mgainHospital: 'Hospital',
-    mgainHealthcare: 'Healthcare', mgainPharmacy: 'Pharmacy', mgainVeterinary: 'Veterinary',
-    mgainUniversity: 'University', mgainSchoolHigh: 'High school', mgainPrimary: 'Primary school',
-    mgainKindergarten: 'Kindergarten', mgainDentistry: 'Dentistry'
-  }).map(([key, name]) => ({
-    key,
-    label: `${name} gain (${typeof modeGainPairLabel === 'function' ? modeGainPairLabel() : 'walking→cycling'})`
-  })),
+  // One entry per ACTIVE pair × category — the tail is (re)built by
+  // syncDrFeatureConfigModeGain() below (called at parse time and again whenever
+  // the picker's pair controls change), because the KEYS, not just the labels,
+  // depend on which pairs are active.
   { key: 'areaLog',      label: 'Footprint area (log m²)' },
   { key: 'changeScore',  label: 'Change score (S1)' },
   // Demographic features (district mode). Generated from DEMOGRAPHIC_FEATURES so
@@ -2257,6 +2281,9 @@ const DR_FEATURE_CONFIG = [
   ...((typeof DR_SCB_FEATURES !== 'undefined' ? DR_SCB_FEATURES : [])
       .map(f => ({ key: f.key, label: f.label }))),
 ];
+// Seed the mode-gain tail for the default pair set (the literal above can't call
+// it — DR_FEATURE_CONFIG isn't bound until the declaration completes).
+syncDrFeatureConfigModeGain();
 
 // Re-sync DR_FEATURE_CONFIG's scb tail to the current DR_SCB_FEATURES (base 9 +
 // the loaded city's deso_full.json manifest). Called from applyDrScbFullFields on

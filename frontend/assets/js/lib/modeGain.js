@@ -43,32 +43,94 @@ const MGAIN_KEY_BY_CAT = {
   school_high: 'mgainSchoolHigh', school_primary: 'mgainPrimary',
   kindergarten: 'mgainKindergarten', dentistry: 'mgainDentistry'
 };
-const MGAIN_METRIC_KEYS = [...Object.values(MGAIN_KEY_BY_CAT), 'mgainOverall'];
+// One-letter mode codes → the per-pair column-key suffix (mgainGrocery_w2d).
+const MGAIN_MODE_CODE = { walking: 'w', cycling: 'c', driving: 'd', transit: 't' };
 
-// The comparison pair. Changed via setModeGainPair (Custom-picker From/To
-// selects); every change bumps MGAIN_EPOCH so per-feature caches invalidate.
-let MGAIN_PAIR = { from: 'walking', to: 'cycling' };
+// SEVERAL pairs can be active at once (e.g. walking→cycling AND walking→driving
+// AND walking→transit), so the DR matrix can carry more than one mode comparison
+// side by side. Every pair contributes its own 11 columns, suffixed by the pair
+// code; nothing is shared between pairs except the baked matrices underneath.
+// Changed via setModeGainPairs (Custom-picker controls); every change bumps
+// MGAIN_EPOCH so per-feature caches invalidate.
+let MGAIN_PAIRS = [{ from: 'walking', to: 'cycling' }];
 let MGAIN_EPOCH = 1;
 
-let MGAIN = null;              // { city, pairSig, any, cats: { cat: { from:{idx,score}, to:{idx,score} } } }
+let MGAIN = null;              // { sig, city, any, pairs: [{from,to,key,cats}] }
 let _mgainPromise = null;      // { sig, p } in-flight guard
+// Per-pair results and per-(mode,cat) benefit sides, both keyed by city. Pairs
+// that share a baseline (the usual walking→X fan-out) reuse the same from-side
+// instead of recomputing it, so activating a third pair is much cheaper than the
+// first. Dropped wholesale on a city change (see _mgainResetCachesIfCity).
+const _mgainPairCache = new Map();   // `${city}|${from}>${to}` -> { any, cats }
+const _mgainSideCache = new Map();   // `${city}|${mode}|${cat}` -> { keys, benefits }
+let _mgainCacheCity = null;
 
 function modeGainReady() { return !!(MGAIN && MGAIN.any); }
 function modeGainEpoch() { return MGAIN_EPOCH; }
-function modeGainPair() { return { from: MGAIN_PAIR.from, to: MGAIN_PAIR.to }; }
-function modeGainPairLabel() { return `${MGAIN_PAIR.from}→${MGAIN_PAIR.to}`; }
+function modeGainPairKey(pair) {
+  return `${MGAIN_MODE_CODE[pair?.from] || '?'}2${MGAIN_MODE_CODE[pair?.to] || '?'}`;
+}
+function modeGainPairLabelOf(pair) { return `${pair?.from}→${pair?.to}`; }
+function modeGainPairs() { return MGAIN_PAIRS.map(p => ({ from: p.from, to: p.to })); }
+function modeGainPairsSig() { return MGAIN_PAIRS.map(p => `${p.from}>${p.to}`).join(','); }
+// Compat shims for callers that still think in terms of a single pair: they get
+// the FIRST active pair (the historical walking→cycling default).
+function modeGainPair() { return { from: MGAIN_PAIRS[0].from, to: MGAIN_PAIRS[0].to }; }
+function modeGainPairLabel() { return modeGainPairLabelOf(MGAIN_PAIRS[0]); }
+// The per-pair column key for a base key ('mgainGrocery' / 'mgainOverall').
+function modeGainMetricKey(baseKey, pair) { return `${baseKey}_${modeGainPairKey(pair)}`; }
+// The overall-gain column of every active pair — the "did any pair resolve here"
+// probe used where the code used to test the single `mgainOverall`.
+function modeGainOverallKeys() {
+  return MGAIN_PAIRS.map(p => modeGainMetricKey('mgainOverall', p));
+}
 
-// Set the comparison pair. Returns true when it changed (caller reloads /
-// refreshes labels). Same-mode pairs are rejected — the gain would be all-zero.
-function setModeGainPair(from, to) {
-  const f = String(from || '').toLowerCase(), t = String(to || '').toLowerCase();
-  if (!MGAIN_ALL_MODES.includes(f) || !MGAIN_ALL_MODES.includes(t) || f === t) return false;
-  if (MGAIN_PAIR.from === f && MGAIN_PAIR.to === t) return false;
-  MGAIN_PAIR = { from: f, to: t };
+// Mutated IN PLACE (same binding) so drView's metrics spread and the meso
+// aggregation always see the live key list — the DR_SCB_FEATURES pattern.
+const MGAIN_METRIC_KEYS = [];
+function _mgainRebuildKeys() {
+  MGAIN_METRIC_KEYS.length = 0;
+  for (const p of MGAIN_PAIRS) {
+    for (const base of Object.values(MGAIN_KEY_BY_CAT)) {
+      MGAIN_METRIC_KEYS.push(modeGainMetricKey(base, p));
+    }
+    MGAIN_METRIC_KEYS.push(modeGainMetricKey('mgainOverall', p));
+  }
+}
+_mgainRebuildKeys();
+
+// Set the ACTIVE pair list. Returns true when it changed (caller reloads /
+// refreshes labels). Invalid and same-mode pairs are dropped — their gain would
+// be all-zero — and duplicates collapse; an empty result is rejected outright.
+function setModeGainPairs(pairs) {
+  const seen = new Set();
+  const next = [];
+  for (const p of (Array.isArray(pairs) ? pairs : [])) {
+    const f = String(p?.from || '').toLowerCase();
+    const t = String(p?.to || '').toLowerCase();
+    if (!MGAIN_ALL_MODES.includes(f) || !MGAIN_ALL_MODES.includes(t) || f === t) continue;
+    const sig = `${f}>${t}`;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    next.push({ from: f, to: t });
+  }
+  if (!next.length) return false;
+  if (next.map(p => `${p.from}>${p.to}`).join(',') === modeGainPairsSig()) return false;
+  MGAIN_PAIRS = next;
   MGAIN_EPOCH++;
-  MGAIN = null;                // force a reload for the new pair
+  MGAIN = null;                // force a rebuild for the new pair set
   _mgainPromise = null;
+  _mgainRebuildKeys();
   return true;
+}
+// Single-pair compat wrapper.
+function setModeGainPair(from, to) { return setModeGainPairs([{ from, to }]); }
+
+function _mgainResetCachesIfCity(city) {
+  if (_mgainCacheCity === city) return;
+  _mgainPairCache.clear();
+  _mgainSideCache.clear();
+  _mgainCacheCity = city;
 }
 
 // Gravity benefit per matrix row — the SAME formula as the fairness network
@@ -181,98 +243,144 @@ async function _mgainPoisByCat(cats) {
   return out;
 }
 
-// Load both modes' data for all categories and precompute per-row scores.
+// Shared index store: two pairs that reference the same baked key order reuse
+// one index instead of rebuilding it (walking→cycling and walking→driving both
+// resolve their walking side against the same keys).
+const _mgainIndexBySig = new Map();
+function _mgainIdxFor(keyList) {
+  const s = _sigOfKeys(keyList);
+  let idx = _mgainIndexBySig.get(s);
+  if (!idx) { idx = _buildIndex(keyList); _mgainIndexBySig.set(s, idx); }
+  return idx;
+}
+
+// One matrix-mode side (keys + raw gravity benefits) for a category, memoised
+// per (city, mode, cat). This is what makes a walking→X fan-out cheap: the
+// walking side is computed once and reused by every pair that baselines on it.
+async function _mgainMatrixSide(city, mode, cat) {
+  const ck = `${city}|${mode}|${cat}`;
+  if (_mgainSideCache.has(ck)) return _mgainSideCache.get(ck);
+  const j = await _fetchCat(city, mode, cat);
+  const side = (j && j.key) ? { keys: j.key, benefits: _mgainBenefits(j, cat, mode) } : null;
+  _mgainSideCache.set(ck, side);
+  return side;
+}
+
+// Load ONE pair's data for all categories and precompute per-row scores.
 // Idempotent per (city, pair); raw matrices are NOT retained (only index +
 // scores), so the store stays a few MB. Categories missing either side yield null.
+async function _mgainLoadPair(city, pair) {
+  const ck = `${city}|${pair.from}>${pair.to}`;
+  if (_mgainPairCache.has(ck)) return _mgainPairCache.get(ck);
+  const cats = Object.keys(MGAIN_KEY_BY_CAT);
+  const usesTransit = pair.from === 'transit' || pair.to === 'transit';
+
+  // Transit prerequisites: the stop network + baseline POIs. If the network
+  // isn't baked for this city, the pair simply doesn't resolve (any=false).
+  let poisByCat = null;
+  if (usesTransit) {
+    try { if (typeof ensureTransitNetwork === 'function') await ensureTransitNetwork(city); } catch {}
+    if (typeof transitReady !== 'function' || !transitReady()) {
+      const empty = { any: false, cats: {} };
+      _mgainPairCache.set(ck, empty);
+      return empty;
+    }
+    poisByCat = await _mgainPoisByCat(cats);
+  }
+
+  const matrixModes = [pair.from, pair.to].filter(m => MGAIN_MATRIX_MODES.includes(m));
+  const jobs = [];
+  for (const cat of cats) for (const mode of matrixModes) {
+    jobs.push(_mgainMatrixSide(city, mode, cat).then(side => ({ cat, mode, side })));
+  }
+  const loaded = await Promise.all(jobs);
+  const byCat = {};
+  for (const { cat, mode, side } of loaded) {
+    (byCat[cat] = byCat[cat] || {})[mode] = side;
+  }
+
+  // Per-keylist transit origin stops, computed once and shared across
+  // categories that use the same key order (they usually all do).
+  const originStopsBySig = new Map();
+  const originStopsFor = (keyList) => {
+    const s = _sigOfKeys(keyList);
+    let stops = originStopsBySig.get(s);
+    if (!stops) {
+      stops = new Array(keyList.length);
+      for (let r = 0; r < keyList.length; r++) {
+        const k = keyList[r];
+        const comma = k.indexOf(',');
+        stops[r] = transitNearestStops([+k.slice(0, comma), +k.slice(comma + 1)]);
+      }
+      originStopsBySig.set(s, stops);
+    }
+    return stops;
+  };
+
+  const store = { any: false, cats: {} };
+  for (const cat of cats) {
+    // The companion matrix supplies the key list a transit side aligns to.
+    const companion = matrixModes.map(m => byCat[cat]?.[m]).find(s => s && s.keys) || null;
+    const sideFor = (mode) => {
+      if (MGAIN_MATRIX_MODES.includes(mode)) return byCat[cat]?.[mode] || null;
+      // transit side
+      if (!companion) return null;
+      return {
+        keys: companion.keys,
+        benefits: _mgainTransitBenefits(companion.keys, originStopsFor(companion.keys), poisByCat?.[cat] || [], cat)
+      };
+    };
+    const fromSide = sideFor(pair.from);
+    const toSide = fromSide ? sideFor(pair.to) : null;
+    if (!fromSide || !toSide) { store.cats[cat] = null; continue; }
+    const anchors = _mgainAnchors(fromSide.benefits);
+    if (!anchors) { store.cats[cat] = null; continue; }
+    store.cats[cat] = {
+      from: { idx: _mgainIdxFor(fromSide.keys), score: _mgainScores(fromSide.benefits, anchors) },
+      to:   { idx: _mgainIdxFor(toSide.keys),   score: _mgainScores(toSide.benefits, anchors) }
+    };
+    store.any = true;
+  }
+  _mgainPairCache.set(ck, store);
+  return store;
+}
+
+// Load EVERY active pair. Pairs load concurrently but share the side cache, so a
+// walking→{cycling,driving,transit} fan-out reads each mode's matrices once.
+// A pair that can't resolve (e.g. transit in a city with no baked network) is
+// kept with any=false: its columns come back null rather than disappearing.
 async function ensureModeGain(cityKey) {
   const city = cityKey || (typeof routingCurrentCity === 'function' ? routingCurrentCity() : 'vaxjo');
-  const pair = { ...MGAIN_PAIR };
-  const sig = `${city}|${pair.from}>${pair.to}`;
+  const pairs = modeGainPairs();
+  const sig = `${city}|${modeGainPairsSig()}`;
   if (MGAIN && MGAIN.sig === sig) return MGAIN;
   if (_mgainPromise && _mgainPromise.sig === sig) return _mgainPromise.p;
   const p = (async () => {
     if (typeof ifCityKappa !== 'function' || typeof ifCityNetworkDistanceForMode !== 'function'
         || typeof _fetchCat !== 'function' || typeof _buildIndex !== 'function') return null;
-    const cats = Object.keys(MGAIN_KEY_BY_CAT);
-    const usesTransit = pair.from === 'transit' || pair.to === 'transit';
-
-    // Transit prerequisites: the stop network + baseline POIs. If the network
-    // isn't baked for this city, the layer simply doesn't resolve (any=false).
-    let poisByCat = null;
-    if (usesTransit) {
-      try { if (typeof ensureTransitNetwork === 'function') await ensureTransitNetwork(city); } catch {}
-      if (typeof transitReady !== 'function' || !transitReady()) { MGAIN = { sig, city, any: false, cats: {} }; return MGAIN; }
-      poisByCat = await _mgainPoisByCat(cats);
-    }
-
-    const matrixModes = [pair.from, pair.to].filter(m => MGAIN_MATRIX_MODES.includes(m));
-    const jobs = [];
-    for (const cat of cats) for (const mode of matrixModes) {
-      jobs.push(_fetchCat(city, mode, cat).then(j => ({ cat, mode, j })));
-    }
-    const loaded = await Promise.all(jobs);
-    const byCat = {};
-    for (const { cat, mode, j } of loaded) {
-      (byCat[cat] = byCat[cat] || {})[mode] = j;
-    }
-
-    const store = { sig, city, any: false, cats: {}, indexBySig: new Map() };
-    const idxFor = (keyList) => {
-      const s = _sigOfKeys(keyList);
-      let idx = store.indexBySig.get(s);
-      if (!idx) { idx = _buildIndex(keyList); store.indexBySig.set(s, idx); }
-      return idx;
+    _mgainResetCachesIfCity(city);
+    const loaded = await Promise.all(pairs.map(pair =>
+      _mgainLoadPair(city, pair).then(store => ({ pair, store }))
+    ));
+    const store = {
+      sig, city, any: false,
+      pairs: loaded.map(({ pair, store: s }) => ({
+        from: pair.from, to: pair.to, key: modeGainPairKey(pair), cats: s.cats, any: s.any
+      }))
     };
-    // Per-keylist transit origin stops, computed once and shared across
-    // categories that use the same key order (they usually all do).
-    const originStopsBySig = new Map();
-    const originStopsFor = (keyList) => {
-      const s = _sigOfKeys(keyList);
-      let stops = originStopsBySig.get(s);
-      if (!stops) {
-        stops = new Array(keyList.length);
-        for (let r = 0; r < keyList.length; r++) {
-          const k = keyList[r];
-          const comma = k.indexOf(',');
-          stops[r] = transitNearestStops([+k.slice(0, comma), +k.slice(comma + 1)]);
-        }
-        originStopsBySig.set(s, stops);
-      }
-      return stops;
-    };
-
-    for (const cat of cats) {
-      // The companion matrix supplies the key list a transit side aligns to.
-      const companionJ = matrixModes.map(m => byCat[cat]?.[m]).find(j => j && j.key) || null;
-      const sideFor = (mode) => {
-        if (MGAIN_MATRIX_MODES.includes(mode)) {
-          const j = byCat[cat]?.[mode];
-          if (!j || !j.key) return null;
-          return { keys: j.key, benefits: _mgainBenefits(j, cat, mode) };
-        }
-        // transit side
-        if (!companionJ) return null;
-        return {
-          keys: companionJ.key,
-          benefits: _mgainTransitBenefits(companionJ.key, originStopsFor(companionJ.key), poisByCat?.[cat] || [], cat)
-        };
-      };
-      const fromSide = sideFor(pair.from);
-      const toSide = fromSide ? sideFor(pair.to) : null;
-      if (!fromSide || !toSide) { store.cats[cat] = null; continue; }
-      const anchors = _mgainAnchors(fromSide.benefits);
-      if (!anchors) { store.cats[cat] = null; continue; }
-      store.cats[cat] = {
-        from: { idx: idxFor(fromSide.keys), score: _mgainScores(fromSide.benefits, anchors) },
-        to:   { idx: idxFor(toSide.keys),   score: _mgainScores(toSide.benefits, anchors) }
-      };
-      store.any = true;
-    }
+    store.any = store.pairs.some(p2 => p2.any);
     MGAIN = store;
     return store;
   })();
   _mgainPromise = { sig, p };
   try { return await p; } finally { if (_mgainPromise && _mgainPromise.p === p) _mgainPromise = null; }
+}
+
+// Which of the active pairs actually resolved for this city — used by the picker
+// to tell the user a pair (usually transit) has no data here.
+function modeGainUnresolvedPairs() {
+  if (!MGAIN || !Array.isArray(MGAIN.pairs)) return [];
+  return MGAIN.pairs.filter(p => !p.any).map(p => `${p.from}→${p.to}`);
 }
 
 // Per-point gains: each side's row is resolved against its OWN index (bakes can
@@ -281,19 +389,21 @@ async function ensureModeGain(cityKey) {
 function modeGainForPoint(lon, lat) {
   if (!modeGainReady()) return null;
   const out = {};
-  let sum = 0, n = 0;
-  for (const cat of Object.keys(MGAIN_KEY_BY_CAT)) {
-    const key = MGAIN_KEY_BY_CAT[cat];
-    const cd = MGAIN.cats[cat];
-    let g = null;
-    if (cd) {
-      const rf = _rowInIndex(cd.from.idx, lon, lat);
-      const rt = _rowInIndex(cd.to.idx, lon, lat);
-      if (rf >= 0 && rt >= 0) g = cd.to.score[rt] - cd.from.score[rf];
+  for (const P of MGAIN.pairs) {
+    let sum = 0, n = 0;
+    for (const cat of Object.keys(MGAIN_KEY_BY_CAT)) {
+      const key = `${MGAIN_KEY_BY_CAT[cat]}_${P.key}`;
+      const cd = P.cats[cat];
+      let g = null;
+      if (cd) {
+        const rf = _rowInIndex(cd.from.idx, lon, lat);
+        const rt = _rowInIndex(cd.to.idx, lon, lat);
+        if (rf >= 0 && rt >= 0) g = cd.to.score[rt] - cd.from.score[rf];
+      }
+      out[key] = Number.isFinite(g) ? g : null;
+      if (Number.isFinite(g)) { sum += g; n++; }
     }
-    out[key] = Number.isFinite(g) ? g : null;
-    if (Number.isFinite(g)) { sum += g; n++; }
+    out[`mgainOverall_${P.key}`] = n ? sum / n : null;
   }
-  out.mgainOverall = n ? sum / n : null;
   return out;
 }

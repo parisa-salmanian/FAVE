@@ -126,6 +126,21 @@
     return /^mgain/i.test(t) || /gain \([a-z]+→[a-z]+\)/i.test(t);
   }
 
+  // Picker-only display label. With several mode-gain pairs active the same
+  // category appears once per pair and the labels differ only in their tail
+  // ("grocery gain (walking→cycling)" vs "…(walking→driving)") — exactly the part
+  // the truncating row drops. Shorten the mode names and drop the redundant
+  // "gain" so the pair stays visible; the full label remains in the tooltip and
+  // everywhere else (matrix dims, contrastive, EBM) untouched.
+  const MGAIN_SHORT_MODE = { walking: 'walk', cycling: 'cycle', driving: 'drive', transit: 'transit' };
+  function compactFieldLabel(label) {
+    const m = /^(.*) gain \(([a-z]+)→([a-z]+)\)$/i.exec(String(label || ''));
+    if (!m) return label;
+    const from = MGAIN_SHORT_MODE[m[2].toLowerCase()] || m[2];
+    const to = MGAIN_SHORT_MODE[m[3].toLowerCase()] || m[3];
+    return `${m[1]} · ${from}→${to}`;
+  }
+
   function currentMode() {
     const sel = document.getElementById('drFeatureMode');
     const mode = sel?.value || globalThis.DR_FEATURE_MODE || MODE_POLICY;
@@ -503,7 +518,9 @@
         const lab = document.createElement('label');
         lab.className = 'form-check-label small text-truncate d-block';
         lab.style.cssText = 'cursor:pointer; max-width:100%;';
-        lab.setAttribute('for', cb.id); lab.title = c.label; lab.textContent = c.label;
+        // Full canonical label on hover; the row itself shows the compact form so
+        // the part that distinguishes it survives truncation (see compactFieldLabel).
+        lab.setAttribute('for', cb.id); lab.title = c.label; lab.textContent = compactFieldLabel(c.label);
         cb.addEventListener('change', () => {
           if (cb.checked) drCustomKeys.add(c.key); else drCustomKeys.delete(c.key);
           syncGroupHead(); updateCustomCount();
@@ -540,54 +557,110 @@
   // serialized and restores the selection + contrastive automatically).
   function buildModeGainPairControls() {
     const wrap = document.createElement('div');
-    wrap.className = 'd-flex align-items-center gap-1 mb-2 flex-wrap';
-    const pair = (typeof globalThis.modeGainPair === 'function')
-      ? globalThis.modeGainPair() : { from: 'walking', to: 'cycling' };
+    wrap.className = 'mb-2';
+    const pairs = (typeof globalThis.modeGainPairs === 'function')
+      ? globalThis.modeGainPairs() : [{ from: 'walking', to: 'cycling' }];
     const modes = (typeof MGAIN_ALL_MODES !== 'undefined')
       ? MGAIN_ALL_MODES : ['walking', 'cycling', 'driving', 'transit'];
-    const mkSel = (val, title) => {
-      const s = document.createElement('select');
-      s.className = 'form-select form-select-sm w-auto';
-      s.title = title;
-      for (const m of modes) {
-        const o = document.createElement('option');
-        o.value = m; o.textContent = m;
-        if (m === val) o.selected = true;
-        s.appendChild(o);
-      }
-      return s;
-    };
-    const fromSel = mkSel(pair.from, 'Baseline travel mode (anchors the 0..1 gain scale)');
-    const toSel = mkSel(pair.to, 'Comparison travel mode');
+    const from = pairs[0]?.from || 'walking';
+    const activeTo = new Set(pairs.map(p => p.to));
+
+    // Row 1: the baseline mode. It anchors the 0..1 gain scale, so every active
+    // comparison shares it and the gains stay comparable across pairs.
+    const row1 = document.createElement('div');
+    row1.className = 'd-flex align-items-center gap-1 flex-wrap';
     const lbl = document.createElement('span');
-    lbl.className = 'small text-muted'; lbl.textContent = 'Gain =';
+    lbl.className = 'small text-muted'; lbl.textContent = 'Gain from';
+    const fromSel = document.createElement('select');
+    fromSel.className = 'form-select form-select-sm w-auto';
+    fromSel.title = 'Baseline travel mode (anchors the 0..1 gain scale for every comparison)';
+    for (const m of modes) {
+      const o = document.createElement('option');
+      o.value = m; o.textContent = m;
+      if (m === from) o.selected = true;
+      fromSel.appendChild(o);
+    }
     const arrow = document.createElement('span');
-    arrow.className = 'small text-muted'; arrow.textContent = '→';
-    const note = document.createElement('span');
-    note.className = 'tiny text-muted ms-1';
-    const onChange = async () => {
-      const f = fromSel.value, t = toSel.value;
-      if (f === t) { note.textContent = 'pick two different modes'; return; }
-      if (typeof globalThis.setModeGainPair !== 'function'
-          || !globalThis.setModeGainPair(f, t)) { note.textContent = ''; return; }
+    arrow.className = 'small text-muted'; arrow.textContent = 'to:';
+    row1.append(lbl, fromSel, arrow);
+
+    // Row 2: one checkbox per comparison mode — tick several to carry several
+    // mode comparisons in the matrix at once (each adds its own 11 columns).
+    const row2 = document.createElement('div');
+    row2.className = 'd-flex align-items-center gap-2 flex-wrap mt-1';
+    const note = document.createElement('div');
+    note.className = 'tiny text-muted mt-1';
+
+    const boxes = [];
+    for (const m of modes) {
+      if (m === from) continue;
+      const id = `mgainTo_${m}`;
+      const holder = document.createElement('div');
+      holder.className = 'form-check form-check-inline m-0';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.className = 'form-check-input'; cb.id = id;
+      cb.checked = activeTo.has(m); cb.style.cursor = 'pointer';
+      const cbl = document.createElement('label');
+      cbl.className = 'form-check-label small'; cbl.htmlFor = id; cbl.textContent = m;
+      cbl.style.cursor = 'pointer';
+      holder.append(cb, cbl);
+      row2.appendChild(holder);
+      boxes.push({ mode: m, cb });
+    }
+
+    const setBusy = (busy) => {
+      fromSel.disabled = busy;
+      boxes.forEach(b => { b.cb.disabled = busy; });
+    };
+
+    const apply = async () => {
+      const f = fromSel.value;
+      const checked = boxes.filter(b => b.cb.checked).map(b => b.mode);
+      if (!checked.length) { note.textContent = 'pick at least one comparison mode'; return; }
+      // A baseline change can land on an already-ticked comparison mode; drop it
+      // and fall back to the first free mode rather than ending up with nothing.
+      let tos = checked.filter(m => m !== f);
+      if (!tos.length) {
+        const first = modes.find(m => m !== f);
+        tos = first ? [first] : [];
+      }
+      if (!tos.length) { note.textContent = 'pick at least one comparison mode'; return; }
+      if (typeof globalThis.setModeGainPairs !== 'function'
+          || !globalThis.setModeGainPairs(tos.map(t => ({ from: f, to: t })))) {
+        note.textContent = ''; return;
+      }
       note.textContent = 'loading…';
-      fromSel.disabled = toSel.disabled = true;
+      setBusy(true);
       try {
         await globalThis.ensureModeGain();
         if (typeof globalThis.notifyModeGainPairChanged === 'function') globalThis.notifyModeGainPairChanged();
-        drFeatureUniverse = []; drUniverseSig = '';   // labels changed → recapture
+        // Column keys changed → drop any stale mgain selections, then force a
+        // fresh universe capture so the picker lists the new per-pair fields.
+        const live = new Set(Object.keys(
+          typeof globalThis.drModeGainLabels === 'function' ? globalThis.drModeGainLabels() : {}
+        ));
+        for (const k of Array.from(drCustomKeys)) {
+          if (/^mgain/.test(k) && !live.has(k)) drCustomKeys.delete(k);
+        }
+        drFeatureUniverse = []; drUniverseSig = '';
         const ok = typeof globalThis.modeGainReady === 'function' && globalThis.modeGainReady();
-        note.textContent = ok ? '' : 'not available for this city';
+        const missing = (typeof globalThis.modeGainUnresolvedPairs === 'function')
+          ? globalThis.modeGainUnresolvedPairs() : [];
+        note.textContent = !ok
+          ? 'not available for this city'
+          : (missing.length ? `no data in this city for: ${missing.join(', ')}` : '');
         buildCustomPicker();
         if (ok && typeof globalThis.runDR === 'function'
             && typeof drPlot !== 'undefined' && drPlot?.points) {
           await globalThis.runDR();
         }
-      } finally { fromSel.disabled = toSel.disabled = false; }
+      } finally { setBusy(false); }
     };
-    fromSel.addEventListener('change', onChange);
-    toSel.addEventListener('change', onChange);
-    wrap.append(lbl, fromSel, arrow, toSel, note);
+
+    fromSel.addEventListener('change', apply);
+    boxes.forEach(b => b.cb.addEventListener('change', apply));
+
+    wrap.append(row1, row2, note);
     return wrap;
   }
 
