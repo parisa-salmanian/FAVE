@@ -308,6 +308,7 @@ function clearFairness(clearOverall = false) {
   currentPOIsFC = null;
   selectedPOIMix = [];
   currentCategoryGini = null;
+  currentCategoryGiniTrue = null;
   poiCache = clearOverall ? {} : poiCache;
   if (clearOverall) overallGini = null;
 
@@ -896,6 +897,29 @@ function generalizedEntropy(values, alpha = IF_CITY_ALPHA) {
   }
   const term = x.reduce((s, v) => s + Math.pow(v / mean, alpha) - 1, 0);
   return term / (n * alpha * (alpha - 1));
+}
+
+// Refresh the inequality readouts (metric strip + inspector City overview) from
+// the per-building scores currently on the features. The ifcity/Gravity path
+// sets currentCategoryGini/…True itself from its raw benefits; the legacy
+// Distance paths below never did, so both numbers stayed frozen on whatever the
+// last Gravity compute left behind. Accessory structures are excluded for the
+// same reason as in computeIfCityFairness: a garage shares its house's location
+// and would double-weight that spot.
+function refreshCurrentInequalityFromFeatureScores() {
+  const feats = baseCityFC?.features || [];
+  const vals = [];
+  for (const f of feats) {
+    const p = f.properties;
+    if (!p || !Number.isFinite(p.fair?.score)) continue;
+    if (typeof isAccessoryBuilding === 'function' && isAccessoryBuilding(p)) continue;
+    vals.push(p.fair.score);
+  }
+  const ge2 = vals.length ? generalizedEntropy(vals, IF_CITY_ALPHA) : NaN;
+  const gTrue = (vals.length && typeof gini === 'function') ? gini(vals) : NaN;
+  currentCategoryGini = Number.isFinite(ge2) ? ge2 : null;
+  currentCategoryGiniTrue = Number.isFinite(gTrue) ? gTrue : null;
+  window.faveInspector?.refresh?.();
 }
 
 function ifCityKappa(cat) {
@@ -1785,6 +1809,7 @@ async function computeFairnessFast(cat) {
   if (parallelCoordsOpen) {
     updateParallelCoordsPanel();
   }
+  refreshCurrentInequalityFromFeatureScores();
   return { gini: G, poiCount: pois.features.length };
 }
 
@@ -1909,6 +1934,7 @@ async function computeFairnessWeighted(mix) {
   if (parallelCoordsOpen) {
     updateParallelCoordsPanel();
   }
+  refreshCurrentInequalityFromFeatureScores();
   return { gini: G, poiCount: currentPOIsFC.features.length };
 }
 
