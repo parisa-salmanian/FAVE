@@ -110,8 +110,15 @@ network distance (`ifCityNetworkDistanceForMode`, detour factor dropped) for
 walk/cycle/drive instead of haversine. Buildings resolve to a matrix row by
 exact `"lon,lat"` key (6 dp) with a nearest-key snap fallback (≤45 m) — the
 pre-existing bake used a different centroid so exact match is ~81%; the snap
-lifts coverage to ~100%. Categories with active what-if edits keep the
-haversine model (added/removed POIs aren't in the static matrices). `transit`
+lifts coverage to ~100%. What-if ADDITIONS stay on the network model
+(since 2026-08-29): an added POI / POI-hosting what-if building has no matrix row,
+so it is scored as straight-line × the category's measured network/straight-line
+ratio (`routingDetourFactor` in `routingMatrix.js`, audit definition) and merged
+with the baked distances (nearest 3 of the union); mock buildings use the same
+scaled straight-line. Only what-if REMOVALS (and real tag-matched building POIs)
+still drop the category to haversine — the static matrix can't represent them.
+Before this, adding any POI flipped its whole category to straight-line for every
+building, so what-if before/after were two different models. `transit`
 mode uses its own network (see above); `USE_TRAVEL_TIME` still gates live OSRM
 only.
 
