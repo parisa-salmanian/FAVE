@@ -388,7 +388,10 @@ function collectBuildingPOIsByCat(catList, { includeWhatIf = true } = {}) {
       if (!result[cat]) result[cat] = [];
       result[cat].push({
         c: coords,
-        name: props.name || `Building ${prettyPOIName(cat)}`
+        name: props.name || `Building ${prettyPOIName(cat)}`,
+        // what-if origin (placed/changed building) vs a real tag-matched building —
+        // the fairness network model treats the two differently.
+        whatIf: !!(props.__whatIf || props.whatif_poi)
       });
     }
   }

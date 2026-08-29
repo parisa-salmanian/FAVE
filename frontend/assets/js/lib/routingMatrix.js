@@ -135,6 +135,45 @@ async function ensureRoutingMatrices(cityKey, mode, cats) {
 }
 
 function routingHasCat(cat) { return !!(ROUTING && ROUTING.cats[cat]); }
+
+// Network / straight-line ratio of a category, measured on the loaded matrix with
+// the same definition as tools' net/crow audit: mean nearest NETWORK distance over
+// mean nearest STRAIGHT-LINE distance (pairs closer than 25 m excluded, rows sampled
+// evenly). A facility that has no baked row — a what-if addition — is scored as
+// straight-line × this factor so it sits on the same footing as the baked ones
+// instead of flipping the whole category to straight-line. `poiCoords` = the
+// [lon,lat] of the category's EXISTING (baked) facilities. Cached per POI set.
+const ROUTING_DETOUR_DEFAULT = 1.3;
+const _ROUTING_DETOUR_SAMPLE = 6000;
+function routingDetourFactor(cat, poiCoords) {
+  if (!ROUTING) return ROUTING_DETOUR_DEFAULT;
+  const mat = ROUTING.cats[cat];
+  if (!mat || !mat.m || !mat.m.length) return ROUTING_DETOUR_DEFAULT;
+  const pts = (poiCoords || []).filter(c => Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]));
+  if (!pts.length) return ROUTING_DETOUR_DEFAULT;
+  let h = 0; for (const p of pts) h += p[0] * 7.31 + p[1] * 3.17;
+  const cacheKey = `${cat}|${pts.length}|${h.toFixed(4)}`;
+  if (!ROUTING.detourCache) ROUTING.detourCache = new Map();
+  if (ROUTING.detourCache.has(cacheKey)) return ROUTING.detourCache.get(cacheKey);
+  const idx = mat.idx || ROUTING.sharedIdx;
+  const n = mat.m.length;
+  const step = Math.max(1, Math.floor(n / _ROUTING_DETOUR_SAMPLE));
+  let netSum = 0, crowSum = 0, cnt = 0;
+  for (let row = 0; row < n; row += step) {
+    const d0 = mat.m[row] ? mat.m[row][0] : NaN;
+    if (!Number.isFinite(d0) || d0 <= 0) continue;
+    const c = idx && idx.coords ? idx.coords[row] : null;
+    if (!c) continue;
+    let best = Infinity;
+    for (let k = 0; k < pts.length; k++) { const d = _rhav(c[0], c[1], pts[k][0], pts[k][1]); if (d < best) best = d; }
+    if (!(best >= 25)) continue;
+    netSum += d0; crowSum += best; cnt++;
+  }
+  let f = (cnt >= 20 && crowSum > 0) ? netSum / crowSum : ROUTING_DETOUR_DEFAULT;
+  f = Math.min(2.5, Math.max(1.0, f));
+  ROUTING.detourCache.set(cacheKey, f);
+  return f;
+}
 function routingReady() { return !!(ROUTING && ROUTING.keyToRow); }
 
 // Resolve a building centroid to a row in the SHARED (first-loaded) index. Kept

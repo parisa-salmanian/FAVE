@@ -985,23 +985,79 @@ function ifCityAccessibilityForBuilding(cB, poiArr, cat, mode = FAIRNESS_TRAVEL_
   const rho = ifCityPriorityWeight(cat);
 
   // Network branch: use baked REAL network distances (walk/cycle/drive) when a
-  // routing matrix is loaded for this category and it has no what-if edits.
+  // routing matrix is loaded for this category. What-if ADDITIONS of the category
+  // (netCtx.extras[cat]) have no matrix row: they are scored as straight-line ×
+  // the category's measured detour factor (netCtx.detour[cat], see
+  // routingDetourFactor) and merged with the baked distances — nearest 3 of the
+  // union — so an added facility no longer flips every building of the category
+  // to the straight-line model (before/after would then be two different models).
   if (netCtx && netCtx.pt && netCtx.cats && netCtx.cats.has(cat)
       && typeof routingDistsForPoint === 'function') {
     const r = routingDistsForPoint(cat, netCtx.pt[0], netCtx.pt[1]);
+    const extras = netCtx.extras ? netCtx.extras[cat] : null;
     if (r && r.dists && r.dists.length) {
-      let sum = 0;
+      if (!extras || !extras.length) {
+        let sum = 0;
+        const k = Math.min(3, r.dists.length);
+        for (let i = 0; i < k; i++) {
+          const dm = r.dists[i];
+          if (!Number.isFinite(dm)) continue;
+          const v = Number.isFinite(r.vals?.[i]) ? r.vals[i] : 1;
+          sum += rho * v * Math.exp(-kappa * ifCityNetworkDistanceForMode(dm / 1000, mode));
+        }
+        if (out) out.distM = Number.isFinite(r.dists[0]) ? r.dists[0] : NaN;
+        return sum;
+      }
+      const detour = Number.isFinite(netCtx.detour?.[cat]) ? netCtx.detour[cat] : ROUTING_DETOUR_DEFAULT;
+      let d0 = Infinity, d1 = Infinity, d2 = Infinity, v0 = 1, v1 = 1, v2 = 1;
       const k = Math.min(3, r.dists.length);
       for (let i = 0; i < k; i++) {
         const dm = r.dists[i];
         if (!Number.isFinite(dm)) continue;
         const v = Number.isFinite(r.vals?.[i]) ? r.vals[i] : 1;
-        sum += rho * v * Math.exp(-kappa * ifCityNetworkDistanceForMode(dm / 1000, mode));
+        if (dm < d0)      { d2 = d1; v2 = v1; d1 = d0; v1 = v0; d0 = dm; v0 = v; }
+        else if (dm < d1) { d2 = d1; v2 = v1; d1 = dm; v1 = v; }
+        else if (dm < d2) { d2 = dm; v2 = v; }
       }
-      if (out) out.distM = Number.isFinite(r.dists[0]) ? r.dists[0] : NaN;
+      for (let e = 0; e < extras.length; e++) {
+        const p = extras[e];
+        const dm = haversineMeters(cB, p.c) * detour;
+        if (!Number.isFinite(dm)) continue;
+        const v = Number.isFinite(p.v) ? p.v : 1;
+        if (dm < d0)      { d2 = d1; v2 = v1; d1 = d0; v1 = v0; d0 = dm; v0 = v; }
+        else if (dm < d1) { d2 = d1; v2 = v1; d1 = dm; v1 = v; }
+        else if (dm < d2) { d2 = dm; v2 = v; }
+      }
+      let sum = 0;
+      if (Number.isFinite(d0)) sum += rho * v0 * Math.exp(-kappa * ifCityNetworkDistanceForMode(d0 / 1000, mode));
+      if (Number.isFinite(d1)) sum += rho * v1 * Math.exp(-kappa * ifCityNetworkDistanceForMode(d1 / 1000, mode));
+      if (Number.isFinite(d2)) sum += rho * v2 * Math.exp(-kappa * ifCityNetworkDistanceForMode(d2 / 1000, mode));
+      if (out) out.distM = Number.isFinite(d0) ? d0 : NaN;
       return sum;
     }
-    // no baked row for this building → fall through to haversine
+    // No baked row for this building (a what-if mock building, or a centroid the
+    // bake missed): keep it on the network footing by scoring EVERY facility of
+    // the category as straight-line × the measured detour factor, when one is
+    // known for this compute; otherwise fall through to the plain haversine model.
+    if (Number.isFinite(netCtx.detour?.[cat])) {
+      const detour = netCtx.detour[cat];
+      let d0 = Infinity, d1 = Infinity, d2 = Infinity, v0 = 1, v1 = 1, v2 = 1;
+      for (let k = 0; k < poiArr.length; k++) {
+        const p = poiArr[k];
+        const dm = haversineMeters(cB, p.c) * detour;
+        if (!Number.isFinite(dm)) continue;
+        const v = Number.isFinite(p.v) ? p.v : 1;
+        if (dm < d0)      { d2 = d1; v2 = v1; d1 = d0; v1 = v0; d0 = dm; v0 = v; }
+        else if (dm < d1) { d2 = d1; v2 = v1; d1 = dm; v1 = v; }
+        else if (dm < d2) { d2 = dm; v2 = v; }
+      }
+      let sum = 0;
+      if (Number.isFinite(d0)) sum += rho * v0 * Math.exp(-kappa * ifCityNetworkDistanceForMode(d0 / 1000, mode));
+      if (Number.isFinite(d1)) sum += rho * v1 * Math.exp(-kappa * ifCityNetworkDistanceForMode(d1 / 1000, mode));
+      if (Number.isFinite(d2)) sum += rho * v2 * Math.exp(-kappa * ifCityNetworkDistanceForMode(d2 / 1000, mode));
+      if (out) out.distM = Number.isFinite(d0) ? d0 : NaN;
+      return sum;
+    }
   }
 
   let d0 = Infinity, d1 = Infinity, d2 = Infinity;
@@ -1445,14 +1501,18 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
   if (updateUI && currentPOIsFC?.features?.length) {
     currentPOIsFC.features = dedupePOIFeaturesForDisplay(currentPOIsFC.features);
   }
+  // What-if additions (placed POIs and what-if buildings that host a POI) are
+  // tagged __extra: under the network model they are scored on straight-line ×
+  // the category's measured detour factor while every EXISTING facility keeps its
+  // baked network distance (see ifCityAccessibilityForBuilding).
   Object.entries(whatIfMap).forEach(([cat, items]) => {
     if (!catToPOI[cat]) catToPOI[cat] = [];
-    catToPOI[cat].push(...items.map(item => ({ ...item, v: 1 })));
+    catToPOI[cat].push(...items.map(item => ({ ...item, v: 1, __extra: true })));
   });
   const buildingPOIs = collectBuildingPOIsByCat(catList, { includeWhatIf: true });
   Object.entries(buildingPOIs).forEach(([cat, items]) => {
     if (!catToPOI[cat]) catToPOI[cat] = [];
-    catToPOI[cat].push(...items.map(item => ({ ...item, v: 1 })));
+    catToPOI[cat].push(...items.map(item => ({ ...item, v: 1, __extra: !!item.whatIf })));
   });
 
   for (const cat of catList) {
@@ -1498,9 +1558,14 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
   }
 
   // Real network distances (walk/cycle/drive): load baked routing matrices for the
-  // active mode. Categories with what-if edits keep the haversine model (their
-  // added/removed POIs aren't in the static matrices).
+  // active mode. A category falls back to the haversine model only when the static
+  // matrix can't represent the edit: a what-if REMOVAL (the removed POI is still in
+  // the matrix) or a real tag-matched building-hosted POI (pre-existing treatment).
+  // What-if ADDITIONS stay in the network model as `extras` (straight-line × the
+  // measured detour factor) — see ifCityAccessibilityForBuilding.
   let netCats = null;
+  let netExtras = null;   // cat → what-if additions of that category
+  let netDetour = null;   // cat → measured network/straight-line factor
   const networkMode = !transitMode &&
     ['walking', 'cycling', 'driving'].includes(normalizeTravelMode(fairnessTravelMode));
   if (networkMode && typeof ensureRoutingMatrices === 'function') {
@@ -1508,13 +1573,27 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
       await ensureRoutingMatrices(undefined, normalizeTravelMode(fairnessTravelMode), catList);
       const whatIfCats = new Set();
       for (const cat of catList) {
-        if ((whatIfMap[cat] && whatIfMap[cat].length) ||
-            (buildingPOIs[cat] && buildingPOIs[cat].length) ||
-            removalCats.has(cat)) whatIfCats.add(cat);
+        if (removalCats.has(cat) ||
+            (buildingPOIs[cat] || []).some(item => !item.whatIf)) whatIfCats.add(cat);
       }
       netCats = new Set(catList.filter(c => routingHasCat(c) && !whatIfCats.has(c)));
       if (!netCats.size) netCats = null;
-    } catch { netCats = null; }
+      if (netCats && typeof routingDetourFactor === 'function') {
+        const hasMock = features.some(f => f?.properties?.__whatIfMock);
+        for (const cat of netCats) {
+          const arr = catToPOI[cat] || [];
+          const extras = arr.filter(p => p.__extra);
+          if (!extras.length && !hasMock) continue;
+          if (extras.length) { if (!netExtras) netExtras = {}; netExtras[cat] = extras; }
+          if (!netDetour) netDetour = {};
+          netDetour[cat] = routingDetourFactor(cat, arr.filter(p => !p.__extra).map(p => p.c));
+        }
+        if (netDetour) {
+          console.info('[routing] what-if on network model — detour factor per category:',
+            Object.entries(netDetour).map(([c, f]) => `${c} ${f.toFixed(3)}${netExtras?.[c] ? ` (+${netExtras[c].length} added)` : ''}`).join(', '));
+        }
+      }
+    } catch { netCats = null; netExtras = null; netDetour = null; }
   }
 
   for (let batchStart = 0; batchStart < len; batchStart += BATCH) {
@@ -1533,7 +1612,7 @@ async function computeIfCityFairness(catList, weightsByCat = {}, { setOverall = 
       // Per-building routing context: carry the POINT (not a single shared row) so
       // each category resolves its own matrix row — categories can be baked in
       // different building orders (see routingDistsForPoint).
-      const netCtx = netCats ? { pt: cB, cats: netCats } : null;
+      const netCtx = netCats ? { pt: cB, cats: netCats, extras: netExtras, detour: netDetour } : null;
 
       const fm = {};
       if (updateUI) delete props.fair;
