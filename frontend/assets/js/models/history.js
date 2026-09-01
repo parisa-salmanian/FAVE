@@ -466,6 +466,8 @@
   }
 
   function renderPanel() {
+    // Notify the new shell (its History popover mirrors this stack).
+    try { if (typeof window.onHistoryStackChanged === 'function') window.onHistoryStackChanged(); } catch (e) {}
     var list = document.getElementById('historyList');
     if (!list) return;
     list.innerHTML = '';
@@ -545,6 +547,8 @@
   window.historySnap    = captureSnapshot;
   window.historyRestore = restoreSnapshot;
   window.historyStack   = stack;
+  window.historyCursor  = function () { return _cursor; };
+  window.historyClear   = function () { stack.length = 0; _cursor = -1; _prevFP = null; renderPanel(); };
 
   /* ------------------------------------------------------------------
      Start

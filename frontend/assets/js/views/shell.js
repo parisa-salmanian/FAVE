@@ -1080,28 +1080,26 @@
   function renderHistoryItems() {
     const body = document.getElementById('shellHistoryBody');
     if (!body) return;
-    const log = (typeof whatIfChangeLog !== 'undefined' && Array.isArray(whatIfChangeLog)) ? whatIfChangeLog : [];
-    if (!log.length) {
-      body.innerHTML = '<div class="history-empty">No changes yet. Try toggling POI categories, switching scale, or adding a what-if scenario.</div>';
+    // Source of truth = history.js snapshot stack (restorable states), NOT the
+    // Changes log (whatIfChangeLog) — that one has its own popover.
+    const stack = Array.isArray(window.historyStack) ? window.historyStack : [];
+    if (!stack.length) {
+      body.innerHTML = '<div class="history-empty">No states captured yet. Compute fairness, switch modes, or make a what-if change — snapshots appear here; click one to jump back.</div>';
       return;
     }
-    // Newest first.
-    const items = [...log].reverse().map((rec, i) => {
-      const num = log.length - i;
-      const label = rec.description || rec.label || `Change #${num}`;
-      const t = rec.timestamp instanceof Date ? rec.timestamp : (rec.timestamp ? new Date(rec.timestamp) : null);
+    const cursor = (typeof window.historyCursor === 'function') ? window.historyCursor() : -1;
+    // Newest first; data-idx keeps the real stack index for historyRestore().
+    const items = stack.map((snap, idx) => {
+      const label = snap.label || `State #${idx + 1}`;
+      const t = snap.timestamp ? new Date(snap.timestamp) : null;
       const time = t ? t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
-      const delta = Number.isFinite(rec.giniDelta) ? rec.giniDelta : null;
-      const dir = delta == null ? 'zero' : delta > 0 ? 'up' : delta < 0 ? 'down' : 'zero';
-      const deltaText = delta != null ? `${delta > 0 ? '+' : ''}${delta.toFixed(3)}` : '';
-      const isActive = (typeof pinnedChangeId !== 'undefined' && rec.id === pinnedChangeId);
       return `
-        <div class="history-item" data-id="${rec.id || num}" data-active="${isActive ? 'true' : 'false'}">
-          <span class="num">${num}</span>
-          <span class="label">${escapeHTML(label)}${deltaText ? `<span class="delta-pill" data-dir="${dir}">${deltaText}</span>` : ''}</span>
+        <div class="history-item" data-idx="${idx}" data-active="${idx === cursor ? 'true' : 'false'}" title="Restore this state">
+          <span class="num">${idx + 1}</span>
+          <span class="label">${escapeHTML(label)}</span>
           <span class="time">${time}</span>
         </div>`;
-    }).join('');
+    }).reverse().join('');
     body.innerHTML = items;
   }
 
@@ -1118,16 +1116,21 @@
       if (railBtn) railBtn.setAttribute('data-active', 'false');
     });
     pop.querySelector('#shellHistoryClear')?.addEventListener('click', () => {
-      const legacy = document.getElementById('changeLogClearBtn');
-      if (legacy) legacy.click();
-      // If the legacy button isn't reachable (it lives in the hidden navbar
-      // dropdown), fall back to clearing the array directly.
-      else if (typeof whatIfChangeLog !== 'undefined' && Array.isArray(whatIfChangeLog)) {
-        whatIfChangeLog.length = 0;
-        if (typeof updateChangeLogUI === 'function') updateChangeLogUI();
-      }
+      // Clears the snapshot stack (history.js), not the Changes log.
+      if (typeof window.historyClear === 'function') window.historyClear();
       renderHistoryItems();
     });
+    // Row click = restore that snapshot (delegated; rows re-render often).
+    pop.querySelector('#shellHistoryBody')?.addEventListener('click', (ev) => {
+      const item = ev.target.closest('.history-item[data-idx]');
+      if (!item) return;
+      const idx = Number(item.getAttribute('data-idx'));
+      if (Number.isFinite(idx) && typeof window.historyRestore === 'function') {
+        window.historyRestore(idx);
+      }
+    });
+    // history.js pings this whenever the stack mutates (capture/restore/clear).
+    window.onHistoryStackChanged = () => { try { renderHistoryItems(); } catch (_) {} };
   }
 
   function toggleAISidebar() {
