@@ -476,7 +476,10 @@ document.addEventListener('DOMContentLoaded', () => {
     center: [14.805, 56.879],
     zoom: 15,
     pitch: 45,
-    attributionControl: false
+    attributionControl: false,
+    // Keep the WebGL frame readable after compositing so the vector exporter
+    // (assets/js/export/) can pull the current map view into the SVG.
+    preserveDrawingBuffer: true
   });
   map.doubleClickZoom.disable();
 
@@ -1374,9 +1377,10 @@ function wireUI() {
         hasSuggestion: exactSuggestions.length > 0,
         isBusy: false
       });
-      if (exactSuggestions[0]?.location) {
-        flyToPoint(exactSuggestions[0].location);
-      }
+      // Deliberately no camera move here: applying a what-if suggestion used
+      // to fly to the first location (zoom 16, pitch 60), which yanked the
+      // view away from whatever the user was comparing. The map stays put —
+      // the topbar's reset-view button re-frames the city on demand.
     } catch (err) {
       console.error(err);
       const cancelled = /cancel/i.test(err?.message || '');

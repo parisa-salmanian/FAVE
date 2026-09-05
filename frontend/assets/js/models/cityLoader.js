@@ -131,6 +131,43 @@ function fitToData(fc) {
   } catch {}
 }
 
+// The camera the map starts on, and the one the topbar's reset button
+// restores. Kept here next to fitToData so the "home" framing is defined once.
+const HOME_PITCH = 45;
+const HOME_BEARING = 0;
+
+/**
+ * Re-frame the current city exactly as it looks right after loading: the whole
+ * dataset in view, with the default pitch and bearing. Panning, zooming or a
+ * fly-to elsewhere is always one click away from this same view.
+ */
+function resetMapView({ duration = 700 } = {}) {
+  if (!map) return;
+  try {
+    const fc = baseCityFC;
+    if (!fc?.features?.length) {
+      // Nothing loaded yet — at least straighten the camera out.
+      map.easeTo({ pitch: HOME_PITCH, bearing: HOME_BEARING, duration });
+      return;
+    }
+    const [minX, minY, maxX, maxY] = turf.bbox(fc);
+    const bounds = [[minX, minY], [maxX, maxY]];
+    // cameraForBounds gives centre+zoom without committing the move, so pitch
+    // and bearing can be reset in the same easeTo instead of a second hop.
+    const cam = map.cameraForBounds(bounds, { padding: 40 });
+    if (cam) {
+      map.easeTo({
+        center: cam.center, zoom: cam.zoom,
+        pitch: HOME_PITCH, bearing: HOME_BEARING, duration,
+      });
+    } else {
+      map.fitBounds(bounds, { padding: 40, bearing: HOME_BEARING, duration });
+    }
+  } catch (err) {
+    console.warn('[FAVE] reset map view failed:', err);
+  }
+}
+
 function setMode(mode) {
   viewMode = mode;
   modeAllBtn?.classList.toggle('active', mode === 'all');

@@ -2878,6 +2878,14 @@ function pcDesoPropsMap() {
   return m;
 }
 // Friendly axis label, demographic-aware (district + building demo axes).
+// Fallback width measurement for parallel-coords axis labels, used when the
+// SVG is not laid out yet and getComputedTextLength() would return 0.
+const _pcAxisMeasureCtx = document.createElement('canvas').getContext('2d');
+function pcAxisTextWidth(text, px = 9, weight = 500) {
+  _pcAxisMeasureCtx.font = `${weight} ${px}px Inter, system-ui, sans-serif`;
+  return _pcAxisMeasureCtx.measureText(text || '').width;
+}
+
 function prettyParallelAxis(cat) {
   const demo = pcDemoAxes().find(a => a.key === cat)
     || PC_BUILDING_DEMO_AXES.find(a => a.key === cat)
@@ -3486,15 +3494,39 @@ function renderParallelCoords(rows, total, modeLabel, categories,
     // so axes don't overlap; full name shown on hover.
     const fullName = prettyParallelAxis(cat);
     const shortName = fullName.length > 12 ? `${fullName.slice(0, 11)}…` : fullName;
-    const axisLabel = gx.append('text')
+
+    // POI axes carry the same symbol the map uses; demographic/synthetic axes
+    // have no symbol and stay text-only.
+    const poiIconUrl = (cat !== 'default' && POI_SYMBOLS[cat]) ? POI_SYMBOLS[cat].icon : null;
+
+    // Group so the icon and the name drag together as one label.
+    const axisLabel = gx.append('g').style('cursor', 'grab');
+    const labelText = axisLabel.append('text')
       .attr('y', margin.top - 12)
       .attr('text-anchor', 'middle')
       .attr('font-size', 9)
       .attr('font-weight', 500)
       .attr('fill', 'var(--ink-2, #5b544c)')
-      .style('cursor', 'grab')
       .text(shortName);
-    axisLabel.append('title').text(fullName);
+    labelText.append('title').text(fullName);
+
+    if (poiIconUrl) {
+      const ICON = 11, GAP = 3;
+      let textW = 0;
+      try { textW = labelText.node().getComputedTextLength() || 0; } catch (e) { textW = 0; }
+      if (!textW) textW = pcAxisTextWidth(shortName, 9);
+      // Shift the name right by half the icon block so icon+name stay centred.
+      const shift = (ICON + GAP) / 2;
+      labelText.attr('x', shift);
+      axisLabel.insert('image', 'text')
+        .attr('href', poiIconUrl)
+        .attr('x', shift - textW / 2 - GAP - ICON)
+        .attr('y', margin.top - 12 - 2.9 - ICON / 2)
+        .attr('width', ICON)
+        .attr('height', ICON)
+        .attr('preserveAspectRatio', 'xMidYMid meet')
+        .append('title').text(fullName);
+    }
 
     axisLabel.call(
       d3.drag()
