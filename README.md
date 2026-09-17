@@ -69,7 +69,7 @@ git clone https://github.com/parisa-salmanian/FAVE.git
 cd FAVE
 ```
 
-The clone downloads about **2 GB** (≈ 1.5 GB of it is city data stored in Git LFS) and takes about **4 GB** on disk. If you want to **skip cities you don't need** (or self-host the data), see the optional fetcher in [Partial / self-hosted data](#partial--self-hosted-data).
+The clone downloads about **2 GB** (≈ 1.5 GB of it is city data stored in Git LFS) and takes about **4 GB** on disk.
 
 > ⚠️ **Check that the data arrived.** `frontend/assets/data/byggnad_malmo.geojson` should be about **44 MB**. If it is only ~130 bytes, you have Git LFS *pointer* files instead of the data, and the app will open with an **empty map**. Fix it from inside the repo folder:
 >
@@ -124,39 +124,17 @@ FAVE/
 │       ├── js/                   # MVC modules (lib/models/views/controllers)
 │       ├── css/
 │       └── data/                 # Small static data (POIs, district boundaries,
-│                                 # population JSON). Large building geojsons land
-│                                 # here too after running fetch_city_data.py.
+│                                 # population JSON). Large building geojsons and
+│                                 # baked city products live here too (Git LFS).
 ├── tools/
-│   ├── fetch_city_data.py        # Per-city downloader (run on first setup)
-│   ├── data_manifest.json        # Lists files + remote URLs per city
 │   └── bake_city_data.py         # Offline POI baker (Overpass/Nominatim)
 ├── requirements.txt              # Python dependencies
 └── README.md
 ```
 
-### Partial / self-hosted data
-
-Building geojsons range from 44 MB (Malmö) to 138 MB (Göteborg) — about 500 MB across the cities; the baked accessibility, transit and population products bring the LFS total to about 1.5 GB. They're tracked via Git LFS by default, so a normal `git clone` pulls everything.
-
-If you want to **skip cities** you don't need (saves bandwidth) or **mirror the data on your own server**, the repo also ships a per-city fetcher:
-
-```bash
-# Inspect the manifest
-python tools/fetch_city_data.py --list
-
-# Pull just the cities you want (post-clone if you used --filter=blob:none, or
-# anywhere you replace the LFS files with your own mirror):
-python tools/fetch_city_data.py --city vaxjo --city malmo
-
-# Self-host: set the env var, files are downloaded from <base>/<filename>
-FAVE_DATA_BASE_URL=https://my-host.example/fave python tools/fetch_city_data.py --all
-```
-
-The manifest at `tools/data_manifest.json` lists every file and its expected size — edit it if you need different paths.
-
 ### Lantmäteriet building geometry (full Sweden, optional)
 
-The geojsons in LFS are slimmed for the demo. If you want the **authoritative building footprints from Lantmäteriet** (Sweden's land survey agency) — for example to extend FAVE to a kommun that isn't in the demo, or to refresh the geometry — there's a second fetcher:
+The geojsons in LFS are slimmed for the demo. If you want the **authoritative building footprints from Lantmäteriet** (Sweden's land survey agency) — for example to extend FAVE to a kommun that isn't in the demo, or to refresh the geometry — there's a fetcher:
 
 ```bash
 # List every kommun in the Byggnader collection (~290 entries)
