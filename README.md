@@ -47,12 +47,21 @@
 | Tool | Purpose |
 |------|---------|
 | **Python 3.9 – 3.12** | Backend API |
-| **[Git LFS](https://git-lfs.com)** | City data (buildings, baked accessibility) lives in LFS |
 | **[Ollama](https://ollama.com)** | Local LLM inference |
+| **[Git LFS](https://git-lfs.com)** | Only for Option B below (`git clone`) — city data lives in LFS |
 
 > ⚠️ **Python 3.13 and newer will not work.** The pinned `numpy` and `shapely` versions have no prebuilt packages for them, so `pip install` fails. Check yours with `python3 --version`.
 
-### 1️⃣ Clone the repository
+### 1️⃣ Get FAVE
+
+#### Option A — download the ready-to-run ZIP (easiest)
+
+1. Open the **[latest release](https://github.com/parisa-salmanian/FAVE/releases/latest)** and download **`FAVE-v2.0-full.zip`** (about 1.1 GB).
+2. Unzip it (about 4 GB on disk) and open a terminal in the `FAVE` folder.
+
+The ZIP contains the code **and** all city data, so no Git or Git LFS is needed. Pick `FAVE-v2.0-full.zip`, not the "Source code" links that GitHub adds to every release. Then continue with step 2️⃣.
+
+#### Option B — clone with Git
 
 ```bash
 git lfs install     # one-time per machine — do this BEFORE cloning
@@ -69,7 +78,7 @@ The clone downloads about **2 GB** (≈ 1.5 GB of it is city data stored in Git 
 > git lfs pull
 > ```
 >
-> Prefer `git clone` over GitHub's **Download ZIP** button — a ZIP may contain the pointer files instead of the data.
+> Prefer Option A or `git clone` over GitHub's green **Code → Download ZIP** button — that ZIP may contain the pointer files instead of the data.
 
 ### 2️⃣ Install dependencies
 
