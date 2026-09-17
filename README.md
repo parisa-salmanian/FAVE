@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="#-about"><img src="https://img.shields.io/badge/IEEE_VIS-2026-E24B4A?style=for-the-badge&labelColor=091422" alt="IEEE VIS 2026"/></a>
-  <a href="#-getting-started"><img src="https://img.shields.io/badge/Python-3.10+-1D9E75?style=for-the-badge&logo=python&logoColor=white&labelColor=091422" alt="Python"/></a>
+  <a href="#-getting-started"><img src="https://img.shields.io/badge/Python-3.9--3.12-1D9E75?style=for-the-badge&logo=python&logoColor=white&labelColor=091422" alt="Python"/></a>
   <a href="#-getting-started"><img src="https://img.shields.io/badge/Ollama-LLM-EF9F27?style=for-the-badge&labelColor=091422" alt="Ollama"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-85B7EB?style=for-the-badge&labelColor=091422" alt="License"/></a>
 </p>
@@ -46,24 +46,35 @@
 
 | Tool | Purpose |
 |------|---------|
-| **Python 3.10+** | Backend API |
-| **[Git LFS](https://git-lfs.com)** | Large building geojsons live in LFS |
+| **Python 3.9 – 3.12** | Backend API |
+| **[Git LFS](https://git-lfs.com)** | City data (buildings, baked accessibility) lives in LFS |
 | **[Ollama](https://ollama.com)** | Local LLM inference |
+
+> ⚠️ **Python 3.13 and newer will not work.** The pinned `numpy` and `shapely` versions have no prebuilt packages for them, so `pip install` fails. Check yours with `python3 --version`.
 
 ### 1️⃣ Clone the repository
 
 ```bash
-git lfs install     # one-time per machine
-git clone https://github.com/claudiodgl/FAVE.git
+git lfs install     # one-time per machine — do this BEFORE cloning
+git clone https://github.com/parisa-salmanian/FAVE.git
 cd FAVE
 ```
 
-The clone pulls ~530 MB of building data via LFS. If you want to **skip cities you don't need** (or self-host the data), see the optional fetcher in [Partial / self-hosted data](#partial--self-hosted-data).
+The clone downloads about **2 GB** (≈ 1.5 GB of it is city data stored in Git LFS) and takes about **4 GB** on disk. If you want to **skip cities you don't need** (or self-host the data), see the optional fetcher in [Partial / self-hosted data](#partial--self-hosted-data).
+
+> ⚠️ **Check that the data arrived.** `frontend/assets/data/byggnad_malmo.geojson` should be about **44 MB**. If it is only ~130 bytes, you have Git LFS *pointer* files instead of the data, and the app will open with an **empty map**. Fix it from inside the repo folder:
+>
+> ```bash
+> git lfs install
+> git lfs pull
+> ```
+>
+> Prefer `git clone` over GitHub's **Download ZIP** button — a ZIP may contain the pointer files instead of the data.
 
 ### 2️⃣ Install dependencies
 
 ```bash
-python3 -m venv .venv
+python3 -m venv .venv        # use a Python between 3.9 and 3.12, e.g. python3.12 -m venv .venv
 source .venv/bin/activate    # on Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
@@ -116,7 +127,7 @@ FAVE/
 
 ### Partial / self-hosted data
 
-Building geojsons range from 40 MB (Malmö) to 130 MB (Göteborg) — about 530 MB across all 7 cities. They're tracked via Git LFS by default, so a normal `git clone` pulls everything.
+Building geojsons range from 44 MB (Malmö) to 138 MB (Göteborg) — about 500 MB across the cities; the baked accessibility, transit and population products bring the LFS total to about 1.5 GB. They're tracked via Git LFS by default, so a normal `git clone` pulls everything.
 
 If you want to **skip cities** you don't need (saves bandwidth) or **mirror the data on your own server**, the repo also ships a per-city fetcher:
 
